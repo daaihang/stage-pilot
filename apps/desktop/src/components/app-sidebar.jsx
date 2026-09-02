@@ -1,4 +1,4 @@
-import { Activity, FileText, FolderOpen, LayoutDashboard, MonitorCog, Shapes } from "lucide-react";
+import { Activity, FileText, FolderOpen, LayoutDashboard, LogIn, MonitorCog, Shapes } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -20,12 +20,12 @@ const navigation = [
   { id: "components", label: "UI 组件", icon: Shapes },
 ];
 
-export function AppSidebar({ activeView, onViewChange, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, ...props }) {
+export function AppSidebar({ activeView, authenticated = false, onViewChange, onRequireAuth, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, ...props }) {
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarContent><SidebarGroup><SidebarGroupLabel>工作台</SidebarGroupLabel><SidebarMenu>{navigation.map((item) => {
         const Icon = item.icon;
-        return <SidebarMenuItem key={item.id}><SidebarMenuButton isActive={activeView === item.id} tooltip={item.label} onClick={() => onViewChange(item.id)}><Icon /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>;
+        return <SidebarMenuItem key={item.id}><SidebarMenuButton isActive={authenticated && activeView === item.id} tooltip={item.label} onClick={() => authenticated ? onViewChange(item.id) : onRequireAuth?.()}><Icon /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>;
       })}</SidebarMenu></SidebarGroup></SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
@@ -36,7 +36,7 @@ export function AppSidebar({ activeView, onViewChange, onOpenDocuments, user, su
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <NavUser user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} />
+        {authenticated ? <NavUser user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} /> : <SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip="登录" onClick={onRequireAuth}><LogIn /><span>登录</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
