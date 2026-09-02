@@ -161,7 +161,7 @@ function MainApp() {
   const openAccountCenter = async (view = "profile") => { if (!isTauriRuntime) return notify.message("浏览器预览模式下无法打开独立账户窗口"); try { const existing = await WebviewWindow.getByLabel(accountWindowLabel); if (existing) { await existing.show(); await existing.setFocus(); await emitTo(accountWindowLabel, accountNavigationEvent, view); return; } const child = new WebviewWindow(accountWindowLabel, { url: `index.html?window=${accountWindowLabel}&view=${encodeURIComponent(view)}`, title: "账户中心", width: 840, height: 620, minWidth: 640, minHeight: 480, resizable: true, center: true }); child.once("tauri://error", (event) => notify.error("无法打开账户中心", { description: String(event.payload ?? "窗口创建失败") })); } catch (error) { notify.error("无法打开账户中心", { description: String(error) }); } };
   const handleLogin = async (email, password) => { const nextUser = await loginAccount(email, password); setUser(nextUser); setAuthStatus("authenticated"); };
   const handleRegister = async (email, password) => { const result = await registerAccount(email, password); setUser(result.user); setAuthStatus("authenticated"); return result; };
-  const handleLogout = async () => { await logoutAccount(); setUser(null); setAuthStatus("signed_out"); };
+  const handleLogout = async () => { try { await logoutAccount(); setUser(null); setAuthStatus("signed_out"); notify.success("已退出登录"); } catch (error) { notify.error("退出登录失败", { description: error.message }); } };
 
   const updateTitlebarVisibility = async (checked) => { setShowTitlebarTitle(checked); await store.set("showTitlebarTitle", checked); };
   const updateTitlebarMode = async (mode) => { setTitlebarTitleMode(mode); await store.set("titlebarTitleMode", mode); };
