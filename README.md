@@ -31,6 +31,8 @@ pnpm desktop:build
 pnpm desktop:tauri:dev
 ```
 
+`desktop:tauri:dev` 会在启动前自动清理当前项目残留的 Tauri/Vite/Cargo 开发进程，保证只运行一套 HMR 链路。需要手动停止时运行 `pnpm desktop:stop`。
+
 ## Backend and Docker
 
 ```bash
