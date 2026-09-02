@@ -1,0 +1,10 @@
+.git
+.turbo
+.vscode
+node_modules
+**/node_modules
+**/dist
+**/target
+backend/*/bin
+docker/data
+*.log

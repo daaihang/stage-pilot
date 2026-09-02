@@ -1,0 +1,11 @@
+{
+  "name": "@stagepilot/backend-api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "go run ./cmd/server",
+    "build": "go build -o bin/stagepilot-api ./cmd/server",
+    "check": "go vet ./...",
+    "test": "go test ./..."
+  }
+}

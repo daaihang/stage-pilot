@@ -1,0 +1,66 @@
+name: stagepilot
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${STAGEPILOT_POSTGRES_DB:-stagepilot}
+      POSTGRES_USER: ${STAGEPILOT_POSTGRES_USER:-stagepilot}
+      POSTGRES_PASSWORD: ${STAGEPILOT_POSTGRES_PASSWORD:-stagepilot}
+    ports:
+      - "${STAGEPILOT_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    command:
+      - -path=/migrations
+      - -database=postgres://${STAGEPILOT_POSTGRES_USER:-stagepilot}:${STAGEPILOT_POSTGRES_PASSWORD:-stagepilot}@postgres:5432/${STAGEPILOT_POSTGRES_DB:-stagepilot}?sslmode=disable
+      - up
+    volumes:
+      - ../backend/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: backend/api/Dockerfile
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://${STAGEPILOT_POSTGRES_USER:-stagepilot}:${STAGEPILOT_POSTGRES_PASSWORD:-stagepilot}@postgres:5432/${STAGEPILOT_POSTGRES_DB:-stagepilot}?sslmode=disable
+    ports:
+      - "${STAGEPILOT_API_PORT:-18080}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgres://${STAGEPILOT_POSTGRES_USER:-stagepilot}:${STAGEPILOT_POSTGRES_PASSWORD:-stagepilot}@postgres:5432/${STAGEPILOT_POSTGRES_DB:-stagepilot}?sslmode=disable
+      WORKER_INTERVAL: ${STAGEPILOT_WORKER_INTERVAL:-30s}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
