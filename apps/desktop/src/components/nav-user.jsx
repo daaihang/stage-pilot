@@ -26,6 +26,8 @@ export function NavUser({
   onOpenAccountCenter,
   onLogout,
 }) {
+  const displayName = user?.display_name || user?.name || "User";
+  const username = user?.username || user?.email || "";
   const { isMobile } = useSidebar()
   return (
     <SidebarMenu>
@@ -35,12 +37,12 @@ export function NavUser({
             render={
               <SidebarMenuButton size="lg" className="aria-expanded:bg-muted group-data-[collapsible=icon]:justify-center">
                 <Avatar className="size-8">
-                  <AvatarImage src={user.avatar} alt={user.name} />
-                  <AvatarFallback>{user.name?.slice(0, 2) || "U"}</AvatarFallback>
+                  <AvatarImage src={user.avatar_url || user.avatar} alt={displayName} />
+                  <AvatarFallback>{displayName.slice(0, 2) || "U"}</AvatarFallback>
                 </Avatar>
                 <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                  <span className="truncate font-medium">{user.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{user.username}</span>
+                  <span className="truncate font-medium">{displayName}</span>
+                  <span className="truncate text-xs text-muted-foreground">{username}</span>
                 </div>
                 <RiArrowUpDownLine className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
               </SidebarMenuButton>
@@ -55,12 +57,12 @@ export function NavUser({
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                   <Avatar>
-                    <AvatarImage src={user.avatar} alt={user.name} />
-                  <AvatarFallback>{user.name?.slice(0, 2) || "U"}</AvatarFallback>
+                    <AvatarImage src={user.avatar_url || user.avatar} alt={displayName} />
+                    <AvatarFallback>{displayName.slice(0, 2) || "U"}</AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">{user.name}</span>
-                    <span className="truncate text-xs">{user.username}</span>
+                    <span className="truncate font-medium">{displayName}</span>
+                    <span className="truncate text-xs">{username}</span>
                   </div>
                 </div>
               </DropdownMenuLabel>

@@ -32,6 +32,8 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppSonner, notify } from "@/components/ui/sonner";
+import { AuthScreen } from "@/components/auth-screen";
+import { login as loginAccount, register as registerAccount, restoreSession, logout as logoutAccount } from "@/lib/auth";
 
 const isTauriRuntime = typeof window !== "undefined" && Boolean(window.__TAURI_INTERNALS__);
 const documentationUrl = "https://tauri.app/start/";
@@ -110,7 +112,8 @@ function App() {
 }
 
 function AccountCenterApp() {
-  const [user, setUser] = useState(accountUserDefaults);
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [subscription, setSubscription] = useState(subscriptionDefaults);
   const [theme, setTheme] = useState("light");
   const [devtools, setDevtools] = useState(true);
@@ -120,7 +123,9 @@ function AccountCenterApp() {
   const handleDevtoolsChange = async (checked) => { setDevtools(checked); await store.set("devtools", checked); if (isTauriRuntime && checked) { try { await invoke("set_devtools", { enabled: true }); } catch {} } };
   const updateTitlebarVisibility = async (checked) => { setShowTitlebarTitle(checked); await store.set("showTitlebarTitle", checked); };
   const updateTitlebarMode = async (mode) => { setTitlebarTitleMode(mode); await store.set("titlebarTitleMode", mode); };
-  useEffect(() => { let active = true; (async () => { try { await store.init(); const [savedUser, savedSubscription, savedTheme, savedDevtools, savedTitlebarVisibility, savedTitlebarMode] = await Promise.all([store.get("userProfile"), store.get("subscription"), store.get("theme"), store.get("devtools"), store.get("showTitlebarTitle"), store.get("titlebarTitleMode")]); if (!active) return; if (savedUser && typeof savedUser === "object") setUser({ ...accountUserDefaults, ...savedUser }); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); await applyTheme(savedTheme === "dark" ? "dark" : "light", false); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (typeof savedTitlebarVisibility === "boolean") setShowTitlebarTitle(savedTitlebarVisibility); if (savedTitlebarMode === "app" || savedTitlebarMode === "page") setTitlebarTitleMode(savedTitlebarMode); } catch {} })(); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; (async () => { try { await store.init(); const [savedSubscription, savedTheme, savedDevtools, savedTitlebarVisibility, savedTitlebarMode, restoredUser] = await Promise.all([store.get("subscription"), store.get("theme"), store.get("devtools"), store.get("showTitlebarTitle"), store.get("titlebarTitleMode"), restoreSession()]); if (!active) return; setUser(restoredUser); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); await applyTheme(savedTheme === "dark" ? "dark" : "light", false); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (typeof savedTitlebarVisibility === "boolean") setShowTitlebarTitle(savedTitlebarVisibility); if (savedTitlebarMode === "app" || savedTitlebarMode === "page") setTitlebarTitleMode(savedTitlebarMode); } catch {} finally { if (active) setAuthReady(true); } })(); return () => { active = false; }; }, []);
+  if (!authReady) return <main className="flex min-h-svh items-center justify-center text-sm text-muted-foreground">正在加载账号…</main>;
+  if (!user) return <main className="flex min-h-svh items-center justify-center text-sm text-muted-foreground">账号会话已失效，请返回主窗口重新登录。</main>;
   return <AccountCenter user={user} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={updateTitlebarVisibility} onTitlebarModeChange={updateTitlebarMode} />;
 }
 
@@ -134,7 +139,8 @@ function MainApp() {
   const [devtools, setDevtools] = useState(true);
   const [showTitlebarTitle, setShowTitlebarTitle] = useState(true);
   const [titlebarTitleMode, setTitlebarTitleMode] = useState("page");
-  const [user, setUser] = useState(accountUserDefaults);
+  const [user, setUser] = useState(null);
+  const [authStatus, setAuthStatus] = useState("loading");
   const [subscription, setSubscription] = useState(subscriptionDefaults);
   const themeRef = useRef("light");
   const currentRecord = history[0];
@@ -153,11 +159,13 @@ function MainApp() {
   const handleDevtoolsChange = async (checked) => { setDevtools(checked); await store.set("devtools", checked); if (isTauriRuntime && checked) { try { await invoke("set_devtools", { enabled: true }); } catch {} } notify.message(checked ? "开发者工具已开启" : "开发者工具已关闭", { description: checked ? "当前会话立即生效，重启后按保存的值初始化" : "Windows 下需重启应用才能完全禁用（F12 失效）" }); };
   const openDocuments = async () => { try { await openUrl(documentationUrl); } catch (error) { notify.error("无法打开文档", { description: String(error) }); } };
   const openAccountCenter = async (view = "profile") => { if (!isTauriRuntime) return notify.message("浏览器预览模式下无法打开独立账户窗口"); try { const existing = await WebviewWindow.getByLabel(accountWindowLabel); if (existing) { await existing.show(); await existing.setFocus(); await emitTo(accountWindowLabel, accountNavigationEvent, view); return; } const child = new WebviewWindow(accountWindowLabel, { url: `index.html?window=${accountWindowLabel}&view=${encodeURIComponent(view)}`, title: "账户中心", width: 840, height: 620, minWidth: 640, minHeight: 480, resizable: true, center: true }); child.once("tauri://error", (event) => notify.error("无法打开账户中心", { description: String(event.payload ?? "窗口创建失败") })); } catch (error) { notify.error("无法打开账户中心", { description: String(error) }); } };
-  const handleLogout = () => notify.message("当前为本地演示模式，暂无登录会话", { description: "用户资料、订阅状态和应用设置未发生变化。" });
+  const handleLogin = async (email, password) => { const nextUser = await loginAccount(email, password); setUser(nextUser); setAuthStatus("authenticated"); };
+  const handleRegister = async (email, password) => { const result = await registerAccount(email, password); setUser(result.user); setAuthStatus("authenticated"); return result; };
+  const handleLogout = async () => { await logoutAccount(); setUser(null); setAuthStatus("signed_out"); };
 
   const updateTitlebarVisibility = async (checked) => { setShowTitlebarTitle(checked); await store.set("showTitlebarTitle", checked); };
   const updateTitlebarMode = async (mode) => { setTitlebarTitleMode(mode); await store.set("titlebarTitleMode", mode); };
-  useEffect(() => { let unlistenNative; let unlistenSettings; (async () => { try { await store.init(); const [savedTheme, savedHistory, savedDevtools, savedTitlebarVisibility, savedTitlebarMode, savedUser, savedSubscription] = await Promise.all([store.get("theme"), store.get("history"), store.get("devtools"), store.get("showTitlebarTitle"), store.get("titlebarTitleMode"), store.get("userProfile"), store.get("subscription")]); await applyTheme(savedTheme === "dark" ? "dark" : "light", false); if (Array.isArray(savedHistory)) setHistory(savedHistory.slice(0, MAX_HISTORY)); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (typeof savedTitlebarVisibility === "boolean") setShowTitlebarTitle(savedTitlebarVisibility); if (savedTitlebarMode === "app" || savedTitlebarMode === "page") setTitlebarTitleMode(savedTitlebarMode); if (savedUser && typeof savedUser === "object") setUser({ ...accountUserDefaults, ...savedUser }); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); } catch { addActivity("运行在浏览器预览模式，使用本地预览存储"); } try { unlistenNative = await listen("native-action", (event) => handleNativeAction(event.payload)); unlistenSettings = await listen("account-center:setting-changed", async (event) => { const { key, value } = event.payload ?? {}; if (key === "theme") await applyTheme(value === "dark" ? "dark" : "light", false); if (key === "devtools" && typeof value === "boolean") setDevtools(value); if (key === "showTitlebarTitle" && typeof value === "boolean") setShowTitlebarTitle(value); if (key === "titlebarTitleMode" && (value === "app" || value === "page")) setTitlebarTitleMode(value); if (["theme", "devtools", "showTitlebarTitle", "titlebarTitleMode"].includes(key)) await store.set(key, value); }); } catch { addActivity("运行在浏览器预览模式，原生事件不可用"); } })(); return () => { unlistenNative?.(); unlistenSettings?.(); }; }, []);
+  useEffect(() => { let unlistenNative; let unlistenSettings; (async () => { try { await store.init(); const [savedTheme, savedHistory, savedDevtools, savedTitlebarVisibility, savedTitlebarMode, savedSubscription, restoredUser] = await Promise.all([store.get("theme"), store.get("history"), store.get("devtools"), store.get("showTitlebarTitle"), store.get("titlebarTitleMode"), store.get("subscription"), restoreSession()]); await applyTheme(savedTheme === "dark" ? "dark" : "light", false); if (Array.isArray(savedHistory)) setHistory(savedHistory.slice(0, MAX_HISTORY)); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (typeof savedTitlebarVisibility === "boolean") setShowTitlebarTitle(savedTitlebarVisibility); if (savedTitlebarMode === "app" || savedTitlebarMode === "page") setTitlebarTitleMode(savedTitlebarMode); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); setUser(restoredUser); setAuthStatus(restoredUser ? "authenticated" : "signed_out"); } catch { setAuthStatus("signed_out"); addActivity("无法连接账号服务，请检查 API 地址"); } try { unlistenNative = await listen("native-action", (event) => handleNativeAction(event.payload)); unlistenSettings = await listen("account-center:setting-changed", async (event) => { const { key, value } = event.payload ?? {}; if (key === "theme") await applyTheme(value === "dark" ? "dark" : "light", false); if (key === "devtools" && typeof value === "boolean") setDevtools(value); if (key === "showTitlebarTitle" && typeof value === "boolean") setShowTitlebarTitle(value); if (key === "titlebarTitleMode" && (value === "app" || value === "page")) setTitlebarTitleMode(value); if (["theme", "devtools", "showTitlebarTitle", "titlebarTitleMode"].includes(key)) await store.set(key, value); }); } catch { addActivity("运行在浏览器预览模式，原生事件不可用"); } })(); return () => { unlistenNative?.(); unlistenSettings?.(); }; }, []);
 
   useEffect(() => {
     if (!isWindows) return;
@@ -173,6 +181,8 @@ function MainApp() {
   }, []);
 
   useEffect(() => { const suppress = (event) => event.preventDefault(); document.addEventListener("contextmenu", suppress); return () => document.removeEventListener("contextmenu", suppress); }, []);
+  if (authStatus === "loading") return <main className="flex min-h-svh items-center justify-center text-sm text-muted-foreground">正在恢复账号会话…</main>;
+  if (authStatus === "signed_out") return <AuthScreen onLogin={handleLogin} onRegister={handleRegister} />;
   return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen>
     <div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2">

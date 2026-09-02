@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider } from "@/components/ui/sidebar";
 import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
+import { updateMe } from "@/lib/auth";
 import { AppSonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CheckCircle2, CreditCard, Palette, Settings, Sparkles, UserRound } from "lucide-react";
@@ -19,7 +20,11 @@ const accountPages = [
 ];
 
 function AccountProfile({ user }) {
-  return <Card><CardHeader><CardTitle>账户资料</CardTitle><CardDescription>当前资料仅供查看，后续接入账户服务后可在此更新。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center gap-4"><Avatar className="size-16"><AvatarImage src={user.avatar} alt={user.name} /><AvatarFallback>{user.name?.slice(0, 2) || "U"}</AvatarFallback></Avatar><div><p className="text-base font-medium">{user.name}</p><p className="text-sm text-muted-foreground">{user.username}</p><p className="text-xs text-muted-foreground">{user.email}</p></div></div><div className="grid gap-3 sm:grid-cols-2"><div className="border p-3"><p className="text-xs text-muted-foreground">名称</p><p className="mt-1 text-sm font-medium">{user.name}</p></div><div className="border p-3"><p className="text-xs text-muted-foreground">Username</p><p className="mt-1 text-sm font-medium">{user.username}</p></div></div></CardContent></Card>;
+  const [displayName, setDisplayName] = useState(user.display_name || user.name || "");
+  const [saving, setSaving] = useState(false);
+  const save = async () => { setSaving(true); try { await updateMe({ display_name: displayName }); notify.success("资料已保存"); } catch (error) { notify.error("资料保存失败", { description: error.message }); } finally { setSaving(false); } };
+  const name = user.display_name || user.name || "User";
+  return <Card><CardHeader><CardTitle>账户资料</CardTitle><CardDescription>个人资料独立于 Workspace，未来可绑定更多登录方式。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center gap-4"><Avatar className="size-16"><AvatarImage src={user.avatar_url || user.avatar} alt={name} /><AvatarFallback>{name.slice(0, 2) || "U"}</AvatarFallback></Avatar><div><p className="text-base font-medium">{name}</p><p className="text-sm text-muted-foreground">{user.username || "未设置 username"}</p><p className="text-xs text-muted-foreground">{user.email}</p></div></div><div className="space-y-2"><label className="text-sm font-medium" htmlFor="display-name">显示名称</label><input id="display-name" className="flex h-9 w-full border bg-transparent px-3 text-sm outline-none" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存资料"}</Button></div><div className="border p-3 text-sm"><p className="text-xs text-muted-foreground">邮箱验证状态</p><p className="mt-1 font-medium">{user.email_verified ? "已验证" : "待验证"}</p></div></CardContent></Card>;
 }
 
 function SubscriptionView({ subscription }) {

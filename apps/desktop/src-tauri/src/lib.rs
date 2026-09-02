@@ -6,8 +6,27 @@ use tauri::{
 #[cfg(target_os = "macos")]
 use tauri::TitleBarStyle;
 use tauri_plugin_store::StoreExt;
+use keyring::Entry;
 
 const NATIVE_ACTION_EVENT: &str = "native-action";
+const KEYRING_SERVICE: &str = "com.daaihang.stagepilot";
+
+#[tauri::command]
+fn secure_get(key: String) -> Result<Option<String>, String> {
+    Entry::new(KEYRING_SERVICE, &key).map_err(|e| e.to_string())?.get_password().map(Some).or_else(|e| {
+        if e.to_string().to_lowercase().contains("no entry") { Ok(None) } else { Err(e.to_string()) }
+    })
+}
+
+#[tauri::command]
+fn secure_set(key: String, value: String) -> Result<(), String> {
+    Entry::new(KEYRING_SERVICE, &key).map_err(|e| e.to_string())?.set_password(&value).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn secure_delete(key: String) -> Result<(), String> {
+    Entry::new(KEYRING_SERVICE, &key).map_err(|e| e.to_string())?.delete_credential().map_err(|e| e.to_string())
+}
 
 fn devtools_pref<R: Runtime>(app: &AppHandle<R>) -> bool {
     app.store("stagepilot.json")
@@ -183,7 +202,7 @@ pub fn run() {
             build_tray(app.handle())?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![quit_app, set_devtools])
+        .invoke_handler(tauri::generate_handler![quit_app, set_devtools, secure_get, secure_set, secure_delete])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
