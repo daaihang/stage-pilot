@@ -66,4 +66,6 @@ export async function updateMe(patch) { return request("/me", { method: "PATCH",
 export async function getPreferences() { return request("/me/preferences"); }
 export async function updatePreferences(patch) { return request("/me/preferences", { method: "PATCH", body: JSON.stringify(patch) }); }
 export async function verifyEmail(token) { return request("/auth/email/verify", { method: "POST", body: JSON.stringify({ token }) }); }
+export async function forgotPassword(email) { return request("/auth/password/forgot", { method: "POST", body: JSON.stringify({ email }) }); }
+export async function resetPassword(token, password) { return request("/auth/password/reset", { method: "POST", body: JSON.stringify({ token, password }) }); }
 export { API_BASE };
