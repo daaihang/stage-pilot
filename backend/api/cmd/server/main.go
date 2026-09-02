@@ -79,6 +79,23 @@ func main() {
 	}
 	defer pool.Close()
 	app := application{db: pool, logger: logger, jwtSecret: []byte(envOrDefault("AUTH_JWT_SECRET", "stagepilot-development-secret-change-me")), exposeDevTokens: os.Getenv("AUTH_EXPOSE_DEV_TOKENS") == "true", rate: make(map[string]rateEntry)}
+	server := &http.Server{Addr: ":" + port, Handler: requestLogger(logger, corsMiddleware(allowedOrigins())(app.routes())), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-shutdownContext.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+	logger.Info("api listening", "address", server.Addr)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("serve api", "error", err)
+		os.Exit(1)
+	}
+}
+
+func (app *application) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", app.health)
 	mux.HandleFunc("GET /readyz", app.ready)
@@ -95,20 +112,7 @@ func main() {
 	mux.Handle("PATCH /me/password", app.auth(http.HandlerFunc(app.changePassword)))
 	mux.Handle("GET /me/preferences", app.auth(http.HandlerFunc(app.preferences)))
 	mux.Handle("PATCH /me/preferences", app.auth(http.HandlerFunc(app.updatePreferences)))
-	server := &http.Server{Addr: ":" + port, Handler: requestLogger(logger, mux), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
-	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	go func() {
-		<-shutdownContext.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = server.Shutdown(ctx)
-	}()
-	logger.Info("api listening", "address", server.Addr)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("serve api", "error", err)
-		os.Exit(1)
-	}
+	return mux
 }
 
 func (app *application) health(w http.ResponseWriter, _ *http.Request) {
@@ -531,7 +535,9 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 func errorJSON(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
-func serverError(w http.ResponseWriter, _ error) { http.Error(w, "internal server error", 500) }
+func serverError(w http.ResponseWriter, _ error) {
+	errorJSON(w, 500, "internal_error", "服务器暂时无法处理请求")
+}
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -543,6 +549,39 @@ func requestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		logger.Info("request", "method", r.Method, "path", r.URL.Path, "duration", time.Since(started))
 	})
+}
+func allowedOrigins() map[string]struct{} {
+	configured := envOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:1420,http://127.0.0.1:1420,http://[::1]:1420,tauri://localhost,https://tauri.localhost")
+	origins := make(map[string]struct{})
+	for _, origin := range strings.Split(configured, ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			origins[origin] = struct{}{}
+		}
+	}
+	return origins
+}
+func corsMiddleware(origins map[string]struct{}) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			if origin != "" {
+				if _, ok := origins[origin]; !ok {
+					errorJSON(w, http.StatusForbidden, "origin_not_allowed", "不允许此来源访问 API")
+					return
+				}
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+			if r.Method == http.MethodOptions {
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Max-Age", "600")
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 func envOrDefault(k, f string) string {
 	if v := os.Getenv(k); v != "" {
