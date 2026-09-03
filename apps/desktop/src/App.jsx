@@ -15,6 +15,8 @@ import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
 import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
+import { ProgramTypeManagementPage } from "@/components/program-type-management-page";
+import { FileTypeManagementPage } from "@/components/file-type-management-page";
 import { ResourceDetailPage, WorkspaceResourcePage } from "@/components/workspace-resource-pages";
 import { FilesPage } from "@/components/files-page";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
@@ -31,7 +33,7 @@ import { AppSonner, notify } from "@/components/ui/sonner";
 import { AuthDialog } from "@/components/auth-dialog";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { login as loginAccount, register as registerAccount, onSessionInvalidated, restoreSession, logout as logoutAccount } from "@/lib/auth";
-import { appStore, isTauriRuntime } from "@/lib/app-store";
+import { appStore, getRecentContexts, isTauriRuntime, saveRecentContext } from "@/lib/app-store";
 import { accountPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
 import { createProduction, toProductionSummary, updateProduction } from "@/lib/production-api";
 
@@ -80,8 +82,11 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const location = useLocation();
   const navigate = useNavigate();
   const { status: workspaceStatus, workspaces, currentWorkspace, switchWorkspace, adoptCreatedWorkspace, error: workspaceError, retry: retryWorkspaces } = useWorkspaceContext();
-  const { productionsByWorkspace, localDraftsByWorkspace, productionAliases, loadProductions, repository, setProductionsByWorkspaceEntry, createLocalDraft, updateLocalDraft, discardLocalDraft, promoteLocalDraft } = useNavigationData();
+  const { productionsByWorkspace, creationSession, loadProductions, repository, setProductionsByWorkspaceEntry, createCreationSession, updateCreationSession, discardCreationSession, getCreationSession } = useNavigationData();
   const navigationRepositoryRef = useRef(repository);
+  const creationRequestRef = useRef(null);
+  const creationRouteIdRef = useRef(null);
+  const [creationRequestPending, setCreationRequestPending] = useState(false);
   navigationRepositoryRef.current = repository;
   const route = matchStagePilotRoute(location.pathname);
   const isWorkspacesRoute = location.pathname === "/workspaces";
@@ -89,45 +94,92 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const accountReturnPath = isAccountRoute ? resolveAccountReturnTarget(location.search, currentWorkspace ? workspacePath(currentWorkspace.id) : "/workspaces") : null;
   const accountReturnRoute = accountReturnPath ? matchStagePilotRoute(accountReturnPath.split("?")[0]) : null;
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [recentContexts, setRecentContexts] = useState([]);
+  const recentContextAccountKey = user?.id || user?.email || "anonymous";
+  useEffect(() => {
+    let active = true;
+    if (authStatus !== "authenticated") { setRecentContexts([]); return undefined; }
+    getRecentContexts(recentContextAccountKey).then((items) => { if (active) setRecentContexts(items); });
+    return () => { active = false; };
+  }, [authStatus, recentContextAccountKey]);
+  const rememberContext = useCallback(async (context) => {
+    const next = await saveRecentContext(recentContextAccountKey, { ...context, lastOpenedAt: Date.now() });
+    setRecentContexts(next);
+  }, [recentContextAccountKey]);
   const workspace = route ? workspaces.find((item) => item.id === route.workspaceId) : null;
   const productionsLoaded = route ? Object.prototype.hasOwnProperty.call(productionsByWorkspace, route.workspaceId) : false;
   const remoteProductions = route ? productionsByWorkspace[route.workspaceId] ?? [] : [];
-  const localDrafts = route ? localDraftsByWorkspace[route.workspaceId] ?? [] : [];
-  // 本地 Draft 仅用于当前会话展示；不写回 Repository，也不混入后端缓存。
-  const productions = [...localDrafts, ...remoteProductions];
+  const productions = remoteProductions;
+  const isProductionRoute = route?.mode === "production";
   // Production Context：依附 currentWorkspace/route.workspaceId；
   // 深链恢复时由 productionDetail 单独加载，绝不出现父子和 URL 不一致的状态。
-  const aliasedProductionId = route?.mode === "production" ? productionAliases[route.productionId] : null;
-  const productionFromList = route?.mode === "production" ? productions.find((item) => item.id === route.productionId || item.id === aliasedProductionId) : null;
-  const isLocalDraftRoute = Boolean(route?.mode === "production" && route.productionId?.startsWith("local-draft-"));
-  const productionDeepLink = Boolean(route?.mode === "production" && workspace && productionsLoaded && !productionFromList && !isLocalDraftRoute);
-  const [productionDetail, setProductionDetail] = useState({ loading: false, production: null, failed: false });
+  const creationRoute = Boolean(isProductionRoute && creationSession?.id === route.productionId && creationSession.workspaceId === route.workspaceId);
+  const isCreationSessionRoute = Boolean(isProductionRoute && route.productionId?.startsWith("creation-session-"));
+  if (creationRoute) creationRouteIdRef.current = creationSession.id;
+  const productionFromList = isProductionRoute ? productions.find((item) => item.id === route.productionId) : null;
+  const productionRouteKey = isProductionRoute ? `${route.workspaceId}:${route.productionId}` : null;
+  const productionDeepLink = Boolean(isProductionRoute && workspace && productionsLoaded && !productionFromList && !creationRoute && !isCreationSessionRoute);
+  const [productionDetail, setProductionDetail] = useState({ key: null, loading: false, production: null, failed: false });
   const [productionError, setProductionError] = useState(null);
+  const routeProductionDetail = productionDetail.key === productionRouteKey ? productionDetail : null;
+  const productionDetailLoading = Boolean(productionDeepLink && (!routeProductionDetail || routeProductionDetail.loading));
 
   useEffect(() => {
-    if (!productionDeepLink) return;
+    if (!productionDeepLink) {
+      if (!productionRouteKey) setProductionDetail((current) => current.key === null ? current : { key: null, loading: false, production: null, failed: false });
+      return undefined;
+    }
+    const requestKey = productionRouteKey;
     let active = true;
-    setProductionDetail({ loading: true, production: null, failed: false });
+    setProductionDetail({ key: requestKey, loading: true, production: null, failed: false });
     const repository = navigationRepositoryRef.current;
     (async () => {
       try {
         const found = await repository.getProduction(route.workspaceId, route.productionId);
         if (!active) return;
         if (!found) {
-          setProductionDetail({ loading: false, production: null, failed: true });
+          setProductionDetail({ key: requestKey, loading: false, production: null, failed: true });
           return;
         }
-        setProductionDetail({ loading: false, production: found, failed: false });
+        setProductionDetail({ key: requestKey, loading: false, production: found, failed: false });
         setProductionsByWorkspaceEntry(route.workspaceId, found);
       } catch {
-        if (active) setProductionDetail({ loading: false, production: null, failed: true });
+        if (active) setProductionDetail({ key: requestKey, loading: false, production: null, failed: true });
       }
     })();
     return () => { active = false; };
-  }, [productionDeepLink, route?.workspaceId, route?.productionId]);
-  const production = productionFromList || (productionDeepLink && !productionDetail.loading && !productionDetail.failed ? productionDetail.production : null);
-  const productionUnavailable = Boolean(productionDeepLink && !productionDetail.loading && productionDetail.failed);
-  const localDraftExpired = Boolean(isLocalDraftRoute && productionsLoaded && !productionFromList && !aliasedProductionId);
+  }, [productionDeepLink, productionRouteKey, route?.workspaceId, route?.productionId, setProductionsByWorkspaceEntry]);
+  const production = productionFromList || (creationRoute ? creationSession : null) || (productionDeepLink && routeProductionDetail && !routeProductionDetail.loading && !routeProductionDetail.failed ? routeProductionDetail.production : null);
+  const productionUnavailable = Boolean(productionDeepLink && routeProductionDetail && !routeProductionDetail.loading && routeProductionDetail.failed);
+  const creationSessionExpired = Boolean(isCreationSessionRoute && !creationRoute);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated" || !route || !workspace) return;
+    if (route.mode === "production" && production && !production.isCreationSession) {
+      void rememberContext({ type: "production", id: production.id, name: production.name, path: productionPath(workspace.id, production.id), workspaceId: workspace.id, workspaceName: workspace.name });
+      return;
+    }
+    if (route.mode === "workspace") {
+      void rememberContext({ type: "workspace", id: workspace.id, name: workspace.name, path: workspacePath(workspace.id) });
+    }
+  }, [authStatus, location.pathname, production, rememberContext, route?.mode, route?.workspaceId, workspace]);
+
+  useEffect(() => {
+    setProductionError(null);
+  }, [route?.workspaceId]);
+
+  useEffect(() => {
+    if (!creationSession || !creationRouteIdRef.current || creationRoute || creationRequestPending) return;
+    discardCreationSession(creationSession.id);
+    creationRouteIdRef.current = null;
+  }, [creationRoute, creationRequestPending, creationSession, discardCreationSession]);
+
+  useEffect(() => {
+    if (authStatus !== "authenticated" && creationSession) {
+      discardCreationSession(creationSession.id);
+      creationRouteIdRef.current = null;
+    }
+  }, [authStatus, creationSession, discardCreationSession]);
 
   const refreshProductions = useCallback(async () => {
     if (!route?.workspaceId || !workspace) return;
@@ -174,8 +226,13 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
 
   const changeWorkspace = async (nextWorkspace) => {
     if (!nextWorkspace || nextWorkspace.id === workspace?.id) return;
+    if (creationRequestPending && creationSession) {
+      notify.info("正在创建活动，请稍候");
+      return;
+    }
     try {
       await switchWorkspace(nextWorkspace.id);
+      if (creationSession) discardCreationSession(creationSession.id);
       navigate(workspacePath(nextWorkspace.id));
       notify.info(`已切换到 ${nextWorkspace.name}`);
     } catch (nextError) { notify.error("无法切换工作空间", { description: String(nextError) }); }
@@ -184,15 +241,25 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   // 合并下拉的动作集：进入工作台 / 打开活动（必要时先切空间）/ 查看全部活动。
   const enterWorkspace = async (nextWorkspace) => {
     if (!nextWorkspace) return;
+    if (creationRequestPending && creationSession) {
+      notify.info("正在创建活动，请稍候");
+      return;
+    }
     if (nextWorkspace.id === workspace?.id) {
-      if (!route || route.workspaceId !== nextWorkspace.id) navigate(workspacePath(nextWorkspace.id));
+      if (creationSession) discardCreationSession(creationSession.id);
+      navigate(workspacePath(nextWorkspace.id), { replace: Boolean(creationSession) });
       return;
     }
     await changeWorkspace(nextWorkspace);
   };
 
   const openProduction = async (targetWorkspace, nextProduction) => {
-    if (!targetWorkspace || !nextProduction || nextProduction.isLocalDraft) return;
+    if (!targetWorkspace || !nextProduction || nextProduction.isCreationSession) return;
+    if (creationRequestPending && creationSession) {
+      notify.info("正在创建活动，请稍候");
+      return;
+    }
+    if (creationSession) discardCreationSession(creationSession.id);
     if (targetWorkspace.id !== workspace?.id) {
       try {
         await switchWorkspace(targetWorkspace.id);
@@ -205,8 +272,24 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     if (targetWorkspace.id !== workspace?.id) notify.info(`已切换到 ${targetWorkspace.name}`);
   };
 
+  const openRecentContext = async (item) => {
+    if (!item?.path) return;
+    if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; }
+    if (item.workspaceId && item.workspaceId !== workspace?.id) {
+      try { await switchWorkspace(item.workspaceId); }
+      catch (nextError) { notify.error("无法切换工作空间", { description: String(nextError) }); return; }
+    }
+    if (creationSession) discardCreationSession(creationSession.id);
+    navigate(item.path);
+  };
+
   const viewAllProductions = async (targetWorkspace) => {
     if (!targetWorkspace) return;
+    if (creationRequestPending && creationSession) {
+      notify.info("正在创建活动，请稍候");
+      return;
+    }
+    if (creationSession) discardCreationSession(creationSession.id);
     if (targetWorkspace.id !== workspace?.id) {
       try {
         await switchWorkspace(targetWorkspace.id);
@@ -219,19 +302,18 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     if (targetWorkspace.id !== workspace?.id) notify.info(`已切换到 ${targetWorkspace.name}`);
   };
 
-  const createDraft = () => {
+  const createCreation = () => {
     if (!workspace) return null;
-    const draft = createLocalDraft(workspace.id);
-    notify.info("已打开前端草稿", { description: "它只存在于当前窗口，暂不会保存到服务器。" });
-    return draft;
+    const session = createCreationSession(workspace.id);
+    if (session && route?.mode !== "production") navigate(productionPath(workspace.id, session.id));
+    return session;
   };
-  const createDraftFromHome = () => {
-    const draft = createDraft();
-    if (draft) navigate(productionPath(workspace.id, draft.id));
+  const createCreationFromHome = () => {
+    createCreation();
   };
   const openWorkspaceProductions = () => navigate(workspacePath(workspace.id, "productions"));
   const openWorkspaceCalendar = () => navigate(workspacePath(workspace.id, "calendar"));
-  const updateDraft = async (patch) => {
+  const updateProductionData = async (patch) => {
     if (!workspace || !production) return false;
     const next = { ...production, ...patch };
     if (next.startsAt && next.endsAt && new Date(next.endsAt) < new Date(next.startsAt)) {
@@ -239,23 +321,47 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
       return false;
     }
     const hasMeaningfulInfo = Boolean(
-      (next.name?.trim() && !/^活动-\d+$/.test(next.name.trim())) ||
-      next.startsAt || next.endsAt || next.venue?.trim() || next.description?.trim() ||
+      (next.name?.trim() && next.name.trim() !== (next.defaultName || "活动-0")) ||
+      next.startsAt || next.endsAt || next.description?.trim() ||
       (next.timezone && next.timezone !== "Asia/Shanghai"),
     );
     try {
-      if (production.isLocalDraft) {
+      if (production.isCreationSession) {
         if (!hasMeaningfulInfo) {
-          updateLocalDraft(workspace.id, production.id, patch);
+          updateCreationSession(production.id, patch);
           return true;
         }
-        const created = await createProduction(workspace.id, {
-          name: next.name.trim(), description: next.description?.trim() || "", timezone: next.timezone || "Asia/Shanghai",
-          startAt: next.startsAt || null, endAt: next.endsAt || null, status: "active",
-        });
-        promoteLocalDraft(workspace.id, production.id, toProductionSummary(created));
-        notify.success("活动已启用", { description: "基础信息已保存，活动导航已解锁。" });
-        return true;
+        // 失焦事件可能在请求已经开始后继续到达；保留它们，创建完成后再作为正式活动修改提交。
+        if (creationRequestRef.current) {
+          updateCreationSession(production.id, patch);
+          return creationRequestRef.current;
+        }
+        const latest = updateCreationSession(production.id, patch) || { ...production, ...patch };
+        setCreationRequestPending(true);
+        const request = (async () => {
+          try {
+            const created = await createProduction(workspace.id, {
+              name: latest.name?.trim() || production.name, description: latest.description?.trim() || "", timezone: latest.timezone || "Asia/Shanghai",
+              startAt: latest.startsAt || null, endAt: latest.endsAt || null,
+            });
+            const latestSession = getCreationSession() || latest;
+            const summary = { ...toProductionSummary(created), venue: latestSession.venue || "" };
+            setProductionsByWorkspaceEntry(workspace.id, summary);
+            discardCreationSession(production.id);
+            creationRouteIdRef.current = null;
+            navigate(productionPath(workspace.id, created.id, "overview"), { replace: true });
+            notify.success("活动已创建", { description: "基础信息已保存，活动导航已解锁。" });
+            return true;
+          } catch (nextError) {
+            notify.error("无法创建活动", { description: nextError instanceof Error ? nextError.message : String(nextError) });
+            return false;
+          } finally {
+            creationRequestRef.current = null;
+            setCreationRequestPending(false);
+          }
+        })();
+        creationRequestRef.current = request;
+        return request;
       }
       const body = {};
       if (Object.prototype.hasOwnProperty.call(patch, "name")) body.name = String(patch.name).trim();
@@ -263,9 +369,17 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
       if (Object.prototype.hasOwnProperty.call(patch, "timezone")) body.timezone = patch.timezone;
       if (Object.prototype.hasOwnProperty.call(patch, "startsAt")) body.start_at = patch.startsAt || null;
       if (Object.prototype.hasOwnProperty.call(patch, "endsAt")) body.end_at = patch.endsAt || null;
-      if (!Object.keys(body).length) return true;
+      const hasVenuePatch = Object.prototype.hasOwnProperty.call(patch, "venue");
+      const localVenue = hasVenuePatch ? String(patch.venue ?? "").trim() : (production.venue || "");
+      if (!Object.keys(body).length) {
+        if (hasVenuePatch) {
+          setProductionsByWorkspaceEntry(workspace.id, { ...production, venue: localVenue });
+          notify.info("地点已更新", { description: "地点目前只在当前窗口展示，不会保存到服务端。" });
+        }
+        return true;
+      }
       const updated = await updateProduction(workspace.id, production.id, body);
-      setProductionsByWorkspaceEntry(workspace.id, toProductionSummary(updated));
+      setProductionsByWorkspaceEntry(workspace.id, { ...toProductionSummary(updated), venue: localVenue });
       notify.success("活动信息已保存");
       return true;
     } catch (nextError) {
@@ -274,16 +388,20 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     }
   };
   const updateProductionSettings = async (patch) => {
-    if (!workspace || !production || production.isLocalDraft) throw new Error("草稿只能在活动概览中完善基础信息。");
+    if (!workspace || !production || production.isCreationSession) throw new Error("创建会话只能在活动概览中完善基础信息。");
     const updated = await updateProduction(workspace.id, production.id, patch);
-    const summary = toProductionSummary(updated);
+    const summary = { ...toProductionSummary(updated), venue: production.venue || "" };
     setProductionsByWorkspaceEntry(workspace.id, summary);
     return summary;
   };
-  const discardDraft = () => {
-    if (!workspace || !production?.isLocalDraft) return;
-    discardLocalDraft(workspace.id, production.id);
-    notify.success("已放弃前端草稿");
+  const leaveCreationSession = () => {
+    if (!workspace || !production?.isCreationSession) return;
+    if (creationRequestRef.current) {
+      notify.info("正在创建活动，请稍候");
+      return;
+    }
+    discardCreationSession(production.id);
+    creationRouteIdRef.current = null;
     navigate(workspacePath(workspace.id, "productions"), { replace: true });
   };
   const accountReturnProduction = accountReturnRoute?.mode === "production"
@@ -294,10 +412,25 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     ? `返回活动：${accountReturnProduction.name}`
     : accountReturnRoute?.mode === "production" ? "返回活动" : `返回工作空间：${accountReturnWorkspace?.name || "工作空间"}`;
   const navigateAccount = useCallback((view = "profile", developerAction) => {
-    const from = isAccountRoute ? accountReturnPath : `${location.pathname}${location.search}`;
+    if (creationRequestRef.current && creationSession) {
+      notify.info("正在创建活动，请稍候");
+      return;
+    }
+    const from = isAccountRoute
+      ? accountReturnPath
+      : (creationSession ? workspacePath(creationSession.workspaceId, "productions") : `${location.pathname}${location.search}`);
+    if (creationSession) discardCreationSession(creationSession.id);
     const action = developerAction ? `&action=${encodeURIComponent(developerAction)}` : "";
     navigate(`${accountPath(view, from)}${action}`);
-  }, [accountReturnPath, isAccountRoute, location.pathname, location.search, navigate]);
+  }, [accountReturnPath, creationRequestPending, creationSession, discardCreationSession, isAccountRoute, location.pathname, location.search, navigate]);
+  const handleShellLogout = useCallback(() => {
+    if (creationRequestRef.current && creationSession) {
+      notify.info("正在创建活动，请稍候");
+      return;
+    }
+    if (creationSession) discardCreationSession(creationSession.id);
+    onLogout();
+  }, [creationRequestPending, creationSession, discardCreationSession, onLogout]);
   const handleShellNativeAction = useCallback((action) => {
     if (developerActions.has(action)) {
       if (import.meta.env.DEV) navigateAccount("developer", action);
@@ -326,23 +459,26 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (!route) content = <NavigationFailure title="页面不存在" description="这个 StagePilot 页面地址无效或已经移动。" homePath={currentWorkspace ? workspacePath(currentWorkspace.id) : undefined} />;
   else if (workspaceForbidden) content = <NavigationFailure title="工作空间不可访问" description="你访问的工作空间不存在，或者当前账号无权访问。" homePath={currentWorkspace ? workspacePath(currentWorkspace.id) : (workspaces[0] ? workspacePath(workspaces[0].id) : undefined)} />;
   else if (!workspace) content = <NavigationFailure title="工作空间不存在" description="你访问的工作空间不存在，或者当前账号无权访问。" homePath={currentWorkspace ? workspacePath(currentWorkspace.id) : undefined} />;
-  else if (localDraftExpired) content = <NavigationFailure title="草稿预览已结束" description="这个前端草稿只保存在创建它的当前窗口中。刷新或重新打开后不会恢复。" homePath={workspacePath(workspace.id, "productions")} />;
+  else if (creationSessionExpired) content = <NavigationFailure title="创建会话已结束" description="这次创建内容尚未提交，离开或刷新后不会恢复。" homePath={workspacePath(workspace.id, "productions")} />;
   else if (productionError) content = <NavigationFailure title="无法加载活动" description={productionError.message} onRetry={refreshProductions} homePath={workspacePath(workspace.id)} />;
   else if (productionUnavailable) content = <NavigationFailure title="活动不可访问" description="这场活动不存在、已归档，或者不属于当前工作空间。" homePath={workspacePath(workspace.id, "productions")} />;
-  else if (productionDeepLink && !production) content = <AppLoading />;
-  else if (route.mode === "production" && !productionsLoaded) content = <AppLoading />;
-  else if (route.mode === "workspace" && route.page === "home") content = <WorkspaceHome route={route} workspace={workspace} productions={productions} onCreateDraft={createDraftFromHome} onViewProductions={openWorkspaceProductions} onOpenCalendar={openWorkspaceCalendar} />;
-  else if (route.mode === "workspace" && route.page === "productions") content = <ProductionsPage route={route} workspace={workspace} productions={productions} loading={!productionsLoaded} onCreateDraft={createDraft} />;
+  else if (productionDeepLink && productionDetailLoading) content = <AppLoading />;
+  else if (isProductionRoute && !productionsLoaded && !creationRoute) content = <AppLoading />;
+  else if (isProductionRoute && !production) content = <NavigationFailure title="活动不可访问" description="这场活动不存在、已归档，或者不属于当前工作空间。" homePath={workspacePath(workspace.id, "productions")} />;
+  else if (route.mode === "workspace" && route.page === "home") content = <WorkspaceHome route={route} workspace={workspace} productions={productions} onCreate={createCreationFromHome} onViewProductions={openWorkspaceProductions} onOpenCalendar={openWorkspaceCalendar} />;
+  else if (route.mode === "workspace" && route.page === "productions") content = <ProductionsPage route={route} workspace={workspace} productions={productions} loading={!productionsLoaded} onCreate={createCreation} />;
   else if (route.mode === "workspace" && route.page === "members") content = <WorkspaceMembersPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "roles") content = <WorkspaceRolesPage route={route} workspace={workspace} />;
+  else if (route.mode === "workspace" && route.page === "program-types") content = <ProgramTypeManagementPage workspace={workspace} key={workspace.id} />;
+  else if (route.mode === "workspace" && route.page === "file-types") content = <FileTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "programs" && route.resourceId) content = <ResourceDetailPage workspace={workspace} resourceType="programs" resourceId={route.resourceId} />;
   else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} />;
   else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page) && route.resourceId) content = <ResourceDetailPage workspace={workspace} resourceType={route.page} resourceId={route.resourceId} />;
   else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} />;
   else if (route.mode === "workspace" && route.page === "settings") content = <WorkspaceSettingsPage workspaceId={workspace.id} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} />;
-  else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateDraft={updateDraft} onDiscardDraft={discardDraft} key={route.productionId} />;
-  else if (route.mode === "production" && production?.isLocalDraft) content = <NavigationFailure title="前端草稿仅提供概览" description="基础资料可在活动概览中填写；其他活动模块会在后端 Draft 接入后开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
+  else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;
+  else if (route.mode === "production" && production?.isCreationSession) content = <NavigationFailure title="创建会话仅支持概览" description="提交第一个有效字段后，活动的其他模块会自动开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
   else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
@@ -352,9 +488,12 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     navigate(workspacePath(created.id), { replace: true });
   };
 
+  // 创建会话需要保留 Production Context 的返回入口和禁用导航，
+  // 但它从未加入 productionsByWorkspace，因此不会出现在正式活动预览中。
+  const sidebarProduction = production;
   return <SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><div className="flex size-7 shrink-0 items-center justify-center text-primary" aria-label="StagePilot" title="StagePilot"><Sparkles className="size-4" /></div><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div>{showTitlebarTitle && <div className="pointer-events-none absolute left-1/2 max-w-[min(40vw,320px)] -translate-x-1/2 truncate px-2 text-xs font-medium" aria-live="polite">{pageTitle}</div>}<div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
-    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspaces={workspaces} workspace={workspace} production={production} productions={productions} productionsByWorkspace={productionsByWorkspace} productionLoadStates={productionLoadStates} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onEnterWorkspace={enterWorkspace} onOpenProduction={openProduction} onViewAllProductions={viewAllProductions} onReloadProductions={reloadProductionsForMenu} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => navigate("/workspaces")} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={onLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><div className="app-content-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6"><div className="mx-auto min-h-full min-w-0 max-w-6xl">{content}</div></div></SidebarInset></div>
+    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/workspaces"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><div className="app-content-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6"><div className="mx-auto min-h-full min-w-0 max-w-6xl">{content}</div></div></SidebarInset></div>
   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /></SidebarProvider>;
 }
 
@@ -414,7 +553,7 @@ function MainApp() {
   const updateTitlebarMode = async (mode) => { setTitlebarTitleMode(mode); await appStore.set("titlebarTitleMode", mode); notify.success("标题栏设置已更新"); };
   const updateSidebarRail = async (checked) => { setSidebarRailEnabled(checked); try { await appStore.set("sidebarRailEnabled", checked); } catch { notify.error("偏好保存失败"); } notify.success(checked ? "侧栏边缘热区已开启" : "侧栏边缘热区已关闭"); };
 
-  return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><NavigationProvider><WorkspaceProvider><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={updateTitlebarVisibility} onTitlebarModeChange={updateTitlebarMode} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={updateSidebarRail} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} /></WorkspaceProvider></NavigationProvider></HashRouter><AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} /><Dialog modal={false} open={aboutOpen} onOpenChange={setAboutOpen}><DialogContent><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织一场活动的筹备与现场执行。</p></DialogContent></Dialog><AppSonner /></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
+  return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><NavigationProvider authStatus={authStatus}><WorkspaceProvider authStatus={authStatus}><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={updateTitlebarVisibility} onTitlebarModeChange={updateTitlebarMode} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={updateSidebarRail} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} /></WorkspaceProvider></NavigationProvider></HashRouter><AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} /><Dialog modal={false} open={aboutOpen} onOpenChange={setAboutOpen}><DialogContent><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织筹备与现场执行。</p></DialogContent></Dialog><AppSonner /></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
 }
 
 function App() { return <MainApp />; }
