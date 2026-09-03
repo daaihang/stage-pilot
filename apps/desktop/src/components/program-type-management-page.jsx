@@ -324,11 +324,15 @@ function DeleteTypeDialog({ workspace, item, types, open, onOpenChange, onDelete
                     </span>
                     {strategy === "move" && (
                       <Select value={replacementTypeId} onValueChange={setReplacementTypeId}>
-                        <SelectTrigger className="mt-3 w-full" disabled={loadingTargets}>
+                        <SelectTrigger className="mt-3 w-full min-w-0 max-w-full" disabled={loadingTargets}>
                           <SelectValue placeholder="选择目标节目类型" />
                         </SelectTrigger>
-                        <SelectContent>
-                          {targets.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}
+                        <SelectContent className="max-w-[calc(100vw-2rem)]">
+                          {targets.map((type) => (
+                            <SelectItem key={type.id} value={type.id} label={type.name}>
+                              {type.name}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     )}
