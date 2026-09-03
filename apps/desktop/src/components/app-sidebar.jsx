@@ -1,6 +1,6 @@
 import { useState } from "react";
 import {
-  ArrowLeft, Building2, CalendarDays, ClipboardCheck, ContactRound, FileText, FolderKanban,
+  ArrowLeft, Building2, CalendarDays, ClipboardCheck, ContactRound, FileCog, FileText, FolderKanban,
   Gauge, KeyRound, LayoutTemplate, LoaderCircle, MapPin, Mic2, MonitorCog, Package, Plus,
   RotateCcw, Search, Settings, Sparkles, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal,
 } from "lucide-react";
@@ -25,7 +25,7 @@ const workspaceGroups = [
   { label: "核心", items: [["home", "工作台", Gauge], ["productions", "活动", FolderKanban], ["calendar", "日历", CalendarDays], ["files", "文件资料", FileText]] },
   { label: "资源库", items: [["programs", "节目库", Mic2], ["people", "人员库", ContactRound], ["organizations", "机构", Building2], ["venues", "场地", MapPin], ["equipment", "设备", Package]] },
   { label: "协作与权限", items: [["members", "成员", UsersRound], ["roles", "角色与权限", KeyRound]] },
-  { label: "管理", items: [["templates", "模板", LayoutTemplate], ["settings", "工作空间设置", Settings]] },
+  { label: "管理", items: [["file-types", "文件类型", FileCog], ["templates", "模板", LayoutTemplate], ["settings", "工作空间设置", Settings]] },
 ];
 
 const productionGroups = [
