@@ -292,9 +292,12 @@ function SidebarTrigger({
 
 function SidebarRail({
   className,
+  disabled = false,
   ...props
 }) {
   const { toggleSidebar } = useSidebar()
+
+  if (disabled) return null
 
   return (
     <button
@@ -393,7 +396,7 @@ function SidebarContent({
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
-        "flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto group-data-[collapsible=icon]:overflow-hidden",
+        "flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto group-data-[collapsible=icon]:overflow-x-hidden",
         className
       )}
       {...props} />
