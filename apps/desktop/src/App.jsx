@@ -16,8 +16,9 @@ import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
 import { ResourceDetailPage, WorkspaceResourcePage } from "@/components/workspace-resource-pages";
+import { FilesPage } from "@/components/files-page";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
-import { NavigationFailure, PlaceholderPage, ProductionsPage, WorkspaceHome } from "@/components/stagepilot-pages";
+import { NavigationFailure, PlaceholderPage, ProductionsPage, WorkspaceHome, WorkspaceMembersPage, WorkspaceRolesPage } from "@/components/stagepilot-pages";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -74,7 +75,7 @@ function UnauthenticatedHome({ onOpenAuth }) {
   return <main className="flex min-h-full items-center justify-center p-6"><Card className="w-full max-w-xl"><CardHeader><CardTitle>欢迎来到 StagePilot</CardTitle><CardDescription>登录后即可管理演出活动、制作资源和团队工作空间。</CardDescription></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3"><div className="border p-3">活动与制作流程</div><div className="border p-3">长期资源管理</div><div className="border p-3">团队协作空间</div></div><Button onClick={onOpenAuth}>登录或创建账号</Button></CardContent></Card></main>;
 }
 
-function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, applyTheme, devtools, onDevtoolsChange, onRequireAuth, onOpenDocuments, onLogout, onNativeAction, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange, isMaximized, onMinimize, onToggleMaximize, onHide }) {
+function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, applyTheme, devtools, onDevtoolsChange, onRequireAuth, onOpenDocuments, onLogout, onNativeAction, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange, sidebarRailEnabled, onSidebarRailChange, isMaximized, onMinimize, onToggleMaximize, onHide }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { status: workspaceStatus, workspaces, currentWorkspace, switchWorkspace, adoptCreatedWorkspace, error: workspaceError, retry: retryWorkspaces } = useWorkspaceContext();
@@ -223,6 +224,12 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     notify.info("已打开前端草稿", { description: "它只存在于当前窗口，暂不会保存到服务器。" });
     return draft;
   };
+  const createDraftFromHome = () => {
+    const draft = createDraft();
+    if (draft) navigate(productionPath(workspace.id, draft.id));
+  };
+  const openWorkspaceProductions = () => navigate(workspacePath(workspace.id, "productions"));
+  const openWorkspaceCalendar = () => navigate(workspacePath(workspace.id, "calendar"));
   const updateDraft = async (patch) => {
     if (!workspace || !production) return false;
     const next = { ...production, ...patch };
@@ -311,7 +318,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   let content;
   if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
-  else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} initialAction={new URLSearchParams(location.search).get("action")} />;
+  else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} initialAction={new URLSearchParams(location.search).get("action")} />;
   else if (isWorkspacesRoute) content = <WorkspacesPage onCreateWorkspace={() => setCreateWorkspaceOpen(true)} />;
   else if (workspaceError) content = <NavigationFailure description={workspaceError.message} onRetry={retryWorkspaces} />;
   else if (location.pathname === "/") content = <AppLoading />;
@@ -323,16 +330,20 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (productionUnavailable) content = <NavigationFailure title="活动不可访问" description="这场活动不存在、已归档，或者不属于当前工作空间。" homePath={workspacePath(workspace.id, "productions")} />;
   else if (productionDeepLink && !production) content = <AppLoading />;
   else if (route.mode === "production" && !productionsLoaded) content = <AppLoading />;
-  else if (route.mode === "workspace" && route.page === "home") content = <WorkspaceHome route={route} workspace={workspace} productions={productions} />;
+  else if (route.mode === "workspace" && route.page === "home") content = <WorkspaceHome route={route} workspace={workspace} productions={productions} onCreateDraft={createDraftFromHome} onViewProductions={openWorkspaceProductions} onOpenCalendar={openWorkspaceCalendar} />;
   else if (route.mode === "workspace" && route.page === "productions") content = <ProductionsPage route={route} workspace={workspace} productions={productions} loading={!productionsLoaded} onCreateDraft={createDraft} />;
+  else if (route.mode === "workspace" && route.page === "members") content = <WorkspaceMembersPage route={route} workspace={workspace} />;
+  else if (route.mode === "workspace" && route.page === "roles") content = <WorkspaceRolesPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "programs" && route.resourceId) content = <ResourceDetailPage workspace={workspace} resourceType="programs" resourceId={route.resourceId} />;
   else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} />;
   else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page) && route.resourceId) content = <ResourceDetailPage workspace={workspace} resourceType={route.page} resourceId={route.resourceId} />;
   else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} />;
   else if (route.mode === "workspace" && route.page === "settings") content = <WorkspaceSettingsPage workspaceId={workspace.id} key={workspace.id} />;
+  else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} />;
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateDraft={updateDraft} onDiscardDraft={discardDraft} key={route.productionId} />;
   else if (route.mode === "production" && production?.isLocalDraft) content = <NavigationFailure title="前端草稿仅提供概览" description="基础资料可在活动概览中填写；其他活动模块会在后端 Draft 接入后开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
+  else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
 
   const handleWorkspaceCreated = async (created) => {
@@ -342,7 +353,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
 
   return <SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><div className="flex size-7 shrink-0 items-center justify-center text-primary" aria-label="StagePilot" title="StagePilot"><Sparkles className="size-4" /></div><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div>{showTitlebarTitle && <div className="pointer-events-none absolute left-1/2 max-w-[min(40vw,320px)] -translate-x-1/2 truncate px-2 text-xs font-medium" aria-live="polite">{pageTitle}</div>}<div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
-    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspaces={workspaces} workspace={workspace} production={production} productions={productions} productionsByWorkspace={productionsByWorkspace} productionLoadStates={productionLoadStates} workspaceSelectionMode={isWorkspacesRoute} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onEnterWorkspace={enterWorkspace} onOpenProduction={openProduction} onViewAllProductions={viewAllProductions} onReloadProductions={reloadProductionsForMenu} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => navigate("/workspaces")} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={onLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><div className="app-content-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6"><div className="mx-auto min-h-full min-w-0 max-w-6xl">{content}</div></div></SidebarInset></div>
+    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspaces={workspaces} workspace={workspace} production={production} productions={productions} productionsByWorkspace={productionsByWorkspace} productionLoadStates={productionLoadStates} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onEnterWorkspace={enterWorkspace} onOpenProduction={openProduction} onViewAllProductions={viewAllProductions} onReloadProductions={reloadProductionsForMenu} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => navigate("/workspaces")} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={onLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><div className="app-content-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6"><div className="mx-auto min-h-full min-w-0 max-w-6xl">{content}</div></div></SidebarInset></div>
   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /></SidebarProvider>;
 }
 
@@ -358,6 +369,7 @@ function MainApp() {
   const [devtools, setDevtools] = useState(true);
   const [showTitlebarTitle, setShowTitlebarTitle] = useState(true);
   const [titlebarTitleMode, setTitlebarTitleMode] = useState("page");
+  const [sidebarRailEnabled, setSidebarRailEnabled] = useState(true);
   const [user, setUser] = useState(null);
   const [authStatus, setAuthStatus] = useState("loading");
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
@@ -391,7 +403,7 @@ function MainApp() {
     if (reason === "refresh_failed") notify.error("登录状态已失效", { description: "请重新登录后继续。" });
   }), []);
 
-  useEffect(() => { (async () => { try { await appStore.init(); const [savedTheme, savedDevtools, savedTitlebarVisibility, savedTitlebarMode, savedSubscription, restoredUser] = await Promise.all([appStore.get("theme"), appStore.get("devtools"), appStore.get("showTitlebarTitle"), appStore.get("titlebarTitleMode"), appStore.get("subscription"), restoreSession()]); await applyTheme(["light", "dark", "system"].includes(savedTheme) ? savedTheme : "light", false); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (typeof savedTitlebarVisibility === "boolean") setShowTitlebarTitle(savedTitlebarVisibility); if (savedTitlebarMode === "app" || savedTitlebarMode === "page") setTitlebarTitleMode(savedTitlebarMode); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); setUser(restoredUser); setAuthStatus(restoredUser ? "authenticated" : "signed_out"); setAuthDialogOpen(!restoredUser); } catch { setAuthStatus("signed_out"); setAuthDialogOpen(true); } })(); }, []);
+  useEffect(() => { (async () => { try { await appStore.init(); const [savedTheme, savedDevtools, savedTitlebarVisibility, savedTitlebarMode, savedSidebarRail, savedSubscription, restoredUser] = await Promise.all([appStore.get("theme"), appStore.get("devtools"), appStore.get("showTitlebarTitle"), appStore.get("titlebarTitleMode"), appStore.get("sidebarRailEnabled"), appStore.get("subscription"), restoreSession()]); await applyTheme(["light", "dark", "system"].includes(savedTheme) ? savedTheme : "light", false); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (typeof savedTitlebarVisibility === "boolean") setShowTitlebarTitle(savedTitlebarVisibility); if (savedTitlebarMode === "app" || savedTitlebarMode === "page") setTitlebarTitleMode(savedTitlebarMode); if (typeof savedSidebarRail === "boolean") setSidebarRailEnabled(savedSidebarRail); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); setUser(restoredUser); setAuthStatus(restoredUser ? "authenticated" : "signed_out"); setAuthDialogOpen(!restoredUser); } catch { setAuthStatus("signed_out"); setAuthDialogOpen(true); } })(); }, []);
 
   useEffect(() => { if (!isWindows) return; let unlisten; (async () => { try { const win = getCurrentWindow(); setIsMaximized(await win.isMaximized()); unlisten = await win.onResized(() => win.isMaximized().then(setIsMaximized).catch(() => {})); } catch {} })(); return () => unlisten?.(); }, []);
   useEffect(() => { const suppress = (event) => event.preventDefault(); document.addEventListener("contextmenu", suppress); return () => document.removeEventListener("contextmenu", suppress); }, []);
@@ -399,8 +411,9 @@ function MainApp() {
   const handleDevtoolsChange = async (checked) => { setDevtools(checked); await appStore.set("devtools", checked); if (isTauriRuntime && checked) { try { await invoke("set_devtools", { enabled: true }); } catch {} } notify.message(checked ? "开发者工具已开启" : "开发者工具已关闭"); };
   const updateTitlebarVisibility = async (checked) => { setShowTitlebarTitle(checked); await appStore.set("showTitlebarTitle", checked); notify.success(checked ? "标题栏标题已显示" : "标题栏标题已隐藏"); };
   const updateTitlebarMode = async (mode) => { setTitlebarTitleMode(mode); await appStore.set("titlebarTitleMode", mode); notify.success("标题栏设置已更新"); };
+  const updateSidebarRail = async (checked) => { setSidebarRailEnabled(checked); try { await appStore.set("sidebarRailEnabled", checked); } catch { notify.error("偏好保存失败"); } notify.success(checked ? "侧栏边缘热区已开启" : "侧栏边缘热区已关闭"); };
 
-  return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><NavigationProvider><WorkspaceProvider><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={updateTitlebarVisibility} onTitlebarModeChange={updateTitlebarMode} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} /></WorkspaceProvider></NavigationProvider></HashRouter><AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} /><Dialog modal={false} open={aboutOpen} onOpenChange={setAboutOpen}><DialogContent><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织一场活动的筹备与现场执行。</p></DialogContent></Dialog><AppSonner /></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
+  return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><NavigationProvider><WorkspaceProvider><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={updateTitlebarVisibility} onTitlebarModeChange={updateTitlebarMode} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={updateSidebarRail} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} /></WorkspaceProvider></NavigationProvider></HashRouter><AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} /><Dialog modal={false} open={aboutOpen} onOpenChange={setAboutOpen}><DialogContent><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织一场活动的筹备与现场执行。</p></DialogContent></Dialog><AppSonner /></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
 }
 
 function App() { return <MainApp />; }

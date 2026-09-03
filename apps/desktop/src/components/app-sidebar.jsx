@@ -22,8 +22,9 @@ import {
 import { notify } from "@/components/ui/sonner";
 
 const workspaceGroups = [
-  { label: "工作空间", items: [["home", "工作台", Gauge], ["productions", "活动", FolderKanban], ["calendar", "日历", CalendarDays]] },
-  { label: "资源库", items: [["programs", "节目库", Mic2], ["people", "人员", ContactRound], ["organizations", "机构", Building2], ["venues", "场地", MapPin], ["equipment", "设备", Package]] },
+  { label: "核心", items: [["home", "工作台", Gauge], ["productions", "活动", FolderKanban], ["calendar", "日历", CalendarDays]] },
+  { label: "资源库", items: [["programs", "节目库", Mic2], ["people", "人员库", ContactRound], ["organizations", "机构", Building2], ["venues", "场地", MapPin], ["equipment", "设备", Package]] },
+  { label: "协作与权限", items: [["members", "成员", UsersRound], ["roles", "角色与权限", KeyRound]] },
   { label: "管理", items: [["templates", "模板", LayoutTemplate], ["settings", "工作空间设置", Settings]] },
 ];
 
@@ -167,7 +168,7 @@ function AccountNavigation({ route, returnPath, returnLabel = "返回工作空�
   </>;
 }
 
-export function AppSidebar({ route, workspaces, workspace, production, productions = [], productionsByWorkspace = {}, productionLoadStates = {}, workspaceSelectionMode = false, accountReturnPath, accountReturnLabel, onEnterWorkspace, onOpenProduction, onViewAllProductions, onReloadProductions, onCreateWorkspace, onManageWorkspaces, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, onRequireAuth, ...props }) {
+export function AppSidebar({ route, workspaces, workspace, production, productions = [], productionsByWorkspace = {}, productionLoadStates = {}, workspaceSelectionMode = false, railEnabled = true, accountReturnPath, accountReturnLabel, onEnterWorkspace, onOpenProduction, onViewAllProductions, onReloadProductions, onCreateWorkspace, onManageWorkspaces, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, onRequireAuth, ...props }) {
   return <Sidebar collapsible="icon" {...props}>
     <SidebarHeader>{route?.mode === "account" ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" tooltip="账户中心" className="group-data-[collapsible=icon]:justify-center"><div className="flex size-8 shrink-0 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground"><UserRound className="size-4" /></div><div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden"><span className="truncate text-sm font-medium">账户中心</span><span className="truncate text-xs text-muted-foreground">个人设置</span></div></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : <WorkspaceSwitcher workspaces={workspaces} workspace={workspace} production={production} productionsByWorkspace={productionsByWorkspace} loadStates={productionLoadStates} onEnterWorkspace={onEnterWorkspace} onOpenProduction={onOpenProduction} onViewAllProductions={onViewAllProductions} onReloadProductions={onReloadProductions} onCreateWorkspace={onCreateWorkspace} onManageWorkspaces={onManageWorkspaces} />}</SidebarHeader>
     <SidebarContent>
@@ -187,6 +188,6 @@ export function AppSidebar({ route, workspaces, workspace, production, productio
       </SidebarMenu>
       {user ? <NavUser user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} /> : <SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip="登录" onClick={onRequireAuth}><Sparkles /><span>登录 StagePilot</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
     </SidebarFooter>
-    <SidebarRail />
+    <SidebarRail disabled={!railEnabled} />
   </Sidebar>;
 }

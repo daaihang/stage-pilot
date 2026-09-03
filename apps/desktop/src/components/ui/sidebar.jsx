@@ -391,15 +391,60 @@ function SidebarContent({
   className,
   ...props
 }) {
+  const contentRef = React.useRef(null)
+  const [scrollState, setScrollState] = React.useState({ canScrollUp: false, canScrollDown: false })
+
+  const updateScrollState = React.useCallback(() => {
+    const element = contentRef.current
+    if (!element) return
+    const threshold = 1
+    setScrollState({
+      canScrollUp: element.scrollTop > threshold,
+      canScrollDown: element.scrollHeight - element.clientHeight - element.scrollTop > threshold,
+    })
+  }, [])
+
+  React.useEffect(() => {
+    const element = contentRef.current
+    if (!element) return
+    updateScrollState()
+    element.addEventListener("scroll", updateScrollState, { passive: true })
+    const observer = new ResizeObserver(updateScrollState)
+    observer.observe(element)
+    return () => {
+      element.removeEventListener("scroll", updateScrollState)
+      observer.disconnect()
+    }
+  }, [updateScrollState])
+
   return (
-    <div
-      data-slot="sidebar-content"
-      data-sidebar="content"
-      className={cn(
-        "flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto group-data-[collapsible=icon]:overflow-x-hidden",
-        className
-      )}
-      {...props} />
+    <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div
+        ref={contentRef}
+        data-slot="sidebar-content"
+        data-sidebar="content"
+        className={cn(
+          "flex size-full min-h-0 flex-col gap-0 overflow-x-hidden overflow-y-auto scrollbar-none",
+          className
+        )}
+        {...props} />
+      <div
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-sidebar to-transparent opacity-0 transition-opacity duration-150",
+          "group-data-[collapsible=icon]:opacity-0",
+          scrollState.canScrollUp && "group-data-[collapsible=icon]:opacity-100"
+        )}
+      />
+      <div
+        aria-hidden="true"
+        className={cn(
+          "pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-sidebar to-transparent opacity-0 transition-opacity duration-150",
+          "group-data-[collapsible=icon]:opacity-0",
+          scrollState.canScrollDown && "group-data-[collapsible=icon]:opacity-100"
+        )}
+      />
+    </div>
   );
 }
 
