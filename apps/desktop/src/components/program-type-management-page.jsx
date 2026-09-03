@@ -323,7 +323,11 @@ function DeleteTypeDialog({ workspace, item, types, open, onOpenChange, onDelete
                       </span>
                     </span>
                     {strategy === "move" && (
-                      <Select value={replacementTypeId} onValueChange={setReplacementTypeId}>
+                      <Select
+                        items={targets.map((type) => ({ value: type.id, label: type.name }))}
+                        value={replacementTypeId}
+                        onValueChange={setReplacementTypeId}
+                      >
                         <SelectTrigger className="mt-3 w-full min-w-0 max-w-full" disabled={loadingTargets}>
                           <SelectValue placeholder="选择目标节目类型" />
                         </SelectTrigger>
@@ -596,7 +600,11 @@ export function ProgramTypeManagementPage({ workspace }) {
   const sortControls = (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <span className="text-xs text-muted-foreground">排序</span>
-      <Select value={sort} onValueChange={setSort}>
+      <Select
+        items={sortOptions.map(([value, label]) => ({ value, label }))}
+        value={sort}
+        onValueChange={setSort}
+      >
         <SelectTrigger className="w-28" aria-label="排序字段"><SelectValue /></SelectTrigger>
         <SelectContent>
           {sortOptions.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
