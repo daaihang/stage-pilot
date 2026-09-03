@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  CircleHelp,
   Ellipsis,
   KeyRound,
   RefreshCw,
-  Search,
   ShieldAlert,
   ShieldCheck,
-  UserPlus,
   UsersRound,
 } from "lucide-react";
 import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
@@ -18,15 +15,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { notify } from "@/components/ui/sonner";
 import { Badge } from "@/components/reui/badge";
-import { Frame, FrameDescription, FrameFooter, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Tree, TreeItem, TreeItemLabel } from "@/components/reui/tree";
-import { PageBreadcrumbs } from "@/components/stagepilot-pages";
+import { SettingsTabs } from "@/components/settings-tabs";
+import { WorkspacePageHeader } from "@/components/workspace-page-shell";
+import { ResourcePage } from "@/components/resource-page";
+import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
+import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import {
   formatMemberJoinedAt,
   listWorkspaceMembers,
@@ -42,32 +40,6 @@ import {
   workspacePermissionGroups,
   workspaceRoles,
 } from "@/lib/workspace-permissions";
-
-function AccessPageIntro({ route, workspace, action }) {
-  return (
-    <div className="space-y-4">
-      <PageBreadcrumbs route={route} workspace={workspace} />
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{route.meta.title}</h1>
-          <p className="text-sm text-muted-foreground">{route.meta.description}</p>
-        </div>
-        {action}
-      </div>
-    </div>
-  );
-}
-
-function EmptyState({ icon: Icon, title, description, action }) {
-  return (
-    <div className="flex min-h-40 flex-col items-center justify-center gap-2 px-4 text-center text-sm text-muted-foreground">
-      <Icon className="size-6" />
-      <p className="font-medium text-foreground">{title}</p>
-      <p>{description}</p>
-      {action}
-    </div>
-  );
-}
 
 function MembersLoadingState() {
   return (
@@ -87,19 +59,45 @@ function MembersLoadingState() {
   );
 }
 
-const roleFilterOptions = [
-  ["all", "全部角色"],
-  ["owner", "Owner"],
-  ["admin", "Admin"],
-  ["member", "Member"],
+const memberFilterFields = [
+  {
+    id: "role",
+    label: "角色",
+    type: "select",
+    defaultOperator: "is_any_of",
+    options: [
+      { value: "owner", label: "Owner" },
+      { value: "admin", label: "Admin" },
+      { value: "member", label: "Member" },
+    ],
+  },
+  {
+    id: "status",
+    label: "状态",
+    type: "select",
+    defaultOperator: "is_any_of",
+    options: [
+      { value: "active", label: "已启用" },
+      { value: "invited", label: "待接受" },
+      { value: "suspended", label: "已暂停" },
+    ],
+  },
 ];
 
-const statusFilterOptions = [
-  ["all", "全部状态"],
-  ["active", "已启用"],
-  ["invited", "待接受"],
-  ["suspended", "已暂停"],
-];
+function matchesMemberFilterValue(value, condition) {
+  const actual = String(value || "").toLowerCase();
+  const values = condition.values.map((item) => String(item).toLowerCase());
+  if (!values.length) return true;
+  if (condition.operator === "is_any_of") return values.includes(actual);
+  if (condition.operator === "is_none_of") return !values.includes(actual);
+  if (condition.operator === "is" || condition.operator === "eq") return actual === values[0];
+  if (condition.operator === "is_not" || condition.operator === "neq") return actual !== values[0];
+  if (condition.operator === "contains") return values.some((item) => actual.includes(item));
+  if (condition.operator === "not_contains") return values.every((item) => !actual.includes(item));
+  if (condition.operator === "starts_with") return values.some((item) => actual.startsWith(item));
+  if (condition.operator === "ends_with") return values.some((item) => actual.endsWith(item));
+  return true;
+}
 
 function MemberActionMenu({ member }) {
   const memberStatus = String(member.status || "").toLowerCase();
@@ -131,7 +129,7 @@ function MemberActionMenu({ member }) {
 
 function MemberTable({ members }) {
   return (
-    <Table>
+    <Table className="min-w-[720px]">
       <TableHeader>
         <TableRow>
           <TableHead className="min-w-56">成员</TableHead>
@@ -169,10 +167,9 @@ function MemberTable({ members }) {
 export function WorkspaceMembersPage({ route, workspace }) {
   const [members, setMembers] = useState(null);
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [filterQuery, setFilterQuery] = useState(() => createFilterQuery());
   const membersRef = useRef(null);
   const requestRef = useRef(0);
 
@@ -215,99 +212,50 @@ export function WorkspaceMembersPage({ route, workspace }) {
 
   const filteredMembers = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
+    const conditions = getResourceFilterConditions(filterQuery);
     return (members || []).filter((member) => {
       const searchable = [memberDisplayName(member), member.email, member.user_id]
         .filter(Boolean)
         .join(" ")
         .toLocaleLowerCase("zh-CN");
       const matchesQuery = !normalizedQuery || searchable.includes(normalizedQuery);
-      const matchesRole = roleFilter === "all" || String(member.role || "").toLowerCase() === roleFilter;
-      const matchesStatus = statusFilter === "all" || String(member.status || "").toLowerCase() === statusFilter;
-      return matchesQuery && matchesRole && matchesStatus;
+      const matchesFilters = conditions.every((condition) => matchesMemberFilterValue(member[condition.field], condition));
+      return matchesQuery && matchesFilters;
     });
-  }, [members, query, roleFilter, statusFilter]);
+  }, [filterQuery, members, query]);
 
-  const hasFilters = Boolean(query.trim() || roleFilter !== "all" || statusFilter !== "all");
-  const clearFilters = () => {
+  const clearMemberFilters = () => {
     setQuery("");
-    setRoleFilter("all");
-    setStatusFilter("all");
+    setFilterQuery(createFilterQuery());
     notify.info("已清除成员筛选");
   };
 
-  return (
-    <div className="space-y-6">
-      <AccessPageIntro
-        route={route}
-        workspace={workspace}
-        action={
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => notify.info("邀请成员 API 尚未接入", { description: "当前仅支持查看，不会发送邀请。" })}>
-              <UserPlus />邀请成员
-            </Button>
-            <Button variant="outline" onClick={() => loadMembers({ withToast: true })} disabled={loading}>
-              <RefreshCw className={loading ? "animate-spin" : undefined} />刷新
-            </Button>
-          </div>
-        }
-      />
+  const empty = error && !members
+    ? { icon: UsersRound, title: "无法加载成员", description: error.message, action: <Button onClick={() => loadMembers({ withToast: true })} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />重试</Button> }
+    : members?.length === 0
+      ? { icon: UsersRound, title: "暂无成员", description: "当前工作空间还没有可显示的成员。" }
+      : filteredMembers.length === 0 && members
+        ? { icon: UsersRound, title: "没有匹配成员", description: "请尝试调整搜索关键词或筛选条件。", action: <Button variant="outline" size="sm" onClick={clearMemberFilters}>清除筛选</Button> }
+        : null;
 
-      {error && !members ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>无法加载成员</CardTitle>
-            <CardDescription>{error.message}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button onClick={() => loadMembers({ withToast: true })} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />重试</Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <Frame spacing="sm" className="min-w-0">
-          <FramePanel className="p-0!">
-            <FrameHeader className="gap-3 border-b">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <FrameTitle>团队成员</FrameTitle>
-                  <FrameDescription className="mt-1">查看成员身份、角色和当前访问状态。</FrameDescription>
-                </div>
-                {members && <p className="text-xs text-muted-foreground">显示 {filteredMembers.length} / {members.length} 位成员</p>}
-              </div>
-              <div className="grid min-w-0 gap-2 md:grid-cols-[minmax(220px,1fr)_150px_150px_auto]">
-                <div className="relative min-w-0">
-                  <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索姓名或邮箱" aria-label="搜索姓名或邮箱" className="pl-8" />
-                </div>
-                <Select value={roleFilter} onValueChange={setRoleFilter}>
-                  <SelectTrigger className="w-full" aria-label="按角色筛选"><SelectValue /></SelectTrigger>
-                  <SelectContent>{roleFilterOptions.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
-                </Select>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full" aria-label="按状态筛选"><SelectValue /></SelectTrigger>
-                  <SelectContent>{statusFilterOptions.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
-                </Select>
-                {hasFilters ? <Button variant="ghost" onClick={clearFilters}>清除筛选</Button> : <span />}
-              </div>
-            </FrameHeader>
-            {loading && !members ? <MembersLoadingState /> : members?.length === 0 ? (
-              <EmptyState icon={UsersRound} title="暂无成员" description="当前工作空间还没有可显示的成员。" />
-            ) : filteredMembers.length === 0 ? (
-              <EmptyState
-                icon={Search}
-                title="没有匹配成员"
-                description="请尝试调整搜索关键词或筛选条件。"
-                action={<Button variant="outline" size="sm" onClick={clearFilters}>清除筛选</Button>}
-              />
-            ) : (
-              <MemberTable members={filteredMembers} />
-            )}
-            <FrameFooter className="border-t text-xs text-muted-foreground">
-              <span className="flex items-center gap-1.5"><CircleHelp className="size-3.5" />成员变更操作尚未接入，当前仅支持查看。</span>
-            </FrameFooter>
-          </FramePanel>
-        </Frame>
-      )}
-    </div>
+  return (
+    <ResourcePage
+      title={route?.meta?.title || "成员"}
+      description={route?.meta?.description || "管理可以访问这个工作空间的团队成员。"}
+      count={members?.length || 0}
+      summary={members ? <span>显示 {filteredMembers.length} / {members.length} 位成员</span> : null}
+      search={{ value: query, onChange: setQuery, placeholder: "搜索姓名、邮箱或用户 ID" }}
+      filters={<ResourceFilters fields={memberFilterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />}
+      showViewToggle={false}
+      createLabel="邀请成员"
+      onCreate={() => notify.info("邀请成员 API 尚未接入", { description: "当前仅支持查看，不会发送邀请。" })}
+      headerActions={<Button variant="outline" onClick={() => loadMembers({ withToast: true })} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button>}
+      loading={loading && !members}
+      loadingContent={<MembersLoadingState />}
+      empty={empty}
+    >
+      <Card variant="flush"><CardContent className="p-0"><MemberTable members={filteredMembers} /></CardContent></Card>
+    </ResourcePage>
   );
 }
 
@@ -382,45 +330,21 @@ export function WorkspaceRolesPage({ route, workspace }) {
   const [selectedRole, setSelectedRole] = useState("owner");
   const role = workspaceRoles.find((item) => item.key === selectedRole) || workspaceRoles[0];
   const permissions = getWorkspaceRolePermissions(role.key);
+  const roleGroups = workspaceRoles.map((item) => [item.key, item.label, ShieldCheck]);
 
   return (
     <div className="space-y-6">
-      <AccessPageIntro route={route} workspace={workspace} />
-      <Frame spacing="sm" className="min-w-0 lg:grid lg:grid-cols-[220px_minmax(0,1fr)]">
-        <FramePanel className="min-w-0 p-0!">
-          <FrameHeader className="border-b">
-            <FrameTitle>角色</FrameTitle>
-            <FrameDescription className="mt-1">选择角色查看它的权限范围。</FrameDescription>
-          </FrameHeader>
-          <div className="flex flex-col gap-1 p-2">
-            {workspaceRoles.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={`flex min-w-0 items-start gap-2 border px-3 py-3 text-left text-xs outline-none transition-colors hover:bg-muted/60 focus-visible:ring-1 focus-visible:ring-ring ${item.key === role.key ? "border-primary/40 bg-muted" : "border-transparent"}`}
-                onClick={() => setSelectedRole(item.key)}
-                aria-pressed={item.key === role.key}
-              >
-                <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0">
-                  <span className="block font-medium">{item.label}</span>
-                  <span className="mt-1 block text-muted-foreground">{item.description}</span>
-                </span>
-              </button>
-            ))}
-          </div>
-          <FrameFooter className="border-t text-xs text-muted-foreground">仅展示后端当前支持的三个角色</FrameFooter>
-        </FramePanel>
-
-        <FramePanel className="min-w-0 p-0!">
-          <FrameHeader className="gap-3 border-b">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0">
+      <WorkspacePageHeader workspace={workspace} role={workspace.role} title={route?.meta?.title || "角色与权限"} description={route?.meta?.description || "查看工作空间角色和可用权限范围。"} />
+      <SettingsTabs groups={roleGroups} activeGroup={role.key} onGroupChange={setSelectedRole} ariaLabel="角色">
+        <Card className="min-w-0">
+          <CardHeader className="gap-4 border-b">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <FrameTitle>{role.label}</FrameTitle>
+                  <CardTitle>{role.label}</CardTitle>
                   <Badge variant={role.key === "owner" ? "warning-light" : "primary-light"} size="sm">只读预览</Badge>
                 </div>
-                <FrameDescription className="mt-1">{role.description}</FrameDescription>
+                <CardDescription>{role.description}</CardDescription>
               </div>
               <div className="flex shrink-0 gap-5 text-xs">
                 <div><p className="text-muted-foreground">已授权权限</p><p className="mt-1 text-base font-semibold">{permissions.size} / {workspacePermissionGroups.flatMap((group) => group.permissions).length}</p></div>
@@ -431,14 +355,16 @@ export function WorkspaceRolesPage({ route, workspace }) {
               {role.key === "owner" ? <ShieldAlert className="mt-0.5 size-4 shrink-0" /> : <AlertTriangle className="mt-0.5 size-4 shrink-0" />}
               <span>Owner 与成员管理权限会影响工作空间安全。权限树仅用于当前角色预览，权限修改尚未接入。</span>
             </div>
-          </FrameHeader>
-          <div className="min-w-0 overflow-x-auto p-4">
-            <div className="mb-3 flex items-center gap-2 text-sm font-medium"><KeyRound className="size-4" />权限树</div>
-            <PermissionTree permissions={permissions} />
-          </div>
-          <FrameFooter className="border-t text-xs text-muted-foreground">父级复选框表示子权限状态：全部授权、部分授权或未授权。权限修改需要服务端支持。</FrameFooter>
-        </FramePanel>
-      </Frame>
+          </CardHeader>
+          <CardContent className="min-w-0 space-y-3 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium"><KeyRound className="size-4" />权限树</div>
+            <div className="min-w-0 overflow-x-auto">
+              <PermissionTree permissions={permissions} />
+            </div>
+            <p className="border-t pt-3 text-xs text-muted-foreground">父级复选框表示子权限状态：全部授权、部分授权或未授权。权限修改需要服务端支持。</p>
+          </CardContent>
+        </Card>
+      </SettingsTabs>
     </div>
   );
 }
