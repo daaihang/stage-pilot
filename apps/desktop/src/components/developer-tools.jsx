@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { Bell, CheckCircle2, Clipboard, Copy, Eye, FileText, Folder, Info, RefreshCw, Terminal, Trash2 } from "lucide-react";
+import { Bell, CheckCircle2, Clipboard, Copy, Eye, FileText, Folder, RefreshCw, Terminal, Trash2, XCircle } from "lucide-react";
 import { ContextMenuDemo1 } from "@/components/examples/c-context-menu-1";
 import { ContextMenuDemo2 } from "@/components/examples/c-context-menu-2";
 import { ContextMenuDemo3 } from "@/components/examples/c-context-menu-3";
@@ -29,13 +29,69 @@ const formatTime = (value) => new Intl.DateTimeFormat("zh-CN", { hour: "2-digit"
 export function DeveloperTools({ devtools, onDevtoolsChange, initialAction }) {
   const [history, setHistory] = useState([]);
   const [activity, setActivity] = useState(["开发工具已准备就绪"]);
+  const [diagnostics, setDiagnostics] = useState([{ label: "尚未检测", ok: true, detail: "点击「重新检测」" }]);
   const currentRecord = history[0];
   const addActivity = useCallback((message) => setActivity((items) => [`${formatTime(Date.now())} · ${message}`, ...items].slice(0, 8)), []);
   const persistHistory = async (nextHistory) => { setHistory(nextHistory); await appStore.set("history", nextHistory); };
 
   useEffect(() => { appStore.init().then(() => appStore.get("history")).then((saved) => { if (Array.isArray(saved)) setHistory(saved.slice(0, MAX_HISTORY)); }).catch(() => {}); }, []);
 
+  // 运行状态诊断：每项都做真实探测，不展示硬编码结论。
+  // - 运行环境：Tauri WebView 还是浏览器预览；
+  // - 窗口控制 / 窗口状态恢复：IPC 调用当前窗口 API（浏览器预览预期失败）；
+  // - 剪贴板：写入探测文本（会覆盖用户剪贴板，只在使用者主动检测时执行）；
+  // - 系统通知权限：通知插件在当前环境的授权状态。
+  const collectDiagnostics = useCallback(async ({ includeClipboard = true } = {}) => {
+    const results = [{ label: "运行环境", ok: true, detail: isTauriRuntime ? "Tauri 桌面" : "浏览器预览" }];
+    const probe = async (label, task) => {
+      try {
+        const detail = await task();
+        results.push({ label, ok: true, detail: detail || "可用" });
+      } catch (error) {
+        results.push({ label, ok: false, detail: String(error).slice(0, 80) });
+      }
+    };
+    await probe("窗口控制", async () => {
+      if (!isTauriRuntime) throw new Error("浏览器预览模式");
+      const win = getCurrentWindow();
+      return (await win.isVisible()) ? "可见" : "已隐藏";
+    });
+    await probe("窗口状态恢复", async () => {
+      if (!isTauriRuntime) throw new Error("浏览器预览模式");
+      return (await getCurrentWindow().isMaximized()) ? "已最大化" : "已恢复";
+    });
+    if (includeClipboard) {
+      await probe("剪贴板", async () => {
+        await writeText("StagePilot 剪贴板诊断");
+        return "写入成功";
+      });
+    }
+    await probe("系统通知权限", async () => {
+      if (!isTauriRuntime) throw new Error("浏览器预览模式");
+      return (await isPermissionGranted()) ? "已授予" : "未授予";
+    });
+    setDiagnostics(results);
+    return results;
+  }, []);
+
+  useEffect(() => {
+    // 挂载时静默探测一次（不写剪贴板、不发 toast）：进入页面不是用户动作。
+    collectDiagnostics({ includeClipboard: false }).catch(() => {});
+  }, [collectDiagnostics]);
+
+  const runRuntimeDiagnostics = useCallback(async () => {
+    const results = await collectDiagnostics();
+    const failed = results.filter((item) => !item.ok).length;
+    if (failed) notify.message(`诊断完成：${failed} 项异常`, { description: failed === 1 && !isTauriRuntime ? "浏览器预览模式下桌面能力预期不可用。" : undefined });
+    else notify.success("诊断完成：全部正常");
+    addActivity(`运行状态诊断：${results.length - failed}/${results.length} 项正常`);
+  }, [addActivity, collectDiagnostics]);
+
   const choosePath = useCallback(async (kind) => {
+    if (!isTauriRuntime) {
+      notify.message("浏览器预览模式下不可用", { description: "系统文件选择框只在 Tauri 桌面运行时提供。" });
+      return;
+    }
     try {
       const selected = await open({ title: kind === "directory" ? "选择一个文件夹" : "选择一个文件", directory: kind === "directory", multiple: false });
       if (!selected || typeof selected !== "string") return;
@@ -53,6 +109,10 @@ export function DeveloperTools({ devtools, onDevtoolsChange, initialAction }) {
   }, [addActivity, currentRecord]);
 
   const sendSystemNotification = useCallback(async () => {
+    if (!isTauriRuntime) {
+      notify.message("浏览器预览模式下不可用", { description: "系统通知只在 Tauri 桌面运行时提供。" });
+      return;
+    }
     try {
       let granted = await isPermissionGranted();
       if (!granted) granted = (await requestPermission()) === "granted";
@@ -63,6 +123,10 @@ export function DeveloperTools({ devtools, onDevtoolsChange, initialAction }) {
   }, [addActivity, currentRecord]);
 
   const hideMainWindow = useCallback(async () => {
+    if (!isTauriRuntime) {
+      notify.message("浏览器预览模式下不可用", { description: "窗口控制只在 Tauri 桌面运行时提供。" });
+      return;
+    }
     try { await getCurrentWindow().hide(); notify.success("主窗口已隐藏到托盘"); addActivity("隐藏主窗口到系统托盘"); }
     catch (error) { notify.error("窗口操作失败", { description: String(error) }); }
   }, [addActivity]);
@@ -88,7 +152,7 @@ export function DeveloperTools({ devtools, onDevtoolsChange, initialAction }) {
   return <div className="space-y-4"><Card><CardHeader><CardTitle>开发者选项</CardTitle><CardDescription>这些能力只在开发构建中显示。</CardDescription></CardHeader><CardContent className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium">开发者工具</p><p className="text-xs text-muted-foreground">关闭后需重启应用才能完全禁用</p></div><div className="flex items-center gap-2"><Button size="sm" variant="outline" onClick={openDevtools}><Terminal />打开</Button><Switch checked={devtools} onCheckedChange={onDevtoolsChange} /></div></CardContent></Card>
     <Tabs defaultValue="files"><TabsList><TabsTrigger value="files">文件工具</TabsTrigger><TabsTrigger value="system">系统集成</TabsTrigger><TabsTrigger value="activity">活动记录</TabsTrigger><TabsTrigger value="components">UI 组件</TabsTrigger></TabsList>
       <TabsContent value="files"><Card><CardHeader><CardTitle>文件与目录</CardTitle><CardDescription>最近 5 条记录保存在应用数据目录。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-wrap gap-2"><Button onClick={() => choosePath("file")}><FileText />选择文件</Button><Button variant="outline" onClick={() => choosePath("directory")}><Folder />选择文件夹</Button><Button variant="outline" disabled={!currentRecord} onClick={copyCurrentPath}><Copy />复制当前路径</Button></div><Table><TableHeader><TableRow><TableHead>类型</TableHead><TableHead>路径</TableHead><TableHead className="text-right">时间</TableHead></TableRow></TableHeader><TableBody>{history.length ? history.map((item) => <TableRow key={`${item.path}-${item.selectedAt}`}><TableCell><Badge variant="secondary">{item.kind === "directory" ? "文件夹" : "文件"}</Badge></TableCell><TableCell className="max-w-96 truncate font-mono text-xs" title={item.path}>{item.path}</TableCell><TableCell className="text-right text-xs text-muted-foreground">{formatTime(item.selectedAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={3} className="h-20 text-center text-muted-foreground">暂无记录</TableCell></TableRow>}</TableBody></Table><Separator /><Button variant="ghost" onClick={() => persistHistory([]).then(() => notify.success("最近记录已清空"))}><Trash2 />清空最近记录</Button></CardContent></Card></TabsContent>
-      <TabsContent value="system"><div className="grid gap-4 md:grid-cols-2"><Card><CardHeader><CardTitle>窗口与托盘</CardTitle><CardDescription>验证桌面壳层能力。</CardDescription></CardHeader><CardContent className="space-y-3"><Button className="w-full" variant="outline" onClick={hideMainWindow}><Eye />隐藏主窗口</Button><Button className="w-full" variant="outline" onClick={sendSystemNotification}><Bell />测试通知</Button></CardContent></Card><Card><CardHeader><CardTitle>运行状态</CardTitle></CardHeader><CardContent className="space-y-3"><p className="flex items-center gap-2 text-sm"><CheckCircle2 className="size-4 text-emerald-500" />窗口状态恢复已启用</p><p className="flex items-center gap-2 text-sm"><CheckCircle2 className="size-4 text-emerald-500" />单实例与托盘已启用</p><Button variant="outline" onClick={() => notify.info("StagePilot", { description: "多租户演艺活动运营平台桌面端。" })}><Info />关于</Button></CardContent></Card></div></TabsContent>
+      <TabsContent value="system"><div className="grid gap-4 md:grid-cols-2"><Card><CardHeader><CardTitle>窗口与托盘</CardTitle><CardDescription>验证桌面壳层能力。</CardDescription></CardHeader><CardContent className="space-y-3"><Button className="w-full" variant="outline" onClick={hideMainWindow} disabled={!isTauriRuntime}><Eye />隐藏主窗口</Button><Button className="w-full" variant="outline" onClick={sendSystemNotification}><Bell />测试通知</Button>{!isTauriRuntime && <p className="text-xs text-muted-foreground">浏览器预览模式下窗口与系统能力不可用。</p>}</CardContent></Card><Card><CardHeader className="flex-row items-center justify-between"><div><CardTitle>运行状态</CardTitle><CardDescription>当前运行环境的真实诊断结果。</CardDescription></div><Button size="sm" variant="outline" onClick={runRuntimeDiagnostics}><RefreshCw />重新检测</Button></CardHeader><CardContent className="space-y-3">{diagnostics.map((item) => <p key={item.label} className="flex items-center gap-2 text-sm">{item.ok ? <CheckCircle2 className="size-4 shrink-0 text-emerald-500" /> : <XCircle className="size-4 shrink-0 text-red-500" />}<span>{item.label}</span><span className="ml-auto truncate text-xs text-muted-foreground" title={item.detail}>{item.detail}</span></p>)}</CardContent></Card></div></TabsContent>
       <TabsContent value="activity"><Card><CardHeader className="flex-row items-center justify-between"><div><CardTitle>活动记录</CardTitle><CardDescription>当前开发工具窗口的操作记录。</CardDescription></div><Button size="sm" variant="outline" onClick={() => { setActivity(["活动记录已刷新"]); notify.success("活动记录已重置"); }}><RefreshCw />重置</Button></CardHeader><CardContent className="space-y-2">{activity.map((item, index) => <div key={`${item}-${index}`} className="border p-3 text-sm">{item}</div>)}</CardContent></Card></TabsContent>
       <TabsContent value="components"><section className="grid gap-4 md:grid-cols-2">{demos.map(([Demo, title]) => <Card key={title}><CardHeader><CardTitle className="text-base">{title}</CardTitle></CardHeader><CardContent><Demo /></CardContent></Card>)}</section></TabsContent>
     </Tabs>

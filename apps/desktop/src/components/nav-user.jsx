@@ -18,7 +18,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { RiArrowUpDownLine, RiSparklingLine, RiUserLine, RiSettings3Line, RiLogoutBoxLine, RiVipCrownLine } from "@remixicon/react"
+import { RiArrowUpDownLine, RiSparklingLine, RiUserLine, RiSettings3Line, RiLogoutBoxLine, RiVipCrownLine, RiTerminalBoxLine } from "@remixicon/react"
 
 export function NavUser({
   user,
@@ -84,6 +84,12 @@ export function NavUser({
                 <RiSettings3Line />
                 设置
               </DropdownMenuItem>
+              {import.meta.env.DEV && (
+                <DropdownMenuItem onClick={() => onOpenAccountCenter("developer")}>
+                  <RiTerminalBoxLine />
+                  开发工具
+                </DropdownMenuItem>
+              )}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={onLogout}>
