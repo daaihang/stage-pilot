@@ -7,6 +7,8 @@ export const workspacePages = {
   organizations: { title: "机构", description: "管理品牌、学校、合作方和供应商资料。" },
   venues: { title: "场地", description: "管理场地资料、舞台条件和历史使用记录。" },
   equipment: { title: "设备", description: "管理工作空间长期持有或常用的设备资源。" },
+  members: { title: "成员", description: "管理可以访问这个工作空间的团队成员。" },
+  roles: { title: "角色与权限", description: "查看工作空间角色和可用权限范围。" },
   templates: { title: "模板", description: "维护活动、征集、流程和表单模板。" },
   settings: { title: "工作空间设置", description: "管理成员、权限、品牌、集成和安全设置。" },
   files: { title: "文件资料", description: "管理工作空间共享的文档和媒体文件。" },
