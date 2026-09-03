@@ -54,6 +54,7 @@ export function toWorkspaceSummary(workspace) {
     id: workspace.id,
     name,
     slug: workspace.slug || "",
+    role: workspace.role ? String(workspace.role).toLowerCase() : "",
     plan: workspace.role ? roleLabel(workspace.role) : "",
     logo: [...name][0] || "W",
     description: workspace.description || "",
@@ -63,11 +64,83 @@ export function toWorkspaceSummary(workspace) {
 
 export function roleLabel(role) {
   const labels = { owner: "OWNER", admin: "ADMIN", member: "MEMBER" };
-  return labels[role] || role || "";
+  const normalized = String(role || "").toLowerCase();
+  return labels[normalized] || role || "";
 }
 
 /** 角色能力判定：owner > admin > member。与后端 roleRank 保持一致。 */
 export function roleAtLeast(role, minimum) {
   const rank = { member: 1, admin: 2, owner: 3 };
-  return (rank[role] || 0) >= (rank[minimum] || 0);
+  const normalizedRole = String(role || "").toLowerCase();
+  const normalizedMinimum = String(minimum || "").toLowerCase();
+  return (rank[normalizedRole] || 0) >= (rank[normalizedMinimum] || 0);
+}
+
+const memberRoleLabels = {
+  owner: "Owner",
+  admin: "Admin",
+  member: "Member",
+};
+
+const memberStatusLabels = {
+  active: "已启用",
+  invited: "待接受",
+  suspended: "已暂停",
+};
+
+/** 成员页使用的角色展示文案；未知角色不会被伪装成真实角色。 */
+export function memberRoleLabel(role) {
+  const normalized = String(role || "").toLowerCase();
+  return memberRoleLabels[normalized] || "未知角色";
+}
+
+/** 成员页使用的状态展示文案；未知状态保留为明确的占位。 */
+export function memberStatusLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  return memberStatusLabels[normalized] || "状态未知";
+}
+
+export function memberRoleBadgeVariant(role) {
+  const normalized = String(role || "").toLowerCase();
+  return { owner: "warning-light", admin: "primary-light", member: "outline" }[normalized] || "outline";
+}
+
+export function memberStatusBadgeVariant(status) {
+  const normalized = String(status || "").toLowerCase();
+  return { active: "success-light", invited: "warning-light", suspended: "destructive-light" }[normalized] || "outline";
+}
+
+function firstMemberValue(member, keys) {
+  for (const key of keys) {
+    const value = member?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+export function memberDisplayName(member) {
+  return firstMemberValue(member, ["display_name", "displayName", "name", "email", "user_id", "userId"]) || "未命名成员";
+}
+
+export function memberInitials(member) {
+  const displayName = firstMemberValue(member, ["display_name", "displayName", "name"]);
+  if (displayName) {
+    const words = displayName.split(/\s+/).filter(Boolean);
+    if (words.length > 1) return `${[...words[0]][0]}${[...words.at(-1)][0]}`.toUpperCase();
+    return [...displayName].slice(0, 2).join("").toUpperCase();
+  }
+
+  const email = firstMemberValue(member, ["email"]);
+  if (email) return [...email.split("@")[0]].slice(0, 2).join("").toUpperCase();
+
+  const userId = firstMemberValue(member, ["user_id", "userId"]);
+  return userId ? [...userId].slice(0, 2).join("").toUpperCase() : "?";
+}
+
+export function formatMemberJoinedAt(member) {
+  const rawValue = firstMemberValue(member, ["created_at", "createdAt", "joined_at", "joinedAt"]);
+  if (!rawValue) return "加入时间未知";
+  const date = new Date(rawValue);
+  if (Number.isNaN(date.getTime())) return "加入时间未知";
+  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "numeric", day: "numeric" }).format(date);
 }

@@ -49,7 +49,7 @@ export function workspacePath(workspaceId, page = "home") {
   const paths = {
     home: "home", productions: "productions", calendar: "calendar",
     programs: "library/programs", people: "library/people", organizations: "library/organizations",
-    venues: "library/venues", equipment: "library/equipment", files: "files", templates: "templates", settings: "settings",
+    venues: "library/venues", equipment: "library/equipment", files: "files", members: "members", roles: "roles", templates: "templates", settings: "settings",
   };
   return `/w/${workspaceId}/${paths[page] ?? paths.home}`;
 }
@@ -92,7 +92,7 @@ export function matchStagePilotRoute(pathname) {
     const [, workspaceId, page, resourceId] = resourceMatch;
     return { mode: "workspace", workspaceId, productionId: null, page, resourceId, meta: workspacePages[page] };
   }
-  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|templates|settings|library\/(programs|people|organizations|venues|equipment))\/?$/);
+  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|people|organizations|venues|equipment))\/?$/);
   if (!workspaceMatch) return null;
   const [, workspaceId, routePage, libraryPage] = workspaceMatch;
   const page = libraryPage || routePage;
