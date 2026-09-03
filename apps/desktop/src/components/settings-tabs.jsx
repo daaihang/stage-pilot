@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +20,50 @@ function useSettingsTabsOrientation() {
   return isWide ? "vertical" : "horizontal";
 }
 
+function useHorizontalScrollIndicators(enabled) {
+  const scrollRef = useRef(null);
+  const [scrollState, setScrollState] = useState({ canScrollLeft: false, canScrollRight: false });
+
+  const updateScrollState = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const threshold = 1;
+    const nextState = {
+      canScrollLeft: element.scrollLeft > threshold,
+      canScrollRight: element.scrollWidth - element.clientWidth - element.scrollLeft > threshold,
+    };
+    setScrollState((current) => (
+      current.canScrollLeft === nextState.canScrollLeft && current.canScrollRight === nextState.canScrollRight
+        ? current
+        : nextState
+    ));
+  }, []);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || !enabled) {
+      setScrollState({ canScrollLeft: false, canScrollRight: false });
+      return undefined;
+    }
+
+    updateScrollState();
+    element.addEventListener("scroll", updateScrollState, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateScrollState);
+    observer?.observe(element);
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(updateScrollState);
+    mutationObserver?.observe(element, { childList: true, subtree: true, characterData: true });
+
+    return () => {
+      element.removeEventListener("scroll", updateScrollState);
+      observer?.disconnect();
+      mutationObserver?.disconnect();
+    };
+  }, [enabled, updateScrollState]);
+
+  return [scrollRef, scrollState];
+}
+
 export function SettingsTabs({
   groups,
   activeGroup,
@@ -30,6 +74,7 @@ export function SettingsTabs({
   className,
 }) {
   const orientation = useSettingsTabsOrientation();
+  const [tabsListRef, scrollState] = useHorizontalScrollIndicators(orientation === "horizontal");
 
   return (
     <Tabs
@@ -45,17 +90,26 @@ export function SettingsTabs({
       )}
       aria-disabled={disabled}
     >
-      <TabsList
-        aria-label={ariaLabel}
-        className="w-full min-w-0 justify-start overflow-x-auto lg:h-fit lg:w-full lg:flex-col lg:items-stretch lg:overflow-visible"
-      >
-        {groups.map(([id, label, Icon]) => (
-          <TabsTrigger key={id} value={id} disabled={disabled}>
-            <Icon className="size-4" />
-            {label}
-          </TabsTrigger>
-        ))}
-      </TabsList>
+      <div className="relative w-full min-w-0 lg:h-fit">
+        <TabsList
+          ref={tabsListRef}
+          aria-label={ariaLabel}
+          className="w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none lg:h-fit lg:w-full lg:flex-col lg:items-stretch lg:overflow-visible"
+        >
+          {groups.map(([id, label, Icon]) => (
+            <TabsTrigger key={id} value={id} disabled={disabled} className="max-lg:min-w-28">
+              <Icon className="size-4" />
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {orientation === "horizontal" && scrollState.canScrollLeft && (
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-muted via-muted/80 to-transparent" />
+        )}
+        {orientation === "horizontal" && scrollState.canScrollRight && (
+          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-muted via-muted/80 to-transparent" />
+        )}
+      </div>
       <TabsContent value={activeGroup} className="w-full min-w-0">
         {children}
       </TabsContent>
