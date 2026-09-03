@@ -16,11 +16,11 @@ import (
 )
 
 type objectStorage struct {
-	client         *minio.Client
-	bucket         string
-	publicEndpoint string
-	ttl            time.Duration
-	maxBytes       int64
+	client        *minio.Client
+	presignClient *minio.Client
+	bucket        string
+	ttl           time.Duration
+	maxBytes      int64
 }
 
 func newObjectStorage(ctx context.Context) (*objectStorage, error) {
@@ -34,7 +34,8 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	if os.Getenv("S3_PATH_STYLE") == "true" {
 		lookup = minio.BucketLookupPath
 	}
-	client, err := minio.New(endpoint, &minio.Options{Creds: minioCredentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), ""), Secure: secure, Region: envOrDefault("S3_REGION", "us-east-1"), BucketLookup: lookup})
+	creds := minioCredentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), "")
+	client, err := minio.New(endpoint, &minio.Options{Creds: creds, Secure: secure, Region: envOrDefault("S3_REGION", "us-east-1"), BucketLookup: lookup})
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +63,15 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	if v, e := strconv.ParseInt(os.Getenv("FILES_MAX_BYTES"), 10, 64); e == nil && v > 0 {
 		max = v
 	}
-	return &objectStorage{client: client, bucket: bucket, publicEndpoint: public, ttl: ttl, maxBytes: max}, nil
+	publicURL, err := url.Parse(public)
+	if err != nil || publicURL.Host == "" {
+		return nil, fmt.Errorf("invalid S3_PUBLIC_ENDPOINT")
+	}
+	publicClient, err := minio.New(publicURL.Host, &minio.Options{Creds: creds, Secure: publicURL.Scheme == "https", Region: envOrDefault("S3_REGION", "us-east-1"), BucketLookup: lookup})
+	if err != nil {
+		return nil, err
+	}
+	return &objectStorage{client: client, presignClient: publicClient, bucket: bucket, ttl: ttl, maxBytes: max}, nil
 }
 
 func registerFileRoutes(app *application, mux *http.ServeMux) {
@@ -147,7 +156,7 @@ func (app *application) createFile(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	presigned, err := s.client.PresignedPutObject(r.Context(), s.bucket, key, s.ttl)
+	presigned, err := s.presignClient.PresignedPutObject(r.Context(), s.bucket, key, s.ttl)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -239,7 +248,7 @@ func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, 404, "file_not_found", "文件不存在")
 		return
 	}
-	u, err := s.client.PresignedGetObject(r.Context(), bucket, key, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""}})
+	u, err := s.presignClient.PresignedGetObject(r.Context(), bucket, key, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""}})
 	if err != nil {
 		serverError(w, err)
 		return
