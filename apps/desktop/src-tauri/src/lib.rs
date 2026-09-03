@@ -14,7 +14,7 @@ const KEYRING_SERVICE: &str = "com.daaihang.stagepilot";
 #[tauri::command]
 fn secure_get(key: String) -> Result<Option<String>, String> {
     Entry::new(KEYRING_SERVICE, &key).map_err(|e| e.to_string())?.get_password().map(Some).or_else(|e| {
-        if e.to_string().to_lowercase().contains("no entry") { Ok(None) } else { Err(e.to_string()) }
+        if matches!(e, keyring::Error::NoEntry) { Ok(None) } else { Err(e.to_string()) }
     })
 }
 
@@ -25,7 +25,9 @@ fn secure_set(key: String, value: String) -> Result<(), String> {
 
 #[tauri::command]
 fn secure_delete(key: String) -> Result<(), String> {
-    Entry::new(KEYRING_SERVICE, &key).map_err(|e| e.to_string())?.delete_credential().map_err(|e| e.to_string())
+    Entry::new(KEYRING_SERVICE, &key).map_err(|e| e.to_string())?.delete_credential().or_else(|e| {
+        if matches!(e, keyring::Error::NoEntry) { Ok(()) } else { Err(e.to_string()) }
+    })
 }
 
 fn devtools_pref<R: Runtime>(app: &AppHandle<R>) -> bool {

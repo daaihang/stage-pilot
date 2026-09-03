@@ -102,7 +102,7 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("POST /auth/register", app.register)
 	mux.HandleFunc("POST /auth/login", app.login)
 	mux.HandleFunc("POST /auth/refresh", app.refresh)
-	mux.Handle("POST /auth/logout", app.auth(http.HandlerFunc(app.logout)))
+	mux.HandleFunc("POST /auth/logout", app.logout)
 	mux.Handle("POST /auth/logout-all", app.auth(http.HandlerFunc(app.logoutAll)))
 	mux.HandleFunc("POST /auth/email/verify", app.verifyEmail)
 	mux.HandleFunc("POST /auth/password/forgot", app.forgotPassword)
@@ -112,6 +112,21 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PATCH /me/password", app.auth(http.HandlerFunc(app.changePassword)))
 	mux.Handle("GET /me/preferences", app.auth(http.HandlerFunc(app.preferences)))
 	mux.Handle("PATCH /me/preferences", app.auth(http.HandlerFunc(app.updatePreferences)))
+	// Workspace / Tenant Foundation：所有 workspace 作用域操作都要求
+	// authenticated user + active workspace membership，禁止仅信 URL 参数。
+	mux.Handle("POST /v1/workspaces", app.auth(http.HandlerFunc(app.createWorkspace)))
+	mux.Handle("GET /v1/workspaces", app.auth(http.HandlerFunc(app.listWorkspaces)))
+	mux.Handle("GET /v1/workspaces/{id}", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.getWorkspace))))
+	mux.Handle("PATCH /v1/workspaces/{id}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateWorkspace))))
+	mux.Handle("GET /v1/workspaces/{id}/members", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceMembers))))
+	mux.Handle("PUT /me/last-workspace", app.auth(http.HandlerFunc(app.putLastWorkspace)))
+	mux.Handle("GET /me/last-workspace", app.auth(http.HandlerFunc(app.getLastWorkspace)))
+	// Production Foundation：production 路由挂载在 workspace 下，
+	// requireProductionAccess 同时验证 membership 与父子关系。
+	mux.Handle("GET /v1/workspaces/{id}/productions", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listProductions))))
+	mux.Handle("POST /v1/workspaces/{id}/productions", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createProduction))))
+	mux.Handle("GET /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleMember, http.HandlerFunc(app.getProduction))))
+	mux.Handle("PATCH /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleAdmin, http.HandlerFunc(app.updateProduction))))
 	return mux
 }
 
@@ -240,27 +255,55 @@ func (app *application) refresh(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, 400, "invalid_input", "refresh token 无效")
 		return
 	}
+	previousHash := tokenHash(in.RefreshToken)
 	var sid, uid string
-	err := app.db.QueryRow(r.Context(), "SELECT id,user_id FROM user_sessions WHERE refresh_token_hash=$1 AND revoked_at IS NULL AND expires_at>NOW()", tokenHash(in.RefreshToken)).Scan(&sid, &uid)
+	err := app.db.QueryRow(r.Context(), "SELECT id,user_id FROM user_sessions WHERE refresh_token_hash=$1 AND revoked_at IS NULL AND expires_at>NOW()", previousHash).Scan(&sid, &uid)
 	if err != nil {
 		errorJSON(w, 401, "invalid_session", "会话已失效")
 		return
 	}
-	_, _ = app.db.Exec(r.Context(), "UPDATE user_sessions SET revoked_at=NOW() WHERE id=$1", sid)
+	refresh := randomToken()
+	tag, err := app.db.Exec(r.Context(), "UPDATE user_sessions SET refresh_token_hash=$1,last_seen_at=NOW(),device_name=COALESCE(NULLIF($2,''),device_name) WHERE id=$3 AND user_id=$4 AND refresh_token_hash=$5 AND revoked_at IS NULL AND expires_at>NOW()", tokenHash(refresh), r.UserAgent(), sid, uid, previousHash)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() != 1 {
+		errorJSON(w, 401, "invalid_session", "会话已失效")
+		return
+	}
 	usr, err := app.findUser(r.Context(), uid)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	response, err := app.issueSession(r.Context(), uid, newID(), usr, r.UserAgent())
+	access, err := app.issueAccessToken(uid, sid)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, 200, response)
+	writeJSON(w, 200, tokenResponse{AccessToken: access, RefreshToken: refresh, ExpiresIn: int64(accessLifetime.Seconds()), User: usr})
 }
 func (app *application) logout(w http.ResponseWriter, r *http.Request) {
-	_, _ = app.db.Exec(r.Context(), "UPDATE user_sessions SET revoked_at=NOW() WHERE id=$1", claims(r).SessionID)
+	var in struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if in.RefreshToken == "" {
+		errorJSON(w, 400, "invalid_input", "refresh token 无效")
+		return
+	}
+	result, err := app.db.Exec(r.Context(), "UPDATE user_sessions SET revoked_at=NOW() WHERE refresh_token_hash=$1 AND revoked_at IS NULL", tokenHash(in.RefreshToken))
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if result.RowsAffected() != 1 {
+		errorJSON(w, 401, "invalid_session", "会话已失效")
+		return
+	}
 	writeJSON(w, 200, map[string]string{"status": "ok"})
 }
 func (app *application) logoutAll(w http.ResponseWriter, r *http.Request) {
@@ -434,9 +477,12 @@ func (app *application) issueSession(ctx context.Context, uid, sid string, usr u
 	if err != nil {
 		return tokenResponse{}, err
 	}
-	c := authClaims{SessionID: sid, RegisteredClaims: jwt.RegisteredClaims{Subject: uid, ExpiresAt: jwt.NewNumericDate(time.Now().Add(accessLifetime)), IssuedAt: jwt.NewNumericDate(time.Now())}}
-	signed, err := jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(app.jwtSecret)
+	signed, err := app.issueAccessToken(uid, sid)
 	return tokenResponse{AccessToken: signed, RefreshToken: refresh, ExpiresIn: int64(accessLifetime.Seconds()), User: usr}, err
+}
+func (app *application) issueAccessToken(uid, sid string) (string, error) {
+	c := authClaims{SessionID: sid, RegisteredClaims: jwt.RegisteredClaims{Subject: uid, ExpiresAt: jwt.NewNumericDate(time.Now().Add(accessLifetime)), IssuedAt: jwt.NewNumericDate(time.Now())}}
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(app.jwtSecret)
 }
 func (app *application) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
