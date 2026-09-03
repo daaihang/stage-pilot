@@ -49,6 +49,21 @@ function useHorizontalScrollIndicators(enabled) {
 
     updateScrollState();
     element.addEventListener("scroll", updateScrollState, { passive: true });
+    const onWheel = (event) => {
+      if (event.ctrlKey) return;
+
+      const delta = event.deltaX || event.deltaY;
+      if (!delta) return;
+
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientWidth : 1;
+      const maxScrollLeft = Math.max(0, element.scrollWidth - element.clientWidth);
+      const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, element.scrollLeft + delta * unit));
+
+      if (nextScrollLeft === element.scrollLeft) return;
+      event.preventDefault();
+      element.scrollLeft = nextScrollLeft;
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateScrollState);
     observer?.observe(element);
     const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(updateScrollState);
@@ -56,6 +71,7 @@ function useHorizontalScrollIndicators(enabled) {
 
     return () => {
       element.removeEventListener("scroll", updateScrollState);
+      element.removeEventListener("wheel", onWheel);
       observer?.disconnect();
       mutationObserver?.disconnect();
     };
