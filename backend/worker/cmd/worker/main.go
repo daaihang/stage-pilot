@@ -27,6 +27,7 @@ func main() {
 	defer pool.Close()
 
 	logger.Info("worker started", "interval", interval)
+	go cleanupTicker(ctx, logger, pool, interval)
 	run(ctx, logger, pool, interval)
 	logger.Info("worker stopped")
 }

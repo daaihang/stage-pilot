@@ -9,6 +9,7 @@ export const workspacePages = {
   equipment: { title: "设备", description: "管理工作空间长期持有或常用的设备资源。" },
   templates: { title: "模板", description: "维护活动、征集、流程和表单模板。" },
   settings: { title: "工作空间设置", description: "管理成员、权限、品牌、集成和安全设置。" },
+  files: { title: "文件资料", description: "管理工作空间共享的文档和媒体文件。" },
 };
 
 export const productionPages = {
@@ -46,7 +47,7 @@ export function workspacePath(workspaceId, page = "home") {
   const paths = {
     home: "home", productions: "productions", calendar: "calendar",
     programs: "library/programs", people: "library/people", organizations: "library/organizations",
-    venues: "library/venues", equipment: "library/equipment", templates: "templates", settings: "settings",
+    venues: "library/venues", equipment: "library/equipment", files: "files", templates: "templates", settings: "settings",
   };
   return `/w/${workspaceId}/${paths[page] ?? paths.home}`;
 }
@@ -89,7 +90,7 @@ export function matchStagePilotRoute(pathname) {
     const [, workspaceId, page, resourceId] = resourceMatch;
     return { mode: "workspace", workspaceId, productionId: null, page, resourceId, meta: workspacePages[page] };
   }
-  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|templates|settings|library\/(programs|people|organizations|venues|equipment))\/?$/);
+  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|templates|settings|library\/(programs|people|organizations|venues|equipment))\/?$/);
   if (!workspaceMatch) return null;
   const [, workspaceId, routePage, libraryPage] = workspaceMatch;
   const page = libraryPage || routePage;

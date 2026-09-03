@@ -33,6 +33,7 @@ type application struct {
 	exposeDevTokens bool
 	rateMu          sync.Mutex
 	rate            map[string]rateEntry
+	storage         *objectStorage
 }
 type rateEntry struct {
 	started time.Time
@@ -78,7 +79,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	app := application{db: pool, logger: logger, jwtSecret: []byte(envOrDefault("AUTH_JWT_SECRET", "stagepilot-development-secret-change-me")), exposeDevTokens: os.Getenv("AUTH_EXPOSE_DEV_TOKENS") == "true", rate: make(map[string]rateEntry)}
+	storage, storageErr := newObjectStorage(context.Background())
+	if storageErr != nil {
+		logger.Warn("object storage unavailable", "error", storageErr)
+	}
+	app := application{db: pool, logger: logger, jwtSecret: []byte(envOrDefault("AUTH_JWT_SECRET", "stagepilot-development-secret-change-me")), exposeDevTokens: os.Getenv("AUTH_EXPOSE_DEV_TOKENS") == "true", rate: make(map[string]rateEntry), storage: storage}
 	server := &http.Server{Addr: ":" + port, Handler: requestLogger(logger, corsMiddleware(allowedOrigins())(app.routes())), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -127,6 +132,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /v1/workspaces/{id}/productions", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createProduction))))
 	mux.Handle("GET /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleMember, http.HandlerFunc(app.getProduction))))
 	mux.Handle("PATCH /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleAdmin, http.HandlerFunc(app.updateProduction))))
+	registerFileRoutes(app, mux)
 	return mux
 }
 

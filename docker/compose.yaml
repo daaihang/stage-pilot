@@ -1,6 +1,25 @@
 name: stagepilot
 
 services:
+  minio:
+    image: minio/minio:RELEASE.2025-10-15T17-29-55Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-stagepilot}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-stagepilot-secret}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${STAGEPILOT_S3_CORS_ORIGINS:-http://localhost:1420,http://127.0.0.1:1420,tauri://localhost,https://tauri.localhost}
+    ports:
+      - "${STAGEPILOT_MINIO_PORT:-9000}:9000"
+      - "${STAGEPILOT_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -39,6 +58,16 @@ services:
       PORT: 8080
       DATABASE_URL: postgres://${STAGEPILOT_POSTGRES_USER:-stagepilot}:${STAGEPILOT_POSTGRES_PASSWORD:-stagepilot}@postgres:5432/${STAGEPILOT_POSTGRES_DB:-stagepilot}?sslmode=disable
       CORS_ALLOWED_ORIGINS: ${STAGEPILOT_CORS_ALLOWED_ORIGINS:-http://localhost:1420,http://127.0.0.1:1420,http://[::1]:1420,tauri://localhost,https://tauri.localhost}
+      S3_ENDPOINT: http://minio:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-stagepilot}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-stagepilot}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-stagepilot-secret}
+      S3_USE_SSL: ${S3_USE_SSL:-false}
+      S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
+      S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
+      FILES_MAX_BYTES: ${FILES_MAX_BYTES:-5368709120}
     ports:
       - "${STAGEPILOT_API_PORT:-18080}:8080"
     depends_on:
@@ -58,6 +87,13 @@ services:
     environment:
       DATABASE_URL: postgres://${STAGEPILOT_POSTGRES_USER:-stagepilot}:${STAGEPILOT_POSTGRES_PASSWORD:-stagepilot}@postgres:5432/${STAGEPILOT_POSTGRES_DB:-stagepilot}?sslmode=disable
       WORKER_INTERVAL: ${STAGEPILOT_WORKER_INTERVAL:-30s}
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-stagepilot}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-stagepilot}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-stagepilot-secret}
+      S3_USE_SSL: ${S3_USE_SSL:-false}
+      S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -65,3 +101,4 @@ services:
 
 volumes:
   postgres-data:
+  minio-data:
