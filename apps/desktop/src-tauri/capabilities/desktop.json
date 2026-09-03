@@ -6,11 +6,9 @@
     "linux"
   ],
   "windows": [
-    "main",
-    "account-center"
+    "main"
   ],
   "permissions": [
-    "core:webview:allow-create-webview-window",
     "global-shortcut:default",
     "window-state:default"
   ]

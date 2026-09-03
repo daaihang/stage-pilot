@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
@@ -27,7 +26,7 @@ import { appStore, isTauriRuntime } from "@/lib/app-store";
 const MAX_HISTORY = 5;
 const formatTime = (value) => new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
 
-export function DeveloperTools({ devtools, onDevtoolsChange }) {
+export function DeveloperTools({ devtools, onDevtoolsChange, initialAction }) {
   const [history, setHistory] = useState([]);
   const [activity, setActivity] = useState(["开发工具已准备就绪"]);
   const currentRecord = history[0];
@@ -64,7 +63,7 @@ export function DeveloperTools({ devtools, onDevtoolsChange }) {
   }, [addActivity, currentRecord]);
 
   const hideMainWindow = useCallback(async () => {
-    try { const main = await WebviewWindow.getByLabel("main"); if (!main) throw new Error("找不到主窗口"); await main.hide(); notify.success("主窗口已隐藏到托盘"); addActivity("隐藏主窗口到系统托盘"); }
+    try { await getCurrentWindow().hide(); notify.success("主窗口已隐藏到托盘"); addActivity("隐藏主窗口到系统托盘"); }
     catch (error) { notify.error("窗口操作失败", { description: String(error) }); }
   }, [addActivity]);
 
@@ -82,13 +81,7 @@ export function DeveloperTools({ devtools, onDevtoolsChange }) {
     if (action === "open-devtools") await openDevtools();
   }, [choosePath, copyCurrentPath, openDevtools, sendSystemNotification]);
 
-  useEffect(() => {
-    const initialAction = new URLSearchParams(window.location.search).get("action");
-    if (initialAction) queueMicrotask(() => runAction(initialAction));
-    let cleanup;
-    listen("account-center:developer-action", (event) => runAction(event.payload)).then((next) => { cleanup = next; });
-    return () => cleanup?.();
-  }, [runAction]);
+  useEffect(() => { if (initialAction) queueMicrotask(() => runAction(initialAction)); }, [initialAction, runAction]);
 
   const demos = useMemo(() => [[ContextMenuDemo1, "基础菜单"], [ContextMenuDemo2, "图标操作"], [ContextMenuDemo3, "快捷键标注"], [ContextMenuDemo4, "嵌套子菜单"], [ContextMenuDemo5, "分组标签"], [ContextMenuDemo6, "复选项"], [ContextMenuDemo7, "单选项"], [ContextMenuDemo8, "危险操作"]], []);
 

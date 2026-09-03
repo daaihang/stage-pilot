@@ -2,6 +2,22 @@
 
 本文说明桌面端 Workspace / Production 双上下文侧栏的数据边界。Workspace / Tenant Foundation 与 Production Foundation 阶段均已接入真实后端：登录态使用 `apiNavigationRepository`（数据来自 `/v1/workspaces` 与 `/v1/workspaces/:id/productions` 等接口），`mockNavigationRepository` 仅保留给无后端的 UI 开发预览。
 
+## 账户中心（单窗口）
+
+账户中心不再创建独立 Tauri 窗口，而是主窗口中的第三种导航上下文。路由为：
+
+| 路由 | 页面 |
+| --- | --- |
+| `/account/profile` | 个人资料，使用 `PATCH /me` 更新显示名称 |
+| `/account/preferences` | 偏好与通知；主题、标题栏和桌面通知当前保存在本地 |
+| `/account/security` | 登录与安全；密码修改使用 `PATCH /me/password`，邮箱验证、会话和注销暂为占位 |
+| `/account/billing` | 方案与账单；当前套餐为本地状态，支付、发票和升级暂为占位 |
+| `/account/developer` | 开发工具，仅开发构建显示 |
+
+从 Workspace 或 Production 进入账户中心时，使用 `?from=<编码后的内部路径>` 保存来源。前端只接受已知的内部路由，并拒绝外部 URL、`/account/*` 或非法路径；无效来源回退到当前 Workspace 首页。账户侧栏顶部的返回按钮因此可以回到进入前的具体页面。
+
+账户导航顺序由 `src/lib/navigation.js` 的前端配置控制，不依赖后端返回菜单数组。后端只提供用户资料、权限和实体数据；新增账户页面时需同步更新路由元数据、账户侧栏配置、页面标题和开发构建条件。
+
 ## 领域层级（Production Foundation 后）
 
 User 是平台级账号；Workspace 是 SaaS 租户边界，通过 `workspace_memberships` 与 User 保持多对多关系；Production 属于且只属于一个 Workspace，是某一次具体活动的内部生产工作空间；Production Resources（节目、征集、Rundown 等）是后续阶段领域，本阶段仅建立父容器。

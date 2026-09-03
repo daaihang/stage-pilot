@@ -1,65 +1,58 @@
-import { useEffect, useMemo, useState } from "react";
-import { emitTo, listen } from "@tauri-apps/api/event";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider } from "@/components/ui/sidebar";
 import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
-import { updateMe } from "@/lib/auth";
-import { AppSonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { updateMe, updatePassword } from "@/lib/auth";
 import { DeveloperTools } from "@/components/developer-tools";
-import { CreditCard, Palette, Settings, Sparkles, Terminal, UserRound } from "lucide-react";
+import { CreditCard, LockKeyhole, ShieldCheck } from "lucide-react";
 
-const accountPages = [
-  { id: "profile", label: "个人中心", icon: UserRound, title: "个人中心", description: "查看当前账户资料。" },
-  { id: "subscription", label: "订阅与 Pro", icon: Sparkles, title: "订阅与 Pro", description: "查看当前套餐和订阅能力。" },
-  { id: "settings", label: "设置", icon: Settings, title: "设置", description: "管理应用外观和标题栏选项。" },
-  ...(import.meta.env.DEV ? [{ id: "developer", label: "开发工具", icon: Terminal, title: "开发工具", description: "验证文件、窗口、通知和 UI 组件能力。" }] : []),
-];
-
-function AccountProfile({ user }) {
-  const [displayName, setDisplayName] = useState(user.display_name || user.name || "");
+function AccountProfile({ user, onUserUpdate }) {
+  const [displayName, setDisplayName] = useState(user?.display_name || user?.name || "");
   const [saving, setSaving] = useState(false);
-  const save = async () => { setSaving(true); try { await updateMe({ display_name: displayName }); notify.success("资料已保存"); } catch (error) { notify.error("资料保存失败", { description: error.message }); } finally { setSaving(false); } };
-  const name = user.display_name || user.name || "User";
-  return <Card><CardHeader><CardTitle>账户资料</CardTitle><CardDescription>个人资料独立于 Workspace，未来可绑定更多登录方式。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center gap-4"><Avatar className="size-16"><AvatarImage src={user.avatar_url || user.avatar} alt={name} /><AvatarFallback>{name.slice(0, 2) || "U"}</AvatarFallback></Avatar><div><p className="text-base font-medium">{name}</p><p className="text-sm text-muted-foreground">{user.username || "未设置 username"}</p><p className="text-xs text-muted-foreground">{user.email}</p></div></div><div className="space-y-2"><label className="text-sm font-medium" htmlFor="display-name">显示名称</label><input id="display-name" className="flex h-9 w-full border bg-transparent px-3 text-sm outline-none" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存资料"}</Button></div><div className="border p-3 text-sm"><p className="text-xs text-muted-foreground">邮箱验证状态</p><p className="mt-1 font-medium">{user.email_verified ? "已验证" : "待验证"}</p></div></CardContent></Card>;
+  useEffect(() => setDisplayName(user?.display_name || user?.name || ""), [user]);
+  const save = async () => {
+    const value = displayName.trim();
+    if (!value) return notify.error("资料保存失败", { description: "显示名称不能为空。" });
+    setSaving(true); const toastId = notify.loading("正在保存资料…");
+    try { const updated = await updateMe({ display_name: value }); onUserUpdate?.(updated); notify.success("资料已保存", { id: toastId }); }
+    catch (error) { notify.error("资料保存失败", { id: toastId, description: error instanceof Error ? error.message : String(error) }); }
+    finally { setSaving(false); }
+  };
+  const name = user?.display_name || user?.name || "User";
+  return <Card><CardHeader><CardTitle>个人资料</CardTitle><CardDescription>这些资料属于你的账户，不随 Workspace 改变。</CardDescription></CardHeader><CardContent className="space-y-5"><div className="flex items-center gap-4"><Avatar className="size-16"><AvatarImage src={user?.avatar_url || user?.avatar} alt={name} /><AvatarFallback>{name.slice(0, 2) || "U"}</AvatarFallback></Avatar><div><p className="text-base font-medium">{name}</p><p className="text-sm text-muted-foreground">{user?.username || "未设置用户名"}</p><p className="text-xs text-muted-foreground">{user?.email || "未设置邮箱"}</p></div></div><div className="space-y-2"><label className="text-sm font-medium" htmlFor="account-display-name">显示名称</label><input id="account-display-name" className="flex h-9 w-full border bg-transparent px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" value={displayName} onChange={(event) => setDisplayName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save(); }} /><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存资料"}</Button></div><div className="border p-3 text-sm"><p className="text-xs text-muted-foreground">邮箱验证状态</p><p className="mt-1 font-medium">{user?.email_verified ? "已验证" : "待验证（后端接入后可操作）"}</p></div></CardContent></Card>;
 }
 
-function SubscriptionView({ subscription }) {
-  const isPro = subscription.plan === "pro";
-  return <Card><CardHeader><CardTitle>订阅状态</CardTitle><CardDescription>订阅状态目前保存在本地，支付服务接入后将自动同步。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center justify-between gap-4 border p-4"><div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><CreditCard className="size-4" /></div><div><p className="font-medium">{isPro ? "Pro 会员" : "免费版"}</p><p className="text-sm text-muted-foreground">{isPro ? "已启用 Pro 能力" : "适合本地体验和基础功能"}</p></div></div><Badge variant={isPro ? "default" : "secondary"}>{isPro ? "PRO" : "FREE"}</Badge></div><Button className="w-full" variant={isPro ? "outline" : "default"} onClick={() => notify.message(isPro ? "订阅管理将在接入支付服务后开放" : "升级功能将在接入支付服务后开放", { description: "当前为本地演示模式。" })}>{isPro ? "管理订阅" : "升级到 Pro"}</Button></CardContent></Card>;
+function SettingRow({ title, description, value }) { return <div className="flex items-center justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{description}</p></div><div className="shrink-0">{value}</div></div>; }
+
+function PreferencesView({ theme, applyTheme, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange }) {
+  const [notifications, setNotifications] = useState(true);
+  const updateNotifications = (checked) => { setNotifications(checked); notify.success(checked ? "桌面通知已开启" : "桌面通知已关闭"); };
+  return <Card><CardHeader><CardTitle>偏好与通知</CardTitle><CardDescription>设置立即应用于当前桌面客户端，暂不写入服务端。</CardDescription></CardHeader><CardContent className="space-y-5"><SettingRow title="主题" description="在浅色、深色和系统外观之间切换" value={<div className="flex gap-1">{[["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]].map(([value, label]) => <Button key={value} size="sm" variant={theme === value ? "secondary" : "outline"} onClick={() => { applyTheme(value); notify.info(`已切换到${label}主题`); }}>{label}</Button>)}</div>} /><SettingRow title="标题栏标题" description="在窗口标题栏中央显示页面或应用名称" value={<Switch checked={showTitlebarTitle} onCheckedChange={onTitlebarVisibilityChange} />} /><div className={`space-y-2 border p-3 ${!showTitlebarTitle ? "opacity-50" : ""}`} aria-disabled={!showTitlebarTitle}><p className="text-xs font-medium">标题内容</p><div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="标题栏内容"><button type="button" role="radio" aria-checked={titlebarTitleMode === "page"} disabled={!showTitlebarTitle} className={`border px-2 py-2 text-left text-xs ${titlebarTitleMode === "page" ? "border-primary bg-primary/10" : "border-border"}`} onClick={() => onTitlebarModeChange("page")}>当前页面名称</button><button type="button" role="radio" aria-checked={titlebarTitleMode === "app"} disabled={!showTitlebarTitle} className={`border px-2 py-2 text-left text-xs ${titlebarTitleMode === "app" ? "border-primary bg-primary/10" : "border-border"}`} onClick={() => onTitlebarModeChange("app")}>应用名称</button></div></div><SettingRow title="桌面通知" description="接收活动提醒和系统状态通知" value={<Switch checked={notifications} onCheckedChange={updateNotifications} />} /><SettingRow title="语言" description="多语言界面将在偏好服务接入后开放" value={<Badge variant="outline">中文（即将开放）</Badge>} /><SettingRow title="时区" description="活动时间显示时区将在偏好服务接入后开放" value={<Badge variant="outline">Asia/Shanghai</Badge>} /></CardContent></Card>;
 }
 
-function SettingsView({ theme, applyTheme, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange }) {
-  return <div className="space-y-4"><Card><CardHeader><CardTitle>外观</CardTitle><CardDescription>控制应用主题和标题栏内容。</CardDescription></CardHeader><CardContent className="space-y-4"><SettingRow title="深色模式" description="下次启动时自动恢复" value={<Switch checked={theme === "dark"} onCheckedChange={(checked) => applyTheme(checked ? "dark" : "light")} />} /><SettingRow title="标题栏标题" description="在标题栏中央显示页面或应用名称" value={<Switch checked={showTitlebarTitle} onCheckedChange={onTitlebarVisibilityChange} />} /><div className={`space-y-2 border p-3 ${!showTitlebarTitle ? "opacity-50" : ""}`} aria-disabled={!showTitlebarTitle}><div className="flex items-center gap-2"><Palette className="size-4" /><p className="text-xs font-medium">标题内容</p></div><div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="标题栏内容"><button type="button" role="radio" aria-checked={titlebarTitleMode === "page"} disabled={!showTitlebarTitle} className={`border px-2 py-2 text-left text-xs ${titlebarTitleMode === "page" ? "border-primary bg-primary/10" : "border-border"}`} onClick={() => onTitlebarModeChange("page")}>当前页面名称</button><button type="button" role="radio" aria-checked={titlebarTitleMode === "app"} disabled={!showTitlebarTitle} className={`border px-2 py-2 text-left text-xs ${titlebarTitleMode === "app" ? "border-primary bg-primary/10" : "border-border"}`} onClick={() => onTitlebarModeChange("app")}>应用名称</button></div></div></CardContent></Card></div>;
+function SecurityView() {
+  const [form, setForm] = useState({ current: "", next: "", confirm: "" }); const [saving, setSaving] = useState(false);
+  const changePassword = async () => {
+    if (!form.current || form.next.length < 8 || form.next !== form.confirm) return notify.error("无法修改密码", { description: form.next.length < 8 ? "新密码至少需要 8 个字符。" : "两次输入的新密码不一致。" });
+    setSaving(true); const toastId = notify.loading("正在修改密码…");
+    try { await updatePassword(form.current, form.next); setForm({ current: "", next: "", confirm: "" }); notify.success("密码已修改", { id: toastId }); }
+    catch (error) { notify.error("密码修改失败", { id: toastId, description: error instanceof Error ? error.message : String(error) }); }
+    finally { setSaving(false); }
+  };
+  return <div className="space-y-4"><Card><CardHeader><CardTitle>登录与安全</CardTitle><CardDescription>密码修改已接入，其他安全能力等待后端接口。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center gap-3 border p-3"><LockKeyhole className="size-4 text-primary" /><div><p className="text-sm font-medium">修改密码</p><p className="text-xs text-muted-foreground">使用当前密码验证身份后设置新密码。</p></div></div>{[["security-current", "当前密码", "current"], ["security-next", "新密码", "next"], ["security-confirm", "确认新密码", "confirm"]].map(([id, label, key]) => <div key={id} className="space-y-2"><label className="text-sm font-medium" htmlFor={id}>{label}</label><input id={id} type="password" className="flex h-9 w-full border bg-transparent px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" value={form[key]} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} /></div>)}<Button onClick={changePassword} disabled={saving}>{saving ? "提交中…" : "修改密码"}</Button></CardContent></Card><PlaceholderSecurity title="邮箱验证" description="邮箱验证和重新发送验证邮件将在后端接入后开放。" /><PlaceholderSecurity title="登录设备与会话" description="设备列表、远程退出和登录历史将在会话 API 接入后开放。" /><PlaceholderSecurity title="注销账户" description="账户删除需要后端确认和数据保留策略，暂不可操作。" /></div>;
+}
+function PlaceholderSecurity({ title, description }) { return <Card><CardContent className="flex items-start gap-3 p-4"><ShieldCheck className="mt-0.5 size-4 text-muted-foreground" /><div><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{description}</p></div></CardContent></Card>; }
+
+function BillingView({ subscription }) {
+  const isPro = subscription?.plan === "pro";
+  return <div className="space-y-4"><Card><CardHeader><CardTitle>方案与账单</CardTitle><CardDescription>当前方案来自本地订阅状态，支付服务接入后将自动同步。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center justify-between gap-4 border p-4"><div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><CreditCard className="size-4" /></div><div><p className="font-medium">{isPro ? "Pro 方案" : "免费方案"}</p><p className="text-sm text-muted-foreground">{isPro ? "已启用 Pro 能力" : "适合本地体验和基础功能"}</p></div></div><Badge variant={isPro ? "default" : "secondary"}>{isPro ? "PRO" : "FREE"}</Badge></div><div className="grid gap-3 text-sm md:grid-cols-3"><div className="border p-3">工作空间：{isPro ? "不限" : "基础额度"}</div><div className="border p-3">活动与资源：{isPro ? "完整能力" : "本地体验"}</div><div className="border p-3">团队协作：{isPro ? "可用" : "即将开放"}</div></div><Button className="w-full" variant={isPro ? "outline" : "default"} onClick={() => notify.message(isPro ? "订阅管理将在接入支付服务后开放" : "升级功能将在接入支付服务后开放", { description: "当前为前端预览模式。" })}>{isPro ? "管理订阅" : "升级到 Pro"}</Button></CardContent></Card><Card><CardContent className="p-4 text-sm text-muted-foreground">账单、发票和付款方式将在计费服务接入后显示。</CardContent></Card></div>;
 }
 
-function SettingRow({ title, description, value }) {
-  return <div className="flex items-center justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{description}</p></div><div className="shrink-0">{value}</div></div>;
-}
-
-export function AccountCenter({ user, subscription, theme, applyTheme, devtools, onDevtoolsChange, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange }) {
-  const initialPage = useMemo(() => new URLSearchParams(window.location.search).get("view") || "profile", []);
-  const [activePage, setActivePage] = useState(accountPages.some((page) => page.id === initialPage) ? initialPage : "profile");
-  const page = accountPages.find((item) => item.id === activePage) || accountPages[0];
-
-  useEffect(() => {
-    let unlisten;
-    listen("account-center:navigate", (event) => {
-      if (accountPages.some((item) => item.id === event.payload)) setActivePage(event.payload);
-    }).then((cleanup) => { unlisten = cleanup; });
-    return () => unlisten?.();
-  }, []);
-
-  const syncSetting = (key, value) => emitTo("main", "account-center:setting-changed", { key, value }).catch(() => {});
-  const updateTheme = (value) => { applyTheme(value); syncSetting("theme", value); };
-  const updateTitleVisibility = (value) => { onTitlebarVisibilityChange(value); syncSetting("showTitlebarTitle", value); };
-  const updateTitleMode = (value) => { onTitlebarModeChange(value); syncSetting("titlebarTitleMode", value); };
-  const updateDevtools = (value) => { onDevtoolsChange(value); syncSetting("devtools", value); };
-
-  return <TooltipProvider><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh"><Sidebar collapsible="none" className="hidden w-52 border-r md:flex"><SidebarContent><SidebarGroup><SidebarGroupContent><SidebarMenu>{accountPages.map((item) => { const Icon = item.icon; return <SidebarMenuItem key={item.id}><SidebarMenuButton isActive={activePage === item.id} onClick={() => setActivePage(item.id)}><Icon /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>; })}</SidebarMenu></SidebarGroupContent></SidebarGroup></SidebarContent></Sidebar><main className="flex min-w-0 flex-1 flex-col overflow-hidden"><div className="flex flex-1 flex-col gap-4 overflow-y-auto p-4 md:p-6"><div className="md:hidden"><div className="flex gap-1 overflow-x-auto border-b pb-2">{accountPages.map((item) => <Button key={item.id} size="sm" variant={activePage === item.id ? "secondary" : "ghost"} onClick={() => setActivePage(item.id)}>{item.label}</Button>)}</div></div><div className="mx-auto w-full max-w-4xl space-y-5"><div><h1 className="text-2xl font-semibold tracking-tight">{page.title}</h1><p className="text-sm text-muted-foreground">{page.description}</p></div>{activePage === "profile" && <AccountProfile user={user} />}{activePage === "subscription" && <SubscriptionView subscription={subscription} />}{activePage === "settings" && <SettingsView theme={theme} applyTheme={updateTheme} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={updateTitleVisibility} onTitlebarModeChange={updateTitleMode} />}{activePage === "developer" && import.meta.env.DEV && <DeveloperTools devtools={devtools} onDevtoolsChange={updateDevtools} />}</div></div></main></SidebarProvider><AppSonner /></TooltipProvider>;
+export function AccountCenter({ page = "profile", user, onUserUpdate, subscription, theme, applyTheme, devtools, onDevtoolsChange, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange, initialAction }) {
+  const titles = { profile: ["个人资料", "管理你的个人身份信息和邮箱。"], preferences: ["偏好与通知", "控制 StagePilot 的外观和通知体验。"], security: ["登录与安全", "保护账号、密码和登录安全。"], billing: ["方案与账单", "查看当前方案和可用能力。"], developer: ["开发工具", "验证桌面能力和 UI 组件。"] };
+  const [title, description] = titles[page] || titles.profile;
+  return <div className="mx-auto w-full max-w-4xl space-y-5"><div><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="text-sm text-muted-foreground">{description}</p></div>{page === "profile" && <AccountProfile user={user} onUserUpdate={onUserUpdate} />}{page === "preferences" && <PreferencesView theme={theme} applyTheme={applyTheme} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} />}{page === "security" && <SecurityView />}{page === "billing" && <BillingView subscription={subscription} />}{page === "developer" && import.meta.env.DEV && <DeveloperTools devtools={devtools} onDevtoolsChange={onDevtoolsChange} initialAction={initialAction} />}</div>;
 }

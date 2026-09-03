@@ -69,7 +69,7 @@ export function NavUser({
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem onClick={() => onOpenAccountCenter("subscription")}>
+              <DropdownMenuItem onClick={() => onOpenAccountCenter("billing")}>
                 {subscription?.plan === "pro" ? <RiVipCrownLine /> : <RiSparklingLine />}
                 {subscription?.plan === "pro" ? "Pro 订阅" : "升级到 Pro"}
               </DropdownMenuItem>
@@ -80,7 +80,7 @@ export function NavUser({
                 <RiUserLine />
                 个人中心
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onOpenAccountCenter("settings")}>
+              <DropdownMenuItem onClick={() => onOpenAccountCenter("preferences")}>
                 <RiSettings3Line />
                 设置
               </DropdownMenuItem>

@@ -140,6 +140,9 @@ export async function logout() {
 
 export async function getMe() { return request("/me"); }
 export async function updateMe(patch) { return request("/me", { method: "PATCH", body: JSON.stringify(patch) }); }
+export async function updatePassword(currentPassword, newPassword) {
+  return request("/me/password", { method: "PATCH", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) });
+}
 export async function getPreferences() { return request("/me/preferences"); }
 export async function updatePreferences(patch) { return request("/me/preferences", { method: "PATCH", body: JSON.stringify(patch) }); }
 export async function verifyEmail(token) { return rawRequest("/auth/email/verify", { method: "POST", body: JSON.stringify({ token }) }); }

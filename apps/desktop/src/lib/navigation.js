@@ -25,6 +25,14 @@ export const productionPages = {
   settings: { title: "活动设置", description: "管理活动信息、权限、功能模块和归档。" },
 };
 
+export const accountPages = {
+  profile: { title: "个人资料", description: "管理你的个人身份信息和邮箱。" },
+  preferences: { title: "偏好与通知", description: "控制 StagePilot 的外观和通知体验。" },
+  security: { title: "登录与安全", description: "保护账号、密码和登录安全。" },
+  billing: { title: "方案与账单", description: "查看当前方案和可用能力。" },
+  developer: { title: "开发工具", description: "验证桌面能力和 UI 组件（仅开发构建）。", devOnly: true },
+};
+
 // Production 生命周期状态（Production Foundation）：只表达生命周期，
 // 不表达节目征集或现场状态。与后端 CHECK 约束保持一致。
 export const productionStatus = {
@@ -43,15 +51,43 @@ export function workspacePath(workspaceId, page = "home") {
   return `/w/${workspaceId}/${paths[page] ?? paths.home}`;
 }
 
+export function resourcePath(workspaceId, resourceType, resourceId) {
+  const paths = { programs: "library/programs", people: "library/people", organizations: "library/organizations", venues: "library/venues", equipment: "library/equipment" };
+  return `/w/${workspaceId}/${paths[resourceType]}/${resourceId}`;
+}
+
 export function productionPath(workspaceId, productionId, page = "overview") {
   return `/w/${workspaceId}/p/${productionId}/${productionPages[page] ? page : "overview"}`;
 }
 
+export function accountPath(page = "profile", from) {
+  const nextPage = accountPages[page] && (!accountPages[page].devOnly || import.meta.env.DEV) ? page : "profile";
+  const path = `/account/${nextPage}`;
+  return from ? `${path}?from=${encodeURIComponent(from)}` : path;
+}
+
+export function resolveAccountReturnTarget(search, fallback) {
+  const candidate = new URLSearchParams(search || "").get("from");
+  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//") || candidate.startsWith("/account")) return fallback;
+  return candidate;
+}
+
 export function matchStagePilotRoute(pathname) {
+  const accountMatch = pathname.match(/^\/account\/([^/]+)\/?$/);
+  if (accountMatch) {
+    const [, page] = accountMatch;
+    if (!accountPages[page] || (accountPages[page].devOnly && !import.meta.env.DEV)) return null;
+    return { mode: "account", page, meta: accountPages[page] };
+  }
   const productionMatch = pathname.match(/^\/w\/([^/]+)\/p\/([^/]+)\/([^/]+)\/?$/);
   if (productionMatch) {
     const [, workspaceId, productionId, page] = productionMatch;
     return productionPages[page] ? { mode: "production", workspaceId, productionId, page, meta: productionPages[page] } : null;
+  }
+  const resourceMatch = pathname.match(/^\/w\/([^/]+)\/library\/(programs|people|organizations|venues|equipment)\/([^/]+)\/?$/);
+  if (resourceMatch) {
+    const [, workspaceId, page, resourceId] = resourceMatch;
+    return { mode: "workspace", workspaceId, productionId: null, page, resourceId, meta: workspacePages[page] };
   }
   const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|templates|settings|library\/(programs|people|organizations|venues|equipment))\/?$/);
   if (!workspaceMatch) return null;
