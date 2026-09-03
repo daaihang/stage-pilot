@@ -431,7 +431,7 @@ function SidebarContent({
       <div
         aria-hidden="true"
         className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 z-10 h-12 bg-gradient-to-b from-sidebar via-sidebar/95 to-transparent opacity-0 shadow-[0_8px_14px_-10px_var(--sidebar-foreground)] transition-opacity duration-200",
+          "pointer-events-none absolute inset-x-0 top-0 z-10 h-8 bg-gradient-to-b from-sidebar via-sidebar/80 to-transparent opacity-0 transition-opacity duration-150",
           "group-data-[collapsible=icon]:opacity-0",
           scrollState.canScrollUp && "group-data-[collapsible=icon]:opacity-100"
         )}
@@ -439,7 +439,7 @@ function SidebarContent({
       <div
         aria-hidden="true"
         className={cn(
-          "pointer-events-none absolute inset-x-0 bottom-0 z-10 h-12 bg-gradient-to-t from-sidebar via-sidebar/95 to-transparent opacity-0 shadow-[0_-8px_14px_-10px_var(--sidebar-foreground)] transition-opacity duration-200",
+          "pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-sidebar via-sidebar/80 to-transparent opacity-0 transition-opacity duration-150",
           "group-data-[collapsible=icon]:opacity-0",
           scrollState.canScrollDown && "group-data-[collapsible=icon]:opacity-100"
         )}
