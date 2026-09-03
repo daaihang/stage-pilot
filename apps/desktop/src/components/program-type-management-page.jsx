@@ -17,7 +17,7 @@ import { notify } from "@/components/ui/sonner";
 import { createProgramType, deleteProgramType, listProgramTypes, reorderProgramTypes, updateProgramType } from "@/lib/resource-api";
 import { roleAtLeast } from "@/lib/workspace-api";
 
-const initialForm = { name: "", color: "#2563eb", is_active: true, sort_order: 0 };
+const initialForm = { name: "", color: "#2563eb", is_active: true, sort_order: 1 };
 
 const filterFields = [
   {
@@ -49,7 +49,29 @@ const sortOptions = [
   ["updated_at", "更新时间"],
 ];
 
-const statusLabels = { active: "启用", inactive: "停用" };
+const programTypeGridColumns = {
+  readOnly: [
+    "grid-cols-[1.75rem_0.75rem_2rem_minmax(0,1fr)_3rem]",
+    "sm:grid-cols-[1.75rem_1.75rem_0.75rem_2rem_minmax(0,1fr)_3rem]",
+    "md:grid-cols-[1.75rem_1.75rem_0.75rem_2rem_minmax(0,1fr)_5rem_6rem]",
+    "lg:grid-cols-[1.75rem_1.75rem_0.75rem_2rem_minmax(0,1fr)_5rem_7rem_6rem]",
+  ].join(" "),
+  editable: [
+    "grid-cols-[1.75rem_0.75rem_2rem_minmax(0,1fr)_3rem_4.5rem]",
+    "sm:grid-cols-[1.75rem_1.75rem_0.75rem_2rem_minmax(0,1fr)_3rem_4.5rem]",
+    "md:grid-cols-[1.75rem_1.75rem_0.75rem_2rem_minmax(0,1fr)_5rem_6rem_4.5rem]",
+    "lg:grid-cols-[1.75rem_1.75rem_0.75rem_2rem_minmax(0,1fr)_5rem_7rem_6rem_4.5rem]",
+  ].join(" "),
+};
+
+function programTypeGridClassName(canWrite) {
+  return `grid min-w-0 items-center gap-2 px-3 sm:gap-3 sm:px-4 ${canWrite ? programTypeGridColumns.editable : programTypeGridColumns.readOnly}`;
+}
+
+function displayPosition(value) {
+  const sortOrder = Number(value);
+  return Number.isInteger(sortOrder) && sortOrder >= 0 ? sortOrder + 1 : 1;
+}
 
 const formatDate = (value) => {
   if (!value) return "-";
@@ -58,13 +80,6 @@ const formatDate = (value) => {
     ? "-"
     : new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(date);
 };
-
-function typeDescription(item) {
-  const count = Number(item?.program_count ?? 0);
-  return item.is_active
-    ? `可用于新建节目 · ${count} 个节目`
-    : `停用后不能用于新建节目 · ${count} 个节目仍保留该类型`;
-}
 
 function errorDescription(error) {
   if (!error) return "请求失败";
@@ -104,7 +119,7 @@ function TypeDialog({ workspaceId, open, onOpenChange, item, onSaved }) {
   useEffect(() => {
     if (!open) return;
     setForm(item
-      ? { name: item.name, color: item.color, is_active: item.is_active, sort_order: item.sort_order }
+      ? { name: item.name, color: item.color, is_active: item.is_active, sort_order: displayPosition(item.sort_order) }
       : initialForm);
     setBusy(false);
   }, [open, item]);
@@ -121,11 +136,12 @@ function TypeDialog({ workspaceId, open, onOpenChange, item, onSaved }) {
       notify.error("颜色必须是 #RRGGBB 格式");
       return;
     }
-    const sortOrder = Number(form.sort_order);
-    if (!Number.isInteger(sortOrder) || sortOrder < 0) {
-      notify.error("排序位置必须是非负整数");
+    const displaySortOrder = Number(form.sort_order);
+    if (!Number.isInteger(displaySortOrder) || displaySortOrder < 1) {
+      notify.error("排序位置必须是正整数");
       return;
     }
+    const sortOrder = displaySortOrder - 1;
 
     const toast = notify.loading(editing ? "正在保存节目类型…" : "正在创建节目类型…");
     setBusy(true);
@@ -367,51 +383,49 @@ function ManagementSkeleton() {
   );
 }
 
-function ProgramTypeRow({ item, value, index, className, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
+function ProgramTypeRow({ item, value, className, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
   return (
     <SortableItem value={value || item.id} disabled={!reorderable} className={`border-b last:border-b-0 ${className || ""}`}>
-      <div className="flex min-w-0 items-center gap-2 px-3 py-3 transition-colors hover:bg-muted/40 sm:gap-3 sm:px-4">
-        <SortableItemHandle
-          className="flex size-7 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
-          aria-label={reorderable ? `拖动${item.name}调整排序` : "排序仅在默认排序视图可用"}
-          title={reorderable ? "拖动调整排序" : "清除筛选后可调整排序"}
-        >
-          <GripVertical className="size-4" />
-        </SortableItemHandle>
-        <Badge variant="outline" className="hidden size-7 justify-center px-0 tabular-nums sm:inline-flex">{index + 1}</Badge>
-        <span className="size-3 shrink-0" style={{ backgroundColor: item.color }} aria-label={`颜色 ${item.color}`} title={item.color} />
-        <div className="flex size-8 shrink-0 items-center justify-center bg-muted text-muted-foreground">
-          <ListMusic className="size-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{item.name}</p>
-          <p className="mt-1 truncate text-xs text-muted-foreground">{typeDescription(item)}</p>
-        </div>
-        <div className="hidden min-w-20 shrink-0 text-right md:block">
-          <p className="text-sm tabular-nums">{Number(item.program_count ?? 0)}</p>
-          <p className="mt-1 text-xs text-muted-foreground">节目数量</p>
-        </div>
-        <div className="hidden min-w-28 shrink-0 text-right lg:block">
-          <p className="text-xs tabular-nums text-muted-foreground">{formatDate(item.updated_at)}</p>
-          <p className="mt-1 text-xs text-muted-foreground">更新时间</p>
-        </div>
-        <Badge variant={item.is_active ? "default" : "secondary"} className="hidden sm:inline-flex">{statusLabels[item.is_active ? "active" : "inactive"]}</Badge>
-        {canWrite && (
-          <div className="flex shrink-0 items-center gap-1">
+        <div className={`${programTypeGridClassName(canWrite)} py-3 transition-colors hover:bg-muted/40`}>
+          <SortableItemHandle
+            className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground"
+            aria-label={reorderable ? `拖动${item.name}调整排序` : "排序仅在默认排序视图可用"}
+            title={reorderable ? "拖动调整排序" : "清除筛选后可调整排序"}
+          >
+            <GripVertical className="size-4" />
+          </SortableItemHandle>
+          <Badge variant="outline" className="hidden size-7 justify-center px-0 tabular-nums sm:inline-flex">{displayPosition(item.sort_order)}</Badge>
+          <span className="size-3" style={{ backgroundColor: item.color }} aria-label={`颜色 ${item.color}`} title={item.color} />
+          <div className="flex size-8 items-center justify-center bg-muted text-muted-foreground">
+            <ListMusic className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{item.name}</p>
+          </div>
+          <div className="hidden min-w-20 text-right md:block">
+            <p className="text-sm tabular-nums">{Number(item.program_count ?? 0)}</p>
+          </div>
+          <div className="hidden min-w-28 text-right lg:block">
+            <p className="text-xs tabular-nums text-muted-foreground">{formatDate(item.updated_at)}</p>
+          </div>
+          <div className="flex w-full items-center justify-center">
             <Switch
               checked={Boolean(item.is_active)}
-              disabled={pendingToggleId === item.id}
-              onCheckedChange={(checked) => onToggle(item, checked)}
+              disabled={!canWrite || pendingToggleId === item.id}
+              onCheckedChange={canWrite ? (checked) => onToggle(item, checked) : undefined}
               aria-label={`${item.is_active ? "停用" : "启用"}${item.name}`}
             />
-            <Button variant="ghost" size="icon-sm" onClick={() => onEdit(item)} aria-label={`编辑${item.name}`} title={`编辑${item.name}`}>
-              <Pencil />
-            </Button>
-            <Button variant="ghost" size="icon-sm" onClick={() => onDelete(item)} aria-label={`删除${item.name}`} title={`删除${item.name}`}>
-              <Trash2 />
-            </Button>
           </div>
-        )}
+          {canWrite && (
+            <div className="flex items-center justify-end gap-1">
+              <Button variant="ghost" size="icon-sm" onClick={() => onEdit(item)} aria-label={`编辑${item.name}`} title={`编辑${item.name}`}>
+                <Pencil />
+              </Button>
+              <Button variant="ghost" size="icon-sm" onClick={() => onDelete(item)} aria-label={`删除${item.name}`} title={`删除${item.name}`}>
+                <Trash2 />
+              </Button>
+            </div>
+          )}
       </div>
     </SortableItem>
   );
@@ -616,16 +630,16 @@ export function ProgramTypeManagementPage({ workspace }) {
       >
         <Card variant="flush">
           <CardContent className="p-0">
-            <div className="hidden items-center gap-3 border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground md:flex">
-              <span className="w-7 shrink-0" />
-              <span className="w-7 shrink-0 text-center">位置</span>
-              <span className="w-3 shrink-0" />
-              <span className="w-8 shrink-0" />
-              <span className="min-w-0 flex-1">节目类型</span>
-              <span className="min-w-20 text-right">节目数量</span>
-              <span className="min-w-28 text-right">更新时间</span>
-              <span className="w-12 text-center">状态</span>
-              {canWrite && <span className="w-28" />}
+            <div className={`${programTypeGridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}>
+              <span aria-hidden="true" />
+              <span className="text-center">位置</span>
+              <span aria-hidden="true" />
+              <span aria-hidden="true" />
+              <span>节目类型</span>
+              <span className="text-right">节目数量</span>
+              <span className="hidden text-right lg:block">更新时间</span>
+              <span className="whitespace-nowrap text-center">启用状态</span>
+              {canWrite && <span aria-hidden="true" />}
             </div>
             <Sortable
               value={types}
@@ -640,7 +654,6 @@ export function ProgramTypeManagementPage({ workspace }) {
                   key={item.id}
                   item={item}
                   value={item.id}
-                  index={index}
                   canWrite={canWrite}
                   reorderable={reorderable}
                   pendingToggleId={pendingToggleId}
