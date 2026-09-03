@@ -1,159 +1,78 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
+import { Archive, Bell, Boxes, CheckCircle2, Eye, GitBranch, Link2, LockKeyhole, RotateCcw, Settings2, ShieldAlert, Trash2, UsersRound, Workflow, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Select as SelectPrimitive } from "@base-ui/react/select";
-import { notify } from "@/components/ui/sonner";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
+import { roleAtLeast } from "@/lib/workspace-api";
+import { productionStatusLabel } from "@/lib/production-api";
+import { ProductionPageHeader, useProductionActionFeedback } from "@/components/production-page-shell";
+import { SettingsTabs } from "@/components/settings-tabs";
 import { useWorkspaceContext } from "@/components/workspace-provider";
-import { productionStatusLabels, updateProduction } from "@/lib/production-api";
 
-/**
- * Production Settings（Phase 13）：General。
- * OWNER / ADMIN 可编辑（后端 PATCH 要求 ADMIN+）；MEMBER 只读。
- * 支持 name / description / status / timezone / start_at / end_at。
- */
-export function ProductionSettingsPage({ workspace, production }) {
-  const { membershipRole } = useWorkspaceContext();
-  const canManage = membershipRole === "owner" || membershipRole === "admin";
-  const [form, setForm] = useState({
-    name: production.name,
-    description: production.description || "",
-    status: production.status,
-    timezone: production.timezone,
-    startsAt: toLocalInputValue(production.startsAt, production.timezone),
-    endsAt: toLocalInputValue(production.endsAt, production.timezone),
-  });
-  const [saving, setSaving] = useState(false);
+const settingGroups = [
+  ["access", "协作与访问", UsersRound],
+  ["workflow", "工作流与模块", Workflow],
+  ["notifications", "通知与提醒", Bell],
+  ["integrations", "集成", Link2],
+  ["lifecycle", "生命周期", Settings2],
+];
 
-  useEffect(() => {
-    setForm({
-      name: production.name,
-      description: production.description || "",
-      status: production.status,
-      timezone: production.timezone,
-      startsAt: toLocalInputValue(production.startsAt, production.timezone),
-      endsAt: toLocalInputValue(production.endsAt, production.timezone),
-    });
-  }, [production.id, production.updatedAt]);
+function SettingRow({ icon: Icon, title, description, children, disabled = false }) {
+  return <div className={`flex items-center gap-4 border-b py-4 last:border-b-0 ${disabled ? "opacity-50 blur-[1px]" : ""}`} aria-disabled={disabled}><Icon className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{title}</p><p className="mt-1 text-xs text-muted-foreground">{description}</p></div>{children}</div>;
+}
 
-  const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+function UnavailableSection({ title, description, children }) {
+  return <Card><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader><CardContent>{children}</CardContent></Card>;
+}
 
-  const save = async (event) => {
-    event.preventDefault();
-    const name = form.name.trim();
-    if (!name) {
-      notify.error("活动名称不能为空");
-      return;
-    }
-    const startsAt = form.startsAt ? new Date(form.startsAt).toISOString() : null;
-    const endsAt = form.endsAt ? new Date(form.endsAt).toISOString() : null;
-    if (startsAt && endsAt && new Date(endsAt) < new Date(startsAt)) {
-      notify.error("结束时间不能早于开始时间");
-      return;
-    }
-    setSaving(true);
+function AccessSettings({ draft }) {
+  return <div className="space-y-4"><UnavailableSection title="访问策略" description="活动权限当前继承所属工作空间，不单独建立活动成员。"><SettingRow icon={LockKeyhole} title="活动权限" description="沿用工作空间成员角色与权限" disabled={draft}><Badge variant="secondary">Workspace</Badge></SettingRow><SettingRow icon={Eye} title="活动可见性" description="仅工作空间成员可以访问" disabled={draft}><Badge variant="outline">内部</Badge></SettingRow><SettingRow icon={UsersRound} title="外部访问" description="公开链接和外部协作者尚未接入" disabled><Badge variant="outline">未启用</Badge></SettingRow></UnavailableSection></div>;
+}
+
+function WorkflowSettings({ draft }) {
+  const modules = [["节目征集", "收集外部节目提交", GitBranch], ["节目审核", "配置审核流程和审核人", CheckCircle2], ["工作人员", "管理活动工作人员和岗位", UsersRound], ["Rundown", "编排现场执行流程", Workflow], ["文件收集", "集中管理活动资料", Boxes]];
+  return <UnavailableSection title="活动模块" description="这些模块将在各自领域上线后成为可配置的活动开关。">{modules.map(([title, description, Icon]) => <SettingRow key={title} icon={Icon} title={title} description={description} disabled><Switch checked={false} disabled /></SettingRow>)}</UnavailableSection>;
+}
+
+function NotificationSettings({ draft }) {
+  const items = [["活动通知", "活动相关通知总开关"], ["截止日期提醒", "在截止日期前提醒相关成员"], ["节目提交通知", "节目提交后通知活动负责人"], ["审核结果通知", "审核完成后通知提交人"], ["Rundown 变更通知", "流程编排发生变化时通知团队"], ["工作人员邀请通知", "工作人员邀请发出后通知对方"]];
+  return <UnavailableSection title="通知偏好" description="通知配置尚未接入，当前仅展示规划中的设置。">{items.map(([title, description]) => <SettingRow key={title} icon={Bell} title={title} description={description} disabled><Switch checked={false} disabled /></SettingRow>)}</UnavailableSection>;
+}
+
+function IntegrationSettings({ draft }) {
+  const items = [["日历同步", "同步活动时间到外部日历"], ["文件存储", "连接外部文件存储服务"], ["邮件服务", "配置活动邮件发送服务"], ["Webhook", "向外部系统推送活动事件"], ["外部报名系统", "连接报名或票务平台"]];
+  return <UnavailableSection title="外部连接" description="集成能力将在对应服务接入后开放。">{items.map(([title, description]) => <SettingRow key={title} icon={Link2} title={title} description={description} disabled={draft || true}><Badge variant="outline">未连接</Badge></SettingRow>)}</UnavailableSection>;
+}
+
+function LifecycleSettings({ production, canManage, onUpdateProduction, draft }) {
+  const feedback = useProductionActionFeedback();
+  const [pendingStatus, setPendingStatus] = useState(null);
+  const current = productionStatusLabel(production.status);
+  const targets = production.status === "archived" ? [["active", "恢复活动", RotateCcw]] : production.status === "completed" ? [["active", "重新启用", RotateCcw], ["archived", "归档活动", Archive]] : [["completed", "标记为已结束", CheckCircle2], ["archived", "归档活动", Archive]];
+  const confirmStatus = async () => {
+    if (!pendingStatus) return;
+    const target = pendingStatus;
+    setPendingStatus(null);
     try {
-      await updateProduction(workspace.id, production.id, {
-        name,
-        description: form.description,
-        status: form.status,
-        timezone: form.timezone,
-        start_at: startsAt,
-        end_at: endsAt,
-      });
-      notify.success("活动设置已保存");
-    } catch (error) {
-      notify.error("保存失败", { description: error.message });
-    } finally {
-      setSaving(false);
-    }
+      await feedback(() => onUpdateProduction({ status: target[0] }), { loading: "正在更新活动状态…", success: "活动状态已更新", error: "活动状态更新失败" });
+    } catch { /* feedback already notified */ }
   };
-
-  return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>常规</CardTitle>
-          <CardDescription>
-            {canManage ? "OWNER / ADMIN 可以修改活动信息。" : "你在这个工作空间是 MEMBER，只能查看活动信息。"}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-4" onSubmit={save}>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">活动名称</span>
-              <Input value={form.name} onChange={set("name")} maxLength={120} disabled={!canManage} />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-medium">描述</span>
-              <Input value={form.description} onChange={set("description")} maxLength={500} disabled={!canManage} />
-            </label>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">开始时间（{form.timezone}）</span>
-                <Input type="datetime-local" value={form.startsAt} onChange={set("startsAt")} disabled={!canManage} />
-              </label>
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">结束时间（{form.timezone}）</span>
-                <Input type="datetime-local" value={form.endsAt} onChange={set("endsAt")} disabled={!canManage} />
-              </label>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="block space-y-1.5">
-                <span className="text-sm font-medium">时区（IANA）</span>
-                <Input value={form.timezone} onChange={set("timezone")} placeholder="Asia/Shanghai" disabled={!canManage} />
-              </label>
-              <div className="space-y-1.5">
-                <span className="text-sm font-medium">状态</span>
-                <StatusSelect value={form.status} onChange={(value) => setForm((current) => ({ ...current, status: value }))} disabled={!canManage} />
-              </div>
-            </div>
-            {canManage && <Button type="submit" disabled={saving}>{saving ? "保存中…" : "保存更改"}</Button>}
-          </form>
-        </CardContent>
-      </Card>
-    </div>
-  );
+  return <div className="space-y-4"><Card><CardHeader><CardTitle>活动状态</CardTitle><CardDescription>状态变更会同步到概览页、活动列表和侧栏。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center justify-between gap-4 border p-3"><div><p className="text-sm font-medium">当前状态</p><p className="mt-1 text-xs text-muted-foreground">活动状态由工作空间管理员管理。</p></div><Badge className={current.className} variant="secondary">{current.label}</Badge></div><div className="flex flex-wrap gap-2">{canManage && !draft ? targets.map(([status, label, Icon]) => <Button key={status} variant="outline" onClick={() => setPendingStatus([status, label, Icon])}><Icon />{label}</Button>) : <span className="text-xs text-muted-foreground">{draft ? "活动正式化后可管理生命周期。" : "当前角色没有修改活动状态的权限。"}</span>}</div></CardContent></Card><Card className="border-destructive/30"><CardHeader><CardTitle className="flex items-center gap-2 text-destructive"><ShieldAlert className="size-4" />危险区域</CardTitle><CardDescription>删除活动接口尚未接入，当前不执行假删除。</CardDescription></CardHeader><CardContent><Button variant="outline" disabled><Trash2 />删除活动</Button></CardContent></Card></div>;
 }
 
-function StatusSelect({ value, onChange, disabled }) {
-  const items = useMemo(() => Object.entries(productionStatusLabels).map(([id, meta]) => ({ id, label: meta.label })), []);
-  const current = items.find((item) => item.id === value) ?? items[0];
-  if (disabled) return <Badge variant="secondary" className="h-9 px-3">{current.label}</Badge>;
-  return (
-    <SelectPrimitive.Root value={value} onValueChange={(next) => onChange(next)}>
-      <SelectPrimitive.Trigger className="flex h-9 w-full items-center justify-between border px-3 text-sm">
-        {current.label}
-        <SelectPrimitive.Icon><span aria-hidden="true">⌄</span></SelectPrimitive.Icon>
-      </SelectPrimitive.Trigger>
-      <SelectPrimitive.Portal>
-        <SelectPrimitive.Positioner sideOffset={4}>
-          <SelectPrimitive.Popup className="z-50 min-w-40 border bg-background p-1 shadow-md">
-            {items.map((item) => (
-              <SelectPrimitive.Item key={item.id} value={item.id} className="flex cursor-default items-center px-2 py-1.5 text-sm outline-none data-highlighted:bg-muted">
-                <SelectPrimitive.ItemIndicator className="mr-2">✓</SelectPrimitive.ItemIndicator>
-                {item.label}
-              </SelectPrimitive.Item>
-            ))}
-          </SelectPrimitive.Popup>
-        </SelectPrimitive.Positioner>
-      </SelectPrimitive.Portal>
-    </SelectPrimitive.Root>
-  );
-}
-
-/** RFC3339 → datetime-local 输入值（按活动时区的墙钟时间）。 */
-function toLocalInputValue(instant, timezone) {
-  if (!instant) return "";
-  try {
-    const parts = new Intl.DateTimeFormat("zh-CN", {
-      timeZone: timezone || "Asia/Shanghai",
-      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
-    }).formatToParts(new Date(instant));
-    const get = (type) => parts.find((part) => part.type === type)?.value || "";
-    return `${get("year")}-${get("month")}-${get("day")}T${get("hour") === "24" ? "00" : get("hour")}:${get("minute")}`;
-  } catch {
-    return "";
-  }
+export function ProductionSettingsPage({ workspace, production, onUpdateProduction }) {
+  const { membershipRole } = useWorkspaceContext();
+  const canManage = roleAtLeast(membershipRole, "admin");
+  const draft = Boolean(production.isLocalDraft);
+  const [activeGroup, setActiveGroup] = useState("access");
+  const content = {
+    access: <AccessSettings draft={draft} />,
+    workflow: <WorkflowSettings draft={draft} />,
+    notifications: <NotificationSettings draft={draft} />,
+    integrations: <IntegrationSettings draft={draft} />,
+    lifecycle: <LifecycleSettings production={production} canManage={canManage} onUpdateProduction={onUpdateProduction} draft={draft} />,
+  };
+  return <div className="space-y-6"><ProductionPageHeader workspace={workspace} production={production} title="活动设置" subtitle={`${production.name || "未命名活动"} · 活动行为与协作配置`} /><SettingsTabs groups={settingGroups} activeGroup={activeGroup} onGroupChange={setActiveGroup} disabled={draft}>{content[activeGroup]}</SettingsTabs></div>;
 }
