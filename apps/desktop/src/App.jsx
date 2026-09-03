@@ -11,6 +11,7 @@ import { AccountCenter } from "@/components/account-center";
 import { NavigationProvider, useNavigationData } from "@/components/navigation-provider";
 import { WorkspaceProvider, useWorkspaceContext } from "@/components/workspace-provider";
 import { WorkspacesPage } from "@/components/workspaces-page";
+import { UnifiedWorkContextPage } from "@/components/unified-work-context-page";
 import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
 import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
@@ -88,8 +89,9 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const creationRouteIdRef = useRef(null);
   const [creationRequestPending, setCreationRequestPending] = useState(false);
   navigationRepositoryRef.current = repository;
-  const route = matchStagePilotRoute(location.pathname);
+  const route = matchStagePilotRoute(location.pathname, location.search);
   const isWorkspacesRoute = location.pathname === "/workspaces";
+  const isWorkRoute = route?.mode === "work";
   const isAccountRoute = route?.mode === "account";
   const accountReturnPath = isAccountRoute ? resolveAccountReturnTarget(location.search, currentWorkspace ? workspacePath(currentWorkspace.id) : "/workspaces") : null;
   const accountReturnRoute = accountReturnPath ? matchStagePilotRoute(accountReturnPath.split("?")[0]) : null;
@@ -212,14 +214,14 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   // - 多个工作空间且无可恢复记录 → /workspaces selector
   useEffect(() => {
     if (authStatus !== "authenticated" || workspaceStatus === "loading") return;
-    if (isAccountRoute) return;
+    if (isAccountRoute || isWorkRoute) return;
     if (location.pathname !== "/") {
       if ((workspaceStatus === "none") || (workspaceStatus === "selecting")) navigate("/workspaces", { replace: true });
       return;
     }
     if (workspaceStatus === "none" || workspaceStatus === "selecting") navigate("/workspaces", { replace: true });
     else if (workspaceStatus === "ready" && currentWorkspace) navigate(workspacePath(currentWorkspace.id), { replace: true });
-  }, [authStatus, workspaceStatus, currentWorkspace, location.pathname, navigate, isAccountRoute]);
+  }, [authStatus, workspaceStatus, currentWorkspace, location.pathname, navigate, isAccountRoute, isWorkRoute]);
 
   // 已登录状态下访问 /w/:id/* 且 id 不在可访问列表时，渲染不可访问页面。
   const workspaceForbidden = Boolean(route && authStatus === "authenticated" && workspaceStatus === "ready" && !workspace);
@@ -453,6 +455,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
   else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} initialAction={new URLSearchParams(location.search).get("action")} />;
+  else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} />;
   else if (isWorkspacesRoute) content = <WorkspacesPage onCreateWorkspace={() => setCreateWorkspaceOpen(true)} />;
   else if (workspaceError) content = <NavigationFailure description={workspaceError.message} onRetry={retryWorkspaces} />;
   else if (location.pathname === "/") content = <AppLoading />;
@@ -493,7 +496,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const sidebarProduction = production;
   return <SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><div className="flex size-7 shrink-0 items-center justify-center text-primary" aria-label="StagePilot" title="StagePilot"><Sparkles className="size-4" /></div><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div>{showTitlebarTitle && <div className="pointer-events-none absolute left-1/2 max-w-[min(40vw,320px)] -translate-x-1/2 truncate px-2 text-xs font-medium" aria-live="polite">{pageTitle}</div>}<div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
-    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/workspaces"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><div className="app-content-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6"><div className="mx-auto min-h-full min-w-0 max-w-6xl">{content}</div></div></SidebarInset></div>
+    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><div className="app-content-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6"><div className="mx-auto min-h-full min-w-0 max-w-6xl">{content}</div></div></SidebarInset></div>
   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /></SidebarProvider>;
 }
 

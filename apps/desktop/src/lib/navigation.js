@@ -36,6 +36,8 @@ export const accountPages = {
   developer: { title: "开发工具", description: "验证桌面能力和 UI 组件（仅开发构建）。", devOnly: true },
 };
 
+export const workTabs = new Set(["workspaces", "participating", "collaboration"]);
+
 // Production 生命周期状态（Production Foundation）：只表达生命周期，
 // 不表达节目征集或现场状态。与后端 CHECK 约束保持一致。
 export const productionStatus = {
@@ -75,7 +77,11 @@ export function resolveAccountReturnTarget(search, fallback) {
   return candidate;
 }
 
-export function matchStagePilotRoute(pathname) {
+export function matchStagePilotRoute(pathname, search = "") {
+  if (pathname === "/work") {
+    const requestedTab = new URLSearchParams(search).get("tab");
+    return { mode: "work", page: "work", tab: workTabs.has(requestedTab) ? requestedTab : "workspaces", meta: { title: "我的工作", description: "访问你的工作空间、参与的活动和协作事项" } };
+  }
   const accountMatch = pathname.match(/^\/account\/([^/]+)\/?$/);
   if (accountMatch) {
     const [, page] = accountMatch;
