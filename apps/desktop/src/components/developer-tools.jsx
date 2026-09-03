@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -22,11 +22,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/sonner";
 import { appStore, isTauriRuntime } from "@/lib/app-store";
+import { completeFileUpload, createFileUpload, deleteFile, downloadFile, uploadToPresignedUrl } from "@/lib/file-api";
 
 const MAX_HISTORY = 5;
 const formatTime = (value) => new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
 
-export function DeveloperTools({ devtools, onDevtoolsChange, initialAction }) {
+export function DeveloperTools({ workspace, devtools, onDevtoolsChange, initialAction }) {
+  const [uploadTest, setUploadTest] = useState({ status: "idle", name: "", progress: 0, detail: "" });
+  const uploadInputRef = useRef(null);
   const [history, setHistory] = useState([]);
   const [activity, setActivity] = useState(["开发工具已准备就绪"]);
   const [diagnostics, setDiagnostics] = useState([{ label: "尚未检测", ok: true, detail: "点击「重新检测」" }]);
@@ -147,12 +150,33 @@ export function DeveloperTools({ devtools, onDevtoolsChange, initialAction }) {
 
   useEffect(() => { if (initialAction) queueMicrotask(() => runAction(initialAction)); }, [initialAction, runAction]);
 
+  const runUploadTest = useCallback(async (event) => {
+    const file = event.target.files?.[0]; event.target.value = "";
+    if (!file) return;
+    if (!workspace?.id) return notify.error("无法测试上传", { description: "当前没有可用的工作空间。" });
+    const toast = notify.loading("正在测试文件上传…");
+    setUploadTest({ status: "uploading", name: file.name, progress: 0, detail: "正在创建上传任务" });
+    try {
+      const created = await createFileUpload(workspace.id, { filename: file.name, content_type: file.type, size_bytes: file.size, production_id: null });
+      await uploadToPresignedUrl(created.upload.url, file, (progress) => setUploadTest({ status: "uploading", name: file.name, progress, detail: "正在直传 MinIO / S3" }));
+      const completed = await completeFileUpload(workspace.id, created.file.id);
+      setUploadTest({ status: "success", name: file.name, progress: 1, detail: `上传成功，状态：${completed.status}` });
+      notify.success("文件上传测试成功", { id: toast });
+      addActivity(`文件上传测试成功：${file.name}`);
+    } catch (error) {
+      setUploadTest({ status: "error", name: file.name, progress: 0, detail: error?.message || String(error) });
+      notify.error("文件上传测试失败", { id: toast, description: error?.message || String(error) });
+      addActivity(`文件上传测试失败：${file.name}`);
+    }
+  }, [addActivity, workspace]);
+
   const demos = useMemo(() => [[ContextMenuDemo1, "基础菜单"], [ContextMenuDemo2, "图标操作"], [ContextMenuDemo3, "快捷键标注"], [ContextMenuDemo4, "嵌套子菜单"], [ContextMenuDemo5, "分组标签"], [ContextMenuDemo6, "复选项"], [ContextMenuDemo7, "单选项"], [ContextMenuDemo8, "危险操作"]], []);
 
   return <div className="space-y-4"><Card><CardHeader><CardTitle>开发者选项</CardTitle><CardDescription>这些能力只在开发构建中显示。</CardDescription></CardHeader><CardContent className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium">开发者工具</p><p className="text-xs text-muted-foreground">关闭后需重启应用才能完全禁用</p></div><div className="flex items-center gap-2"><Button size="sm" variant="outline" onClick={openDevtools}><Terminal />打开</Button><Switch checked={devtools} onCheckedChange={onDevtoolsChange} /></div></CardContent></Card>
-    <Tabs defaultValue="files"><TabsList><TabsTrigger value="files">文件工具</TabsTrigger><TabsTrigger value="system">系统集成</TabsTrigger><TabsTrigger value="activity">活动记录</TabsTrigger><TabsTrigger value="components">UI 组件</TabsTrigger></TabsList>
+    <Tabs defaultValue="files"><TabsList><TabsTrigger value="files">文件工具</TabsTrigger><TabsTrigger value="upload">上传测试</TabsTrigger><TabsTrigger value="system">系统集成</TabsTrigger><TabsTrigger value="activity">活动记录</TabsTrigger><TabsTrigger value="components">UI 组件</TabsTrigger></TabsList>
       <TabsContent value="files"><Card><CardHeader><CardTitle>文件与目录</CardTitle><CardDescription>最近 5 条记录保存在应用数据目录。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex flex-wrap gap-2"><Button onClick={() => choosePath("file")}><FileText />选择文件</Button><Button variant="outline" onClick={() => choosePath("directory")}><Folder />选择文件夹</Button><Button variant="outline" disabled={!currentRecord} onClick={copyCurrentPath}><Copy />复制当前路径</Button></div><Table><TableHeader><TableRow><TableHead>类型</TableHead><TableHead>路径</TableHead><TableHead className="text-right">时间</TableHead></TableRow></TableHeader><TableBody>{history.length ? history.map((item) => <TableRow key={`${item.path}-${item.selectedAt}`}><TableCell><Badge variant="secondary">{item.kind === "directory" ? "文件夹" : "文件"}</Badge></TableCell><TableCell className="max-w-96 truncate font-mono text-xs" title={item.path}>{item.path}</TableCell><TableCell className="text-right text-xs text-muted-foreground">{formatTime(item.selectedAt)}</TableCell></TableRow>) : <TableRow><TableCell colSpan={3} className="h-20 text-center text-muted-foreground">暂无记录</TableCell></TableRow>}</TableBody></Table><Separator /><Button variant="ghost" onClick={() => persistHistory([]).then(() => notify.success("最近记录已清空"))}><Trash2 />清空最近记录</Button></CardContent></Card></TabsContent>
-      <TabsContent value="system"><div className="grid gap-4 md:grid-cols-2"><Card><CardHeader><CardTitle>窗口与托盘</CardTitle><CardDescription>验证桌面壳层能力。</CardDescription></CardHeader><CardContent className="space-y-3"><Button className="w-full" variant="outline" onClick={hideMainWindow} disabled={!isTauriRuntime}><Eye />隐藏主窗口</Button><Button className="w-full" variant="outline" onClick={sendSystemNotification}><Bell />测试通知</Button>{!isTauriRuntime && <p className="text-xs text-muted-foreground">浏览器预览模式下窗口与系统能力不可用。</p>}</CardContent></Card><Card><CardHeader className="flex-row items-center justify-between"><div><CardTitle>运行状态</CardTitle><CardDescription>当前运行环境的真实诊断结果。</CardDescription></div><Button size="sm" variant="outline" onClick={runRuntimeDiagnostics}><RefreshCw />重新检测</Button></CardHeader><CardContent className="space-y-3">{diagnostics.map((item) => <p key={item.label} className="flex items-center gap-2 text-sm">{item.ok ? <CheckCircle2 className="size-4 shrink-0 text-emerald-500" /> : <XCircle className="size-4 shrink-0 text-red-500" />}<span>{item.label}</span><span className="ml-auto truncate text-xs text-muted-foreground" title={item.detail}>{item.detail}</span></p>)}</CardContent></Card></div></TabsContent>
+      <TabsContent value="upload"><Card><CardHeader><CardTitle>S3 / MinIO 上传测试</CardTitle><CardDescription>选择一个文件，验证预签名 URL、直传和完成确认。</CardDescription></CardHeader><CardContent className="space-y-4"><><Button type="button" disabled={!workspace} onClick={() => uploadInputRef.current?.click()}><FileText />选择测试文件</Button><input ref={uploadInputRef} className="hidden" type="file" onChange={runUploadTest} /></>{!workspace && <p className="text-sm text-muted-foreground">当前没有可用工作空间。</p>}{uploadTest.name && <div className="border p-3 text-sm"><div className="flex justify-between gap-3"><span className="truncate">{uploadTest.name}</span><Badge variant={uploadTest.status === "success" ? "secondary" : uploadTest.status === "error" ? "destructive" : "outline"}>{uploadTest.status === "success" ? "成功" : uploadTest.status === "error" ? "失败" : `${Math.round(uploadTest.progress * 100)}%`}</Badge></div><p className="mt-2 text-xs text-muted-foreground">{uploadTest.detail}</p>{uploadTest.status === "uploading" && <div className="mt-2 h-1 bg-muted"><div className="h-full bg-primary" style={{ width: `${uploadTest.progress * 100}%` }} /></div>}</div>}</CardContent></Card></TabsContent>
+       <TabsContent value="system"><div className="grid gap-4 md:grid-cols-2"><Card><CardHeader><CardTitle>窗口与托盘</CardTitle><CardDescription>验证桌面壳层能力。</CardDescription></CardHeader><CardContent className="space-y-3"><Button className="w-full" variant="outline" onClick={hideMainWindow} disabled={!isTauriRuntime}><Eye />隐藏主窗口</Button><Button className="w-full" variant="outline" onClick={sendSystemNotification}><Bell />测试通知</Button>{!isTauriRuntime && <p className="text-xs text-muted-foreground">浏览器预览模式下窗口与系统能力不可用。</p>}</CardContent></Card><Card><CardHeader className="flex-row items-center justify-between"><div><CardTitle>运行状态</CardTitle><CardDescription>当前运行环境的真实诊断结果。</CardDescription></div><Button size="sm" variant="outline" onClick={runRuntimeDiagnostics}><RefreshCw />重新检测</Button></CardHeader><CardContent className="space-y-3">{diagnostics.map((item) => <p key={item.label} className="flex items-center gap-2 text-sm">{item.ok ? <CheckCircle2 className="size-4 shrink-0 text-emerald-500" /> : <XCircle className="size-4 shrink-0 text-red-500" />}<span>{item.label}</span><span className="ml-auto truncate text-xs text-muted-foreground" title={item.detail}>{item.detail}</span></p>)}</CardContent></Card></div></TabsContent>
       <TabsContent value="activity"><Card><CardHeader className="flex-row items-center justify-between"><div><CardTitle>活动记录</CardTitle><CardDescription>当前开发工具窗口的操作记录。</CardDescription></div><Button size="sm" variant="outline" onClick={() => { setActivity(["活动记录已刷新"]); notify.success("活动记录已重置"); }}><RefreshCw />重置</Button></CardHeader><CardContent className="space-y-2">{activity.map((item, index) => <div key={`${item}-${index}`} className="border p-3 text-sm">{item}</div>)}</CardContent></Card></TabsContent>
       <TabsContent value="components"><section className="grid gap-4 md:grid-cols-2">{demos.map(([Demo, title]) => <Card key={title}><CardHeader><CardTitle className="text-base">{title}</CardTitle></CardHeader><CardContent><Demo /></CardContent></Card>)}</section></TabsContent>
     </Tabs>
