@@ -1,9 +1,26 @@
 // Title: Icon Placeholder
 // Description: Multi-icon-library router. StagePilot standardizes on remixicon,
-// so this implementation simply resolves the remixicon prop; the other
-// library props are accepted for drop-in compatibility with reui blocks.
+// so this implementation resolves the remixicon prop by name from
+// @remixicon/react; the other library props are accepted for drop-in
+// compatibility with reui blocks. Unknown names render nothing instead of an
+// invalid custom element.
 
-import type { ComponentProps } from "react"
+import {
+  RiAddLine,
+  RiArrowDownSLine,
+  RiArrowLeftSLine,
+  RiArrowRightSLine,
+  RiArrowUpSLine,
+  RiCalendarLine,
+  RiCheckLine,
+  RiCloseLine,
+  RiDraggable,
+  RiRepeatLine,
+  RiSettings3Line,
+  RiSubtractLine,
+  RiTimeLine,
+} from "@remixicon/react"
+import type { ComponentType } from "react"
 
 type IconPlaceholderProps = ComponentProps<"svg"> & {
   lucide?: string
@@ -11,6 +28,22 @@ type IconPlaceholderProps = ComponentProps<"svg"> & {
   hugeicons?: string
   phosphor?: string
   remixicon?: string
+}
+
+const remixIcons: Record<string, ComponentType<ComponentProps<"svg">>> = {
+  RiAddLine,
+  RiArrowDownSLine,
+  RiArrowLeftSLine,
+  RiArrowRightSLine,
+  RiArrowUpSLine,
+  RiCalendarLine,
+  RiCheckLine,
+  RiCloseLine,
+  RiDraggable,
+  RiRepeatLine,
+  RiSettings3Line,
+  RiSubtractLine,
+  RiTimeLine,
 }
 
 export function IconPlaceholder({
@@ -21,7 +54,7 @@ export function IconPlaceholder({
   remixicon,
   ...props
 }: IconPlaceholderProps) {
-  const Icon = remixicon
+  const Icon = remixicon ? remixIcons[remixicon] : undefined
   if (!Icon) return null
   return <Icon {...props} />
 }

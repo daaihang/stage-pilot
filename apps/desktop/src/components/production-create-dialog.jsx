@@ -5,6 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input"
 import { notify } from "@/components/ui/sonner"
 import { createProduction } from "@/lib/production-api"
+import { wallClockToInstant } from "@/lib/date-time"
+import { DateTimePicker } from "@/components/reui/date-time-picker"
 
 export function CreateProductionDialog({ workspace, open, onOpenChange, onCreated }) {
   const [form, setForm] = useState({
@@ -29,8 +31,13 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
       return
     }
 
-    const startsAt = form.startsAt ? new Date(form.startsAt).toISOString() : null
-    const endsAt = form.endsAt ? new Date(form.endsAt).toISOString() : null
+    // 墙钟串按活动时区解释（不再依赖运行机器时区）。
+    const startsAt = wallClockToInstant(form.startsAt, form.timezone)
+    const endsAt = wallClockToInstant(form.endsAt, form.timezone)
+    if ((form.startsAt || form.endsAt) && (!startsAt || !endsAt)) {
+      notify.error("日期时间格式无效", { description: "请重新选择开始或结束时间。" })
+      return
+    }
     if (startsAt && endsAt && new Date(endsAt) < new Date(startsAt)) {
       notify.error("结束时间不能早于开始时间")
       return
@@ -67,14 +74,14 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
             <Input value={form.name} onChange={set("name")} maxLength={120} placeholder="例如：2026 青年音乐节" />
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block space-y-1.5">
+            <div className="space-y-1.5">
               <span className="text-sm font-medium">开始时间</span>
-              <Input type="datetime-local" value={form.startsAt} onChange={set("startsAt")} />
-            </label>
-            <label className="block space-y-1.5">
+              <DateTimePicker value={form.startsAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, startsAt: instant }))} placeholder="选择日期与时间" />
+            </div>
+            <div className="space-y-1.5">
               <span className="text-sm font-medium">结束时间</span>
-              <Input type="datetime-local" value={form.endsAt} onChange={set("endsAt")} />
-            </label>
+              <DateTimePicker value={form.endsAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, endsAt: instant }))} placeholder="选择日期与时间" />
+            </div>
           </div>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">时区（IANA）</span>
