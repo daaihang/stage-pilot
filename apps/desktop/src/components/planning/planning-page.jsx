@@ -1,54 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarRange, ClipboardList, ListTree } from "lucide-react";
+import { CalendarRange, ClipboardList, ListTree, Pencil, Play, Square, XCircle } from "lucide-react";
 import { PageBreadcrumbs } from "@/components/stagepilot-pages";
 import { ProductionPageHeader } from "@/components/production-page-shell";
-import { PlanningEmptyState } from "@/components/planning/planning-empty-state";
 import { PlanningToolbar } from "@/components/planning/planning-toolbar";
+import { PlanningEmptyState } from "@/components/planning/planning-empty-state";
 import { StagePilotEventCalendar } from "@/components/reui/event-calendar/stagepilot-event-calendar";
+import { ProductionPlanningDialog } from "@/components/planning/production-planning-dialog";
+import { ResourcePage, resourceGridClassName } from "@/components/resource-page";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { appStore } from "@/lib/app-store";
+import { formatProductionInstant, listProductionOccurrences, listRehearsalSessions, updateProductionOccurrence, updateRehearsalSession } from "@/lib/production-api";
+import { notify } from "@/components/ui/sonner";
 
-const pageConfig = {
-  schedule: { title: "总日程", views: [{ id: "list", label: "列表" }, { id: "calendar", label: "日历" }, { id: "timeline", label: "时间轴" }], defaultView: "calendar", icon: CalendarRange, emptyTitle: "暂无排程安排", emptyDescription: "后续可以在这里管理装台、彩排、演出和撤台等时间。" },
-  occurrences: { title: "场次", views: [{ id: "list", label: "列表" }, { id: "grid", label: "网格" }, { id: "calendar", label: "日历" }], defaultView: "list", icon: ListTree, emptyTitle: "暂无场次安排", emptyDescription: "场次数据接入后，正式演出、预演和加演场会显示在这里。" },
-  rehearsals: { title: "彩排", views: [{ id: "calendar", label: "日历" }, { id: "agenda", label: "议程" }], defaultView: "calendar", icon: ClipboardList, emptyTitle: "暂无彩排安排", emptyDescription: "彩排、技术彩排和带妆彩排接入后，会显示在这里。" },
-};
+const configs = { occurrences: { title: "场次", description: "管理正式演出、预演和加演场。", icon: ListTree, views: [{ id: "list", label: "列表" }, { id: "grid", label: "网格" }, { id: "calendar", label: "日历" }], defaultView: "list", emptyTitle: "暂无场次安排", emptyDescription: "场次数据接入后，正式演出、预演和加演场会显示在这里。", type: "occurrence" }, rehearsals: { title: "彩排", description: "管理普通彩排、技术彩排和带妆彩排。", icon: ClipboardList, views: [{ id: "calendar", label: "日历" }, { id: "agenda", label: "议程" }], defaultView: "calendar", emptyTitle: "暂无彩排安排", emptyDescription: "彩排、技术彩排和带妆彩排接入后，会显示在这里。", type: "rehearsal" }, schedule: { title: "总日程", description: "查看装台、彩排、演出和撤台等制作时间安排。", icon: CalendarRange, views: [{ id: "list", label: "列表" }, { id: "calendar", label: "日历" }, { id: "timeline", label: "时间轴" }], defaultView: "calendar", emptyTitle: "暂无排程安排", emptyDescription: "后续可以在这里管理装台、彩排、演出和撤台等时间。", type: "schedule" } };
+const kindLabels = { preview: "预演", performance: "正式演出", encore: "加演", rehearsal: "普通彩排", technical: "技术彩排", dress: "带妆彩排", cue_to_cue: "Cue-to-cue", other: "其他" };
+const statusLabels = { planned: "计划中", live: "进行中", completed: "已结束", canceled: "已取消" };
+const statusClass = { planned: "bg-muted text-muted-foreground", live: "bg-emerald-500/10 text-emerald-700", completed: "bg-blue-500/10 text-blue-700", canceled: "bg-red-500/10 text-red-700" };
 
-const viewStoreKey = (productionId, page) => `planningView:${productionId}:${page}`;
+function RecordActions({ record, type, onEdit, onRefresh }) { const update = type === "rehearsal" ? updateRehearsalSession : updateProductionOccurrence; const action = async (status, label) => { if (status === "canceled" && !window.confirm("确定取消这条记录吗？取消后仍会保留历史记录。")) return; const toast = notify.loading(`正在${label}…`); try { await update(record.production_id, record.id, { status }); notify.success(`${label}成功`, { id: toast }); onRefresh(); } catch (error) { notify.error(`${label}失败`, { id: toast, description: error?.message || String(error) }); } }; return <div className="flex items-center gap-1"><Button size="icon-sm" variant="ghost" title="编辑" onClick={() => onEdit(record)}><Pencil /></Button>{record.status === "planned" && <Button size="icon-sm" variant="ghost" title="开始" onClick={() => action("live", "开始记录")}><Play /></Button>}{record.status === "live" && <Button size="icon-sm" variant="ghost" title="结束" onClick={() => action("completed", "结束记录")}><Square /></Button>}{record.status !== "completed" && record.status !== "canceled" && <Button size="icon-sm" variant="ghost" title="取消" onClick={() => action("canceled", "取消记录")}><XCircle /></Button>}</div> }
+function RecordRow({ record, type, timezone, onEdit, onRefresh }) { return <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3 last:border-b-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium">{record.name}</p><Badge variant="secondary">{kindLabels[record.kind] || record.kind}</Badge><Badge className={statusClass[record.status]} variant="secondary">{statusLabels[record.status] || record.status}</Badge></div><p className="mt-1 text-sm text-muted-foreground">{record.scheduled_start_at ? `${formatProductionInstant(record.scheduled_start_at, timezone)}${record.scheduled_end_at ? ` — ${formatProductionInstant(record.scheduled_end_at, timezone)}` : ""}` : "尚未安排时间"}{record.venue_name ? ` · ${record.venue_name}${record.space_name ? ` · ${record.space_name}` : ""}` : " · 未指定地点"}</p></div><RecordActions record={record} type={type} onEdit={onEdit} onRefresh={onRefresh} /></div> }
 
-function TimelineEmpty({ config }) {
-  return <Card className="border-dashed"><CardContent className="flex min-h-72 items-center justify-center px-6 text-center"><div><p className="font-medium">{config.emptyTitle}</p><p className="mt-1 text-sm text-muted-foreground">时间轴数据接入后会显示制作阶段和时间安排。</p></div></CardContent></Card>;
-}
-
-export function PlanningPage({ route, workspace, production }) {
-  const config = pageConfig[route.page] || pageConfig.schedule;
-  const [view, setView] = useState(config.defaultView);
-  const [query, setQuery] = useState("");
-  const validViews = useMemo(() => new Set(config.views.map((item) => item.id)), [config.views]);
-
-  useEffect(() => {
-    let active = true;
-    appStore.get(viewStoreKey(production.id, route.page)).then((stored) => {
-      if (active && validViews.has(stored)) setView(stored);
-    }).catch(() => {});
-    return () => { active = false; };
-  }, [production.id, route.page, validViews]);
-
-  const changeView = (nextView) => {
-    if (!validViews.has(nextView)) return;
-    setView(nextView);
-    appStore.set(viewStoreKey(production.id, route.page), nextView).catch(() => {});
-  };
-
-  const empty = <PlanningEmptyState icon={config.icon} title={config.emptyTitle} description={config.emptyDescription} />;
-  return <div className="space-y-5">
-    <PageBreadcrumbs route={route} workspace={workspace} production={production} />
-    <ProductionPageHeader workspace={workspace} production={production} title={config.title} subtitle={route.meta.description} />
-    <PlanningToolbar title={config.title} query={query} onQueryChange={setQuery} views={config.views} view={view} onViewChange={changeView} />
-    {view === "calendar" && <div className="space-y-4"><StagePilotEventCalendar defaultView="month" /><div>{empty}</div></div>}
-    {view === "list" && empty}
-    {view === "grid" && empty}
-    {view === "agenda" && empty}
-    {view === "timeline" && <TimelineEmpty config={config} />}
-  </div>;
-}
+export function PlanningPage({ route, workspace, production }) { const page = configs[route.page] || configs.schedule; const [view, setView] = useState(page.defaultView); const [query, setQuery] = useState(""); const [records, setRecords] = useState([]); const [loading, setLoading] = useState(page.type !== "schedule"); const [error, setError] = useState(null); const [dialog, setDialog] = useState(null); const validViews = useMemo(() => new Set(page.views.map((item) => item.id)), [page]); const load = async () => { if (page.type === "schedule") { setRecords([]); return; } setLoading(true); setError(null); try { setRecords(await (page.type === "rehearsal" ? listRehearsalSessions(production.id) : listProductionOccurrences(production.id))); } catch (nextError) { setError(nextError); } finally { setLoading(false); } }; useEffect(() => { let active = true; appStore.get(`planningView:${production.id}:${route.page}`).then((stored) => { if (active && validViews.has(stored)) setView(stored); }).catch(() => {}); load(); return () => { active = false; }; }, [production.id, route.page]); const changeView = (next) => { if (!validViews.has(next)) return; setView(next); appStore.set(`planningView:${production.id}:${route.page}`, next).catch(() => {}); }; const visible = records.filter((item) => !query.trim() || item.name.toLowerCase().includes(query.trim().toLowerCase())); const events = records.filter((item) => item.scheduled_start_at).map((item) => ({ id: item.id, title: item.name, start: new Date(item.scheduled_start_at), end: new Date(item.scheduled_end_at || item.scheduled_start_at), color: item.status === "canceled" ? "gray" : "blue" })); const empty = <PlanningEmptyState icon={page.icon} title={page.emptyTitle} description={page.emptyDescription} />; let content = empty; if (page.type !== "schedule" && !error && visible.length) { if (view === "calendar") content = <div className="space-y-4"><StagePilotEventCalendar defaultView="month" events={events} interactions={{ drag: false, resize: false, selectSlot: false }} /><Card><CardContent className="p-0">{visible.map((record) => <RecordRow key={record.id} record={record} type={page.type} timezone={production.timezone} onEdit={setDialog} onRefresh={load} />)}</CardContent></Card></div>; else if (view === "grid") content = <div className={resourceGridClassName}>{visible.map((record) => <Card key={record.id}><CardContent className="space-y-3 p-4"><div className="flex items-start justify-between gap-2"><div><p className="font-medium">{record.name}</p><p className="text-sm text-muted-foreground">{kindLabels[record.kind] || record.kind}</p></div><Badge className={statusClass[record.status]} variant="secondary">{statusLabels[record.status]}</Badge></div><p className="text-sm text-muted-foreground">{record.scheduled_start_at ? formatProductionInstant(record.scheduled_start_at, production.timezone) : "尚未安排时间"}</p><RecordActions record={record} type={page.type} onEdit={setDialog} onRefresh={load} /></CardContent></Card>)}</div>; else content = <Card><CardContent className="p-0">{visible.map((record) => <RecordRow key={record.id} record={record} type={page.type} timezone={production.timezone} onEdit={setDialog} onRefresh={load} />)}</CardContent></Card>; } if (error) content = <Card><CardContent className="space-y-3 p-6"><p className="font-medium">无法加载{page.title}</p><p className="text-sm text-muted-foreground">{error.message}</p><Button onClick={load}>重试</Button></CardContent></Card>; return <div className="space-y-5"><PageBreadcrumbs route={route} workspace={workspace} production={production} /><ProductionPageHeader workspace={workspace} production={production} title={page.title} subtitle={route.meta.description || page.description} actions={page.type !== "schedule" ? <Button onClick={() => setDialog({})}>新建{page.type === "rehearsal" ? "彩排" : "场次"}</Button> : undefined} /><PlanningToolbar title={page.title} query={query} onQueryChange={setQuery} views={page.views} view={view} onViewChange={changeView} /><ResourcePage title="" description="" count={visible.length} showViewToggle={false} search={{ value: "", onChange: () => {} }} loading={loading} empty={loading || visible.length ? null : { icon: page.icon, title: page.emptyTitle, description: page.emptyDescription }}><div>{content}</div></ResourcePage><ProductionPlanningDialog open={Boolean(dialog)} onOpenChange={(open) => !open && setDialog(null)} production={production} type={page.type === "rehearsal" ? "rehearsal" : "occurrence"} record={dialog && dialog.id ? dialog : null} onSaved={() => { setDialog(null); load(); }} /></div> }

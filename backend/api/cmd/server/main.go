@@ -188,11 +188,15 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /v1/workspaces/{id}/productions", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createProduction))))
 	mux.Handle("GET /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleMember, http.HandlerFunc(app.getProduction))))
 	mux.Handle("PATCH /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleAdmin, http.HandlerFunc(app.updateProduction))))
+	mux.Handle("GET /v1/workspaces/{id}/settings", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.getWorkspacePlanningSettings))))
+	mux.Handle("PATCH /v1/workspaces/{id}/settings", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateWorkspacePlanningSettings))))
 	// Canonical Production-scoped API. These routes deliberately do not require a
 	// navigable Workspace: direct collaborators operate only within a Production.
 	mux.Handle("GET /v1/productions", app.auth(http.HandlerFunc(app.listAccessibleProductions)))
 	mux.Handle("GET /v1/productions/{productionId}", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getAccessibleProduction))))
 	mux.Handle("PATCH /v1/productions/{productionId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProduction))))
+	mux.Handle("GET /v1/productions/{productionId}/settings", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getProductionPlanningSettings))))
+	mux.Handle("PATCH /v1/productions/{productionId}/settings", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProductionPlanningSettings))))
 	mux.Handle("GET /v1/productions/{productionId}/members", app.auth(app.requireProductionPermission(productionMembersView, http.HandlerFunc(app.listProductionMembers))))
 	mux.Handle("POST /v1/productions/{productionId}/members", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.createProductionMember))))
 	mux.Handle("PATCH /v1/productions/{productionId}/members/{memberId}", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.updateProductionMember))))
@@ -206,6 +210,14 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PATCH /v1/productions/{productionId}/locations/order", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.reorderProductionLocations))))
 	mux.Handle("PATCH /v1/productions/{productionId}/locations/{locationId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProductionLocation))))
 	mux.Handle("DELETE /v1/productions/{productionId}/locations/{locationId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.deleteProductionLocation))))
+	mux.Handle("GET /v1/productions/{productionId}/occurrences", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listPlanning))))
+	mux.Handle("POST /v1/productions/{productionId}/occurrences", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createPlanning))))
+	mux.Handle("GET /v1/productions/{productionId}/occurrences/{occurrenceId}", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getPlanning))))
+	mux.Handle("PATCH /v1/productions/{productionId}/occurrences/{occurrenceId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updatePlanning))))
+	mux.Handle("GET /v1/productions/{productionId}/rehearsals", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listPlanning))))
+	mux.Handle("POST /v1/productions/{productionId}/rehearsals", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createPlanning))))
+	mux.Handle("GET /v1/productions/{productionId}/rehearsals/{sessionId}", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getPlanning))))
+	mux.Handle("PATCH /v1/productions/{productionId}/rehearsals/{sessionId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updatePlanning))))
 	registerFileRoutes(app, mux)
 	return mux
 }

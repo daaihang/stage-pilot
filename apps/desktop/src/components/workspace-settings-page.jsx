@@ -2,15 +2,18 @@ import { useCallback, useEffect, useState } from "react";
 import { Bell, Cable, Database, KeyRound, LockKeyhole, Save, Settings2, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { notify } from "@/components/ui/sonner";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { WorkspacePageHeader } from "@/components/workspace-page-shell";
 import { useWorkspaceContext } from "@/components/workspace-provider";
-import { getWorkspace, roleAtLeast, updateWorkspace } from "@/lib/workspace-api";
+import { getWorkspace, getWorkspacePlanningSettings, roleAtLeast, updateWorkspace, updateWorkspacePlanningSettings } from "@/lib/workspace-api";
 
-const settingGroups = [["general", "常规", Settings2], ["notifications", "通知", Bell], ["integrations", "集成", Cable], ["security", "安全与数据", LockKeyhole], ["danger", "危险区域", ShieldAlert]];
+const settingGroups = [["general", "常规", Settings2], ["planning", "排程规则", Database], ["notifications", "通知", Bell], ["integrations", "集成", Cable], ["security", "安全与数据", LockKeyhole], ["danger", "危险区域", ShieldAlert]];
+
+function PlanningSettings({ workspaceId, canManage }) { const [value, setValue] = useState(true); const [loaded, setLoaded] = useState(false); useEffect(() => { getWorkspacePlanningSettings(workspaceId).then((data) => { setValue(data.require_actual_start_before_completion !== false); setLoaded(true); }).catch(() => setLoaded(true)); }, [workspaceId]); const save = async (checked) => { setValue(checked); const toast = notify.loading("正在保存排程规则…"); try { await updateWorkspacePlanningSettings(workspaceId, { require_actual_start_before_completion: checked }); notify.success("排程规则已保存", { id: toast }); } catch (error) { setValue(!checked); notify.error("排程规则保存失败", { id: toast, description: error?.message || String(error) }); } }; return <Card><CardHeader><CardTitle>排程规则</CardTitle><CardDescription>设置场次和彩排是否必须先开始，才能标记为已结束。</CardDescription></CardHeader><CardContent><div className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium">必须先开始才能结束</p><p className="mt-1 text-xs text-muted-foreground">Production 未单独覆盖时继承此默认值。</p></div><Switch checked={value} disabled={!canManage || !loaded} onCheckedChange={save} /></div></CardContent></Card>; }
 
 function UnavailableRow({ icon: Icon, title, description, value = "尚未接入" }) {
   return <div className="flex items-center gap-3 border-b py-4 last:border-b-0 opacity-55 blur-[1px]"><Icon className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="text-sm font-medium">{title}</p><p className="mt-1 text-xs text-muted-foreground">{description}</p></div><Badge variant="outline">{value}</Badge></div>;
@@ -22,6 +25,7 @@ function GeneralSettings({ workspace, canManage, form, setForm, saving, onSave }
 
 function WorkspaceSettingsContent({ group, workspace, canManage, form, setForm, saving, onSave }) {
   if (group === "general") return <GeneralSettings workspace={workspace} canManage={canManage} form={form} setForm={setForm} saving={saving} onSave={onSave} />;
+  if (group === "planning") return <PlanningSettings workspaceId={workspace.id} canManage={canManage} />;
   if (group === "notifications") return <Card><CardHeader><CardTitle>通知</CardTitle><CardDescription>工作空间级通知配置尚未接入。</CardDescription></CardHeader><CardContent><UnavailableRow icon={Bell} title="成员加入通知" description="成员加入或离开工作空间时通知管理员" /><UnavailableRow icon={Bell} title="新活动通知" description="工作空间创建新活动时通知成员" /><UnavailableRow icon={Bell} title="系统通知" description="接收 StagePilot 工作空间系统消息" /></CardContent></Card>;
   if (group === "integrations") return <Card><CardHeader><CardTitle>集成</CardTitle><CardDescription>工作空间共享的外部服务连接。</CardDescription></CardHeader><CardContent><UnavailableRow icon={Cable} title="日历" description="同步工作空间活动到外部日历" value="未连接" /><UnavailableRow icon={Cable} title="文件存储" description="连接工作空间文件存储服务" value="未连接" /><UnavailableRow icon={Cable} title="Webhook / API" description="向外部系统推送工作空间事件" value="未连接" /></CardContent></Card>;
   if (group === "security") return <Card><CardHeader><CardTitle>安全与数据</CardTitle><CardDescription>工作空间的安全和数据治理能力尚未接入。</CardDescription></CardHeader><CardContent><UnavailableRow icon={Database} title="审计日志" description="查看成员和数据操作记录" /><UnavailableRow icon={Database} title="数据导出" description="导出工作空间中的业务数据" /><UnavailableRow icon={LockKeyhole} title="会话与安全" description="管理工作空间安全策略" /></CardContent></Card>;

@@ -133,6 +133,10 @@ func (app *application) createWorkspace(w http.ResponseWriter, r *http.Request) 
 		serverError(w, err)
 		return
 	}
+	if _, err = tx.Exec(ctx, `INSERT INTO workspace_settings (workspace_id) VALUES ($1) ON CONFLICT DO NOTHING`, workspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
 	if err = seedWorkspaceDefaults(ctx, tx, workspaceID, userID); err != nil {
 		serverError(w, err)
 		return

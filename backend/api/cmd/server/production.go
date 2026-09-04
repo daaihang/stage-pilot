@@ -237,14 +237,29 @@ func (app *application) createProduction(w http.ResponseWriter, r *http.Request)
 		now := time.Now().UTC()
 		actualCompletedAt = &now
 	}
-	if _, err := app.db.Exec(r.Context(), `INSERT INTO productions (id,workspace_id,name,status,timezone,planned_start_at,planned_end_at,actual_completed_at,description,created_by)
+	tx, err := app.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), `INSERT INTO productions (id,workspace_id,name,status,timezone,planned_start_at,planned_end_at,actual_completed_at,description,created_by)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
 		productionID, access.WorkspaceID, name, status, timezone, plannedStartAt, plannedEndAt, actualCompletedAt, description, access.UserID); err != nil {
 		serverError(w, err)
 		return
 	}
-	if _, err := app.db.Exec(r.Context(), `INSERT INTO production_memberships (id,production_id,user_id,role_key,status,invited_by)
+	if _, err := tx.Exec(r.Context(), `INSERT INTO production_memberships (id,production_id,user_id,role_key,status,invited_by)
 		VALUES ($1,$2,$3,'producer','active',$3)`, newID(), productionID, access.UserID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `INSERT INTO production_occurrences (id,workspace_id,production_id,name,kind,status,timezone,created_by)
+		VALUES ($1,$2,$3,'默认场次','performance','planned',$4,$5)`, newID(), access.WorkspaceID, productionID, timezone, access.UserID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return
 	}

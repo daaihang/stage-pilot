@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Archive, Bell, Boxes, CheckCircle2, Eye, GitBranch, Link2, LockKeyhole, RotateCcw, Settings2, ShieldAlert, Trash2, UsersRound, Workflow, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { roleAtLeast } from "@/lib/workspace-api";
-import { productionStatusLabel } from "@/lib/production-api";
+import { getProductionPlanningSettings, productionStatusLabel, updateProductionPlanningSettings } from "@/lib/production-api";
 import { ProductionPageHeader, useProductionActionFeedback } from "@/components/production-page-shell";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { useWorkspaceContext } from "@/components/workspace-provider";
@@ -42,6 +42,8 @@ function NotificationSettings() {
   return <UnavailableSection title="通知偏好" description="通知配置尚未接入，当前仅展示规划中的设置。">{items.map(([title, description]) => <SettingRow key={title} icon={Bell} title={title} description={description} disabled><Switch checked={false} disabled /></SettingRow>)}</UnavailableSection>;
 }
 
+function PlanningPolicySetting({ production, canManage }) { const [value, setValue] = useState(null); const [loaded, setLoaded] = useState(false); useEffect(() => { getProductionPlanningSettings(production.id).then((data) => { setValue(data.require_actual_start_before_completion); setLoaded(true); }).catch(() => setLoaded(true)); }, [production.id]); const save = async (checked) => { const previous = value; setValue(checked); const toast = notify.loading("正在保存活动排程规则…"); try { await updateProductionPlanningSettings(production.id, { require_actual_start_before_completion: checked }); notify.success("活动排程规则已保存", { id: toast }); } catch (error) { setValue(previous); notify.error("活动排程规则保存失败", { id: toast, description: error?.message || String(error) }); } }; const inherit = async () => { const previous = value; setValue(null); const toast = notify.loading("正在恢复工作空间默认值…"); try { await updateProductionPlanningSettings(production.id, { require_actual_start_before_completion: null }); notify.success("已恢复工作空间默认值", { id: toast }); } catch (error) { setValue(previous); notify.error("恢复默认值失败", { id: toast, description: error?.message || String(error) }); } }; return <Card><CardHeader><CardTitle>排程规则</CardTitle><CardDescription>活动可以覆盖工作空间默认的完成规则。</CardDescription></CardHeader><CardContent><div className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium">必须先开始才能结束</p><p className="mt-1 text-xs text-muted-foreground">关闭后可直接将计划中的记录标记为已结束；留空表示继承工作空间。</p></div><div className="flex items-center gap-2"><Button type="button" variant="outline" size="sm" disabled={!canManage || !loaded || value === null} onClick={inherit}>继承默认</Button><Switch checked={value ?? true} disabled={!canManage || !loaded} onCheckedChange={save} /></div></div>{loaded && value === null && <p className="mt-3 text-xs text-muted-foreground">当前：继承工作空间默认值</p>}</CardContent></Card>; }
+
 function IntegrationSettings() {
   const items = [["日历同步", "同步活动时间到外部日历"], ["文件存储", "连接外部文件存储服务"], ["邮件服务", "配置活动邮件发送服务"], ["Webhook", "向外部系统推送活动事件"], ["外部报名系统", "连接报名或票务平台"]];
   return <UnavailableSection title="外部连接" description="集成能力将在对应服务接入后开放。">{items.map(([title, description]) => <SettingRow key={title} icon={Link2} title={title} description={description} disabled><Badge variant="outline">未连接</Badge></SettingRow>)}</UnavailableSection>;
@@ -68,7 +70,7 @@ export function ProductionSettingsPage({ workspace, production, onUpdateProducti
   const canManage = roleAtLeast(membershipRole, "admin");
   const [activeGroup, setActiveGroup] = useState("access");
   const content = {
-    access: <div className="space-y-4"><AccessSettings /><ProductionLocations workspace={workspace} production={production} /></div>,
+    access: <div className="space-y-4"><AccessSettings /><ProductionLocations workspace={workspace} production={production} /><PlanningPolicySetting production={production} canManage={canManage} /></div>,
     workflow: <WorkflowSettings />,
     notifications: <NotificationSettings />,
     integrations: <IntegrationSettings />,

@@ -46,6 +46,16 @@ export const updateProductionLocation = (productionId, locationId, payload) => r
 export const deleteProductionLocation = (productionId, locationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/${encodeURIComponent(locationId)}`, { method: "DELETE" });
 export const reorderProductionLocations = (productionId, items) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/order`, { method: "PATCH", body: JSON.stringify({ items }) });
 
+const planningPath = (productionId, type) => `/v1/productions/${encodeURIComponent(productionId)}/${type === "rehearsal" ? "rehearsals" : "occurrences"}`;
+export const listProductionOccurrences = (productionId) => request(planningPath(productionId, "occurrence"));
+export const createProductionOccurrence = (productionId, payload) => request(planningPath(productionId, "occurrence"), { method: "POST", body: JSON.stringify(payload) });
+export const updateProductionOccurrence = (productionId, id, payload) => request(`${planningPath(productionId, "occurrence")}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+export const listRehearsalSessions = (productionId) => request(planningPath(productionId, "rehearsal"));
+export const createRehearsalSession = (productionId, payload) => request(planningPath(productionId, "rehearsal"), { method: "POST", body: JSON.stringify(payload) });
+export const updateRehearsalSession = (productionId, id, payload) => request(`${planningPath(productionId, "rehearsal")}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+export const getProductionPlanningSettings = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/settings`);
+export const updateProductionPlanningSettings = (productionId, patch) => request(`/v1/productions/${encodeURIComponent(productionId)}/settings`, { method: "PATCH", body: JSON.stringify(patch) });
+
 export async function updateProduction(workspaceId, productionId, patch) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/productions/${encodeURIComponent(productionId)}`, {
     method: "PATCH",
