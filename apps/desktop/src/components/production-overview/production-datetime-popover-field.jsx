@@ -20,10 +20,9 @@ export function ProductionDateTimePopoverField({
       icon={CalendarClock}
       disabled={disabled}
       description={description}
-      contentClassName="w-auto p-0"
+      contentClassName="w-auto"
       onSave={onSave}
       hideFieldLabel
-      flush
       renderEditor={({ draft, setDraft, disabled: editorDisabled, open }) => (
         <DateTimePickerPanel
           value={draft}

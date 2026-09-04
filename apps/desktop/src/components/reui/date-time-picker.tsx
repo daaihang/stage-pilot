@@ -68,13 +68,20 @@ export function DateTimePickerPanel({ value, onChange, onDraftChange, timezone =
     return Array.from({ length: Math.floor(DAY_MINUTES / safeStep) }, (_, index) => index * safeStep)
   }, [safeStep])
 
+  const pushDraft = (next) => {
+    onDraftChange?.(next)
+    committedRef.current = next || ""
+    setDirty(false)
+    setConflict(false)
+  }
+
   const handleSelectDate = (date) => {
     setPendingDate(date ?? null); setDirty(true); setError(""); setCandidates([]); setSelectedCandidate(null)
-    if (!date) { setPendingMinutes(null); return }
+    if (!date) { setPendingMinutes(null); pushDraft(""); return }
     const fallback = valueDate && valueMinutes != null && toDateKey(valueDate) === toDateKey(date) ? valueMinutes : 9 * 60
     setPendingMinutes(fallback); setTimeInput(formatSlotLabel(fallback))
     const draft = resolveWallClockTime(`${toDateKey(date)}T${formatSlotLabel(fallback)}`, timezone)
-    if (draft.status === "valid") onDraftChange?.(draft.instant)
+    if (draft.status === "valid") pushDraft(draft.instant)
   }
 
   const handleTimeInput = (next) => {
@@ -85,7 +92,7 @@ export function DateTimePickerPanel({ value, onChange, onDraftChange, timezone =
     setPendingMinutes(minutes); setError("")
     if (pendingDate) {
       const draft = resolveWallClockTime(`${toDateKey(pendingDate)}T${formatSlotLabel(minutes)}`, timezone)
-      if (draft.status === "valid") onDraftChange?.(draft.instant)
+      if (draft.status === "valid") pushDraft(draft.instant)
     }
   }
 
@@ -102,7 +109,7 @@ export function DateTimePickerPanel({ value, onChange, onDraftChange, timezone =
 
   const selectCandidate = (candidate) => {
     setSelectedCandidate(candidate.instant === candidates[candidates.length - 1]?.instant ? "later" : "earlier")
-    setError(""); onDraftChange?.(candidate.instant)
+    setError(""); pushDraft(candidate.instant)
   }
 
   return (
@@ -119,7 +126,7 @@ export function DateTimePickerPanel({ value, onChange, onDraftChange, timezone =
         </div></ScrollArea></div></div>
       </div>
       {showFooter && (showApply ? (clearable || pendingDate || value) : (clearable && (pendingDate || value))) && <div className="flex items-center justify-end gap-2 border-t p-2">
-        {clearable && (value || pendingDate) && <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" disabled={disabled} onClick={() => { setPendingDate(null); setPendingMinutes(null); setTimeInput(""); setDirty(true); setError(""); setCandidates([]); setSelectedCandidate(null); onDraftChange?.("") }}><IconPlaceholder lucide="XIcon" tabler="IconX" hugeicons="Cancel01Icon" phosphor="XIcon" remixicon="RiCloseLine" aria-hidden="true" />清除时间</Button>}
+        {clearable && (value || pendingDate) && <Button type="button" variant="ghost" size="sm" className="text-muted-foreground" disabled={disabled} onClick={() => { setPendingDate(null); setPendingMinutes(null); setTimeInput(""); setDirty(true); setError(""); setCandidates([]); setSelectedCandidate(null); pushDraft("") }}><IconPlaceholder lucide="XIcon" tabler="IconX" hugeicons="Cancel01Icon" phosphor="XIcon" remixicon="RiCloseLine" aria-hidden="true" />清除时间</Button>}
         {showApply && <Button type="button" size="sm" onClick={commit} disabled={disabled || Boolean(error) || (!pendingDate && !value && !dirty) || (pendingDate && pendingMinutes == null)}>确认</Button>}
       </div>}
     </div>
@@ -131,6 +138,6 @@ export function DateTimePicker({ value, onChange, timezone = DEFAULT_TIMEZONE, d
   const display = formatDateTimeValue(value, timezone)
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger render={<Button type="button" variant="outline" disabled={disabled} size={iconOnly ? "icon" : "default"} className={cn(iconOnly ? "size-8" : "group/date-time w-full justify-between font-normal", className)} aria-label={iconOnly ? (display || "选择日期与时间") : undefined} title={iconOnly ? (display || "选择日期与时间") : undefined}>{!iconOnly && <span className={cn("truncate", !display && "text-muted-foreground")}>{display || placeholder}</span>}<IconPlaceholder lucide="CalendarIcon" tabler="IconCalendarEvent" hugeicons="Calendar04Icon" phosphor="CalendarBlankIcon" remixicon="RiCalendarLine" aria-hidden="true" className="shrink-0 text-muted-foreground/80 transition-colors group-hover/date-time:text-foreground" /></Button>} />
-    <PopoverContent align={align} flush className="w-auto"><DateTimePickerPanel value={value} timezone={timezone} active={open} disabled={disabled} clearable={clearable} step={step} onChange={(next) => { onChange?.(next); setOpen(false) }} /></PopoverContent>
+    <PopoverContent align={align} flush className="w-auto p-2"><DateTimePickerPanel value={value} timezone={timezone} active={open} disabled={disabled} clearable={clearable} step={step} onChange={(next) => { onChange?.(next); setOpen(false) }} /></PopoverContent>
   </Popover>
 }
