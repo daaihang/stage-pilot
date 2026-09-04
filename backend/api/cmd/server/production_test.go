@@ -261,8 +261,12 @@ func TestProductionCompletionRecordsActualTimeAndRestores(t *testing.T) {
 	if completedBody["actual_completed_at"] == nil || completedBody["actual_completed_at"] == "" {
 		t.Fatal("completed production must have actual_completed_at")
 	}
-	if _, exists := completedBody["start_at"]; exists { t.Fatal("response must not contain legacy start_at") }
-	if _, exists := completedBody["end_at"]; exists { t.Fatal("response must not contain legacy end_at") }
+	if _, exists := completedBody["start_at"]; exists {
+		t.Fatal("response must not contain legacy start_at")
+	}
+	if _, exists := completedBody["end_at"]; exists {
+		t.Fatal("response must not contain legacy end_at")
+	}
 	if completedBody["planned_end_at"] != plannedEnd {
 		t.Fatalf("planned_end_at = %v, want %s", completedBody["planned_end_at"], plannedEnd)
 	}
@@ -326,6 +330,29 @@ func TestProductionRejectsInvalidTimeAndTimezone(t *testing.T) {
 	}
 	if created["timezone"] != "Europe/London" {
 		t.Fatalf("timezone = %v, want Europe/London", created["timezone"])
+	}
+}
+
+func TestProductionPatchTimeStates(t *testing.T) {
+	app := newIntegrationApp(t)
+	uid := createTestUser(t, app, "prod-time-states-"+newID()+"@example.test")
+	token := issueTestToken(t, app, uid)
+	workspaceID := createWorkspaceFor(t, app, token, "活动时间三态")["id"].(string)
+	created := createProductionFor(t, app, token, workspaceID, "三态活动", "2026-09-18T10:00:00Z", "2026-09-20T22:00:00Z")
+	path := "/v1/workspaces/" + workspaceID + "/productions/" + created["id"].(string)
+	if response := authedRequest(t, app, token, http.MethodPatch, path, map[string]any{"name": "保留时间"}); response.Code != http.StatusOK {
+		t.Fatalf("omitted patch = %d: %s", response.Code, response.Body.String())
+	}
+	cleared := authedRequest(t, app, token, http.MethodPatch, path, map[string]any{"planned_start_at": nil, "planned_end_at": nil})
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("null patch = %d: %s", cleared.Code, cleared.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(cleared.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["planned_start_at"] != nil || body["planned_end_at"] != nil {
+		t.Fatalf("cleared times = %#v", body)
 	}
 }
 

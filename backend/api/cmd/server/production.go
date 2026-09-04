@@ -323,12 +323,12 @@ func (app *application) getProduction(w http.ResponseWriter, r *http.Request) {
 // updateProduction 支持部分更新；status=archived 时同时写入 archived_at（AC-P10）。
 func (app *application) updateProduction(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name           *string    `json:"name"`
-		Description    *string    `json:"description"`
-		Timezone       *string    `json:"timezone"`
-		PlannedStartAt *time.Time `json:"planned_start_at"`
-		PlannedEndAt   *time.Time `json:"planned_end_at"`
-		Status         *string    `json:"status"`
+		Name           *string      `json:"name"`
+		Description    *string      `json:"description"`
+		Timezone       *string      `json:"timezone"`
+		PlannedStartAt optionalTime `json:"planned_start_at"`
+		PlannedEndAt   optionalTime `json:"planned_end_at"`
+		Status         *string      `json:"status"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -338,7 +338,7 @@ func (app *application) updateProduction(w http.ResponseWriter, r *http.Request)
 		errorJSON(w, http.StatusForbidden, "production_forbidden", "只有 Producer 或工作空间管理者可以归档活动")
 		return
 	}
-	if in.Name != nil || in.Description != nil || in.Timezone != nil || in.PlannedStartAt != nil || in.PlannedEndAt != nil || in.Status != nil {
+	if in.Name != nil || in.Description != nil || in.Timezone != nil || in.PlannedStartAt.Present || in.PlannedEndAt.Present || in.Status != nil {
 		name, description, timezone, plannedStartAt, plannedEndAt, status, ok := func() (string, string, string, *time.Time, *time.Time, string, bool) {
 			current, err := app.findProduction(r.Context(), access.WorkspaceID, access.ProductionID)
 			if err != nil {
@@ -358,12 +358,12 @@ func (app *application) updateProduction(w http.ResponseWriter, r *http.Request)
 				mergedTimezone = *in.Timezone
 			}
 			mergedStart := current.PlannedStartAt
-			if in.PlannedStartAt != nil {
-				mergedStart = in.PlannedStartAt
+			if in.PlannedStartAt.Present {
+				mergedStart = in.PlannedStartAt.Value
 			}
 			mergedEnd := current.PlannedEndAt
-			if in.PlannedEndAt != nil {
-				mergedEnd = in.PlannedEndAt
+			if in.PlannedEndAt.Present {
+				mergedEnd = in.PlannedEndAt.Value
 			}
 			mergedStatus := current.Status
 			if in.Status != nil {

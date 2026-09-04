@@ -27,6 +27,7 @@ import { useRender } from "@base-ui/react/use-render"
 import { addDays } from "date-fns";
 
 import { cn } from "@/lib/utils"
+import { DEFAULT_TIMEZONE } from "@/lib/timezone"
 
 const BASE_VIEWS = ["month", "week", "day", "days", "agenda"]
 const ALL_VIEWS = [...BASE_VIEWS, "resource"]
@@ -89,7 +90,7 @@ function resolveSettings(options) {
   return {
     ...rest,
     timeZone:
-      options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      options.timeZone ?? DEFAULT_TIMEZONE,
     locale: options.locale,
     // locale-first default: a de/fr locale gets Monday weeks without also
     // having to set weekStartsOn; an explicit weekStartsOn always wins

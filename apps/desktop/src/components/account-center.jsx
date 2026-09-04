@@ -10,7 +10,7 @@ import { updateMe, updatePassword } from "@/lib/auth";
 import { DeveloperTools } from "@/components/developer-tools";
 import { CreditCard, LockKeyhole, ShieldCheck } from "@/components/ui/icons";
 import { useUserPreferences } from "@/components/user-preferences-provider";
-import { getSupportedTimeZones, timeZoneCityLabel, timeZoneOffsetLabel } from "@/lib/timezone";
+import { TimezoneCombobox } from "@/components/timezone-combobox";
 
 function AccountProfile({ user, onUserUpdate }) {
   const [displayName, setDisplayName] = useState(user?.display_name || user?.name || "");
@@ -36,7 +36,6 @@ function PreferencesView({ theme, applyTheme, showTitlebarTitle, titlebarTitleMo
   const updateNotifications = (checked) => { setNotifications(checked); notify.success(checked ? "桌面通知已开启" : "桌面通知已关闭"); };
   const widths = [["standard", "标准"], ["wide", "宽"], ["full", "全宽"]];
   const titlebarModes = [["none", "无"], ["page", "当前页面名称"], ["app", "应用名称"]];
-  const timezones = getSupportedTimeZones();
   return <Card><CardHeader><CardTitle>偏好与通知</CardTitle><CardDescription>外观设置保存在当前客户端，时区偏好同步到你的账户。</CardDescription></CardHeader><CardContent className="space-y-5">
     <SettingRow title="主题" description="在浅色、深色和系统外观之间切换" value={<div className="flex gap-1">{[["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]].map(([value, label]) => <Button key={value} size="sm" variant={theme === value ? "secondary" : "outline"} onClick={() => { applyTheme(value); notify.info(`已切换到${label}主题`); }}>{label}</Button>)}</div>} />
     <SettingRow title="页面内容宽度" description="独占详情时控制内容画布；普通分栏始终填满各自栏位。" value={<div className="flex gap-1">{widths.map(([value, label]) => <Button key={value} size="sm" variant={contentWidth === value ? "secondary" : "outline"} onClick={() => onContentWidthChange(value)}>{label}</Button>)}</div>} />
@@ -44,7 +43,7 @@ function PreferencesView({ theme, applyTheme, showTitlebarTitle, titlebarTitleMo
     <SettingRow title="侧栏边缘热区" description="紧贴侧栏的细条点击可展开或收起侧栏；关闭后仍可用 Ctrl+B 或标题栏按钮切换" value={<Switch checked={sidebarRailEnabled} onCheckedChange={onSidebarRailChange} />} />
     <SettingRow title="桌面通知" description="接收活动提醒和系统状态通知" value={<Switch checked={notifications} onCheckedChange={updateNotifications} />} />
     <SettingRow title="语言" description="多语言界面将在偏好服务接入后开放" value={<Badge variant="outline">中文（即将开放）</Badge>} />
-    <SettingRow title="时区" description="用于没有业务专属时区的账户和工作空间时间展示" value={<Select value={timezone} onValueChange={(value) => updateTimezone(value).catch(() => {})} disabled={timezoneLoading}><SelectTrigger className="w-64"><SelectValue /></SelectTrigger><SelectContent>{timezones.map((value) => <SelectItem key={value} value={value}>{timeZoneCityLabel(value)} · {value} ({timeZoneOffsetLabel(new Date(), value)})</SelectItem>)}</SelectContent></Select>} />
+    <SettingRow title="时区" description="用于没有业务专属时区的账户和工作空间时间展示" value={<TimezoneCombobox value={timezone} onValueChange={(value) => updateTimezone(value).catch(() => {})} disabled={timezoneLoading} className="w-64" />} />
   </CardContent></Card>;
 }
 

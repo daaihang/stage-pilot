@@ -31,15 +31,15 @@ type productionPlanningRecord struct {
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
 type planningPatch struct {
-	Name                 *string    `json:"name"`
-	Kind                 *string    `json:"kind"`
-	Timezone             *string    `json:"timezone"`
-	ScheduledStartAt     *time.Time `json:"scheduled_start_at"`
-	ScheduledEndAt       *time.Time `json:"scheduled_end_at"`
-	Status               *string    `json:"status"`
-	ProductionLocationID *string    `json:"production_location_id"`
-	Notes                *string    `json:"notes"`
-	OccurrenceID         *string    `json:"occurrence_id"`
+	Name                 *string      `json:"name"`
+	Kind                 *string      `json:"kind"`
+	Timezone             *string      `json:"timezone"`
+	ScheduledStartAt     optionalTime `json:"scheduled_start_at"`
+	ScheduledEndAt       optionalTime `json:"scheduled_end_at"`
+	Status               *string      `json:"status"`
+	ProductionLocationID *string      `json:"production_location_id"`
+	Notes                *string      `json:"notes"`
+	OccurrenceID         *string      `json:"occurrence_id"`
 }
 
 func planningTable(r *http.Request) (string, string, bool) {
@@ -246,11 +246,11 @@ func (app *application) updatePlanning(w http.ResponseWriter, r *http.Request) {
 		tz = *in.Timezone
 	}
 	start, end := current.ScheduledStartAt, current.ScheduledEndAt
-	if in.ScheduledStartAt != nil {
-		start = in.ScheduledStartAt
+	if in.ScheduledStartAt.Present {
+		start = in.ScheduledStartAt.Value
 	}
-	if in.ScheduledEndAt != nil {
-		end = in.ScheduledEndAt
+	if in.ScheduledEndAt.Present {
+		end = in.ScheduledEndAt.Value
 	}
 	if !validatePlanningInput(w, name, kind, tz, start, end, rehearsal) {
 		return

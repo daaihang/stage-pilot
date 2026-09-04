@@ -73,3 +73,26 @@ func TestProductionPlanningRejectsCrossProductionOccurrence(t *testing.T) {
 		t.Fatalf("cross production update = %d: %s", response.Code, response.Body.String())
 	}
 }
+
+func TestProductionPlanningPatchCanClearTimes(t *testing.T) {
+	app := newIntegrationApp(t)
+	uid := createTestUser(t, app, "planning-time-states-"+newID()+"@example.test")
+	token := issueTestToken(t, app, uid)
+	workspaceID := createWorkspaceFor(t, app, token, "场次时间三态")["id"].(string)
+	productionID := createProductionFor(t, app, token, workspaceID, "场次三态活动", "", "")["id"].(string)
+	created := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+productionID+"/occurrences", map[string]any{"name": "可清除场次", "scheduled_start_at": "2026-09-18T10:00:00Z", "scheduled_end_at": "2026-09-18T11:00:00Z"})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create occurrence = %d: %s", created.Code, created.Body.String())
+	}
+	var item map[string]any
+	_ = json.Unmarshal(created.Body.Bytes(), &item)
+	cleared := authedRequest(t, app, token, http.MethodPatch, "/v1/productions/"+productionID+"/occurrences/"+item["id"].(string), map[string]any{"scheduled_start_at": nil, "scheduled_end_at": nil})
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear occurrence = %d: %s", cleared.Code, cleared.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(cleared.Body.Bytes(), &body)
+	if body["scheduled_start_at"] != nil || body["scheduled_end_at"] != nil {
+		t.Fatalf("cleared occurrence times = %#v", body)
+	}
+}

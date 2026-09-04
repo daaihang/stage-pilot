@@ -62,17 +62,17 @@ type scheduleItemRecord struct {
 }
 
 type scheduleItemPatchInput struct {
-	Title                 *string    `json:"title"`
-	ItemType              *string    `json:"item_type"`
-	ContextType           *string    `json:"context_type"`
-	OccurrenceID          *string    `json:"occurrence_id"`
-	RehearsalSessionID    *string    `json:"rehearsal_session_id"`
-	Timezone              *string    `json:"timezone"`
-	ScheduledStartAt      *time.Time `json:"scheduled_start_at"`
-	ScheduledEndAt        *time.Time `json:"scheduled_end_at"`
-	Status                *string    `json:"status"`
-	Notes                 *string    `json:"notes"`
-	ProductionLocationIDs *[]string  `json:"production_location_ids"`
+	Title                 *string      `json:"title"`
+	ItemType              *string      `json:"item_type"`
+	ContextType           *string      `json:"context_type"`
+	OccurrenceID          *string      `json:"occurrence_id"`
+	RehearsalSessionID    *string      `json:"rehearsal_session_id"`
+	Timezone              *string      `json:"timezone"`
+	ScheduledStartAt      optionalTime `json:"scheduled_start_at"`
+	ScheduledEndAt        optionalTime `json:"scheduled_end_at"`
+	Status                *string      `json:"status"`
+	Notes                 *string      `json:"notes"`
+	ProductionLocationIDs *[]string    `json:"production_location_ids"`
 }
 
 func scheduleItemSelect() string {
@@ -465,11 +465,11 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 		tz = *in.Timezone
 	}
 	start, end := current.ScheduledStartAt, current.ScheduledEndAt
-	if in.ScheduledStartAt != nil {
-		start = in.ScheduledStartAt
+	if in.ScheduledStartAt.Present {
+		start = in.ScheduledStartAt.Value
 	}
-	if in.ScheduledEndAt != nil {
-		end = in.ScheduledEndAt
+	if in.ScheduledEndAt.Present {
+		end = in.ScheduledEndAt.Value
 	}
 	occ, rehearsal := current.OccurrenceID, current.RehearsalSessionID
 	if in.OccurrenceID != nil {

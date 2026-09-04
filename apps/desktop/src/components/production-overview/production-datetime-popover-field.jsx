@@ -22,13 +22,15 @@ export function ProductionDateTimePopoverField({
       description={description}
       contentClassName="w-auto p-0"
       onSave={onSave}
+      hideFieldLabel
       renderEditor={({ draft, setDraft, disabled: editorDisabled, open }) => (
         <DateTimePickerPanel
           value={draft}
           timezone={timezone}
           active={open}
+          showFooter={false}
           disabled={editorDisabled}
-          onChange={setDraft}
+          onDraftChange={setDraft}
         />
       )}
     />

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Pencil } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -21,16 +22,19 @@ export function ProductionOverviewField({
   contentClassName,
   className,
   valueClassName,
+  hideFieldLabel = false,
 }) {
   const shownValue = displayValue || placeholder;
   const titleVariant = variant === "title";
   const ValueElement = titleVariant ? "h1" : "div";
+  const triggerRef = useRef(null);
 
   const trigger = (
     <Button
       type="button"
       variant="ghost"
       size={titleVariant ? "icon-sm" : "icon-xs"}
+      ref={triggerRef}
       aria-label={editLabel}
       title={editLabel}
       disabled={disabled}
@@ -67,6 +71,7 @@ export function ProductionOverviewField({
               description={description}
               renderEditor={renderEditor}
               onSave={onSave}
+              hideFieldLabel={hideFieldLabel}
               validate={validate}
               disabled={disabled}
               contentClassName={contentClassName}

@@ -1,9 +1,8 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
   Field,
-  FieldDescription,
   FieldError,
   FieldLabel,
 } from "@/components/ui/field";
@@ -27,17 +26,28 @@ export function ProductionFieldPopover({
   validate,
   disabled = false,
   contentClassName = "w-72",
+  hideFieldLabel = false,
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const fieldId = useId();
+  const contentRef = useRef(null);
+  const editorRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  const isDirty = draft !== (value ?? "");
 
   useEffect(() => {
     if (open) {
       setDraft(value ?? "");
       setError("");
+      const frame = requestAnimationFrame(() => {
+        const firstControl = editorRef.current || contentRef.current?.querySelector("input, textarea, [data-slot='select-trigger'], [data-field-control]");
+        firstControl?.focus?.();
+      });
+      return () => cancelAnimationFrame(frame);
     }
   }, [open, value]);
 
@@ -47,6 +57,7 @@ export function ProductionFieldPopover({
     if (!nextOpen) {
       setDraft(value ?? "");
       setError("");
+      requestAnimationFrame(() => triggerRef.current?.focus?.());
     }
   };
 
@@ -64,8 +75,14 @@ export function ProductionFieldPopover({
     setSaving(true);
     try {
       const result = await onSave?.(draft);
-      if (result !== false) setOpen(false);
+      if (result === false || result?.ok === false) {
+        const nextError = result?.error?.message || result?.message || (typeof result?.error === "string" ? result.error : "");
+        if (nextError) setError(nextError);
+        return;
+      }
+      handleOpenChange(false);
     } catch (saveError) {
+      setError(saveError?.message || String(saveError));
       notify.error(`无法保存${label}`, {
         description: saveError?.message || String(saveError),
       });
@@ -79,6 +96,7 @@ export function ProductionFieldPopover({
       <PopoverTrigger disabled={disabled || saving} render={trigger} />
       <PopoverContent align="start" className={contentClassName}>
         <div
+          ref={contentRef}
           className="space-y-3"
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.target instanceof HTMLTextAreaElement) return;
@@ -90,7 +108,7 @@ export function ProductionFieldPopover({
             {description && <PopoverDescription>{description}</PopoverDescription>}
           </PopoverHeader>
           <Field data-disabled={saving || undefined} data-invalid={Boolean(error) || undefined}>
-            <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
+            {!hideFieldLabel && <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>}
             <div>
               {renderEditor?.({
                 draft,
@@ -99,10 +117,10 @@ export function ProductionFieldPopover({
                 error,
                 open,
                 id: fieldId,
+                focusRef: editorRef,
               })}
             </div>
             {error && <FieldError>{error}</FieldError>}
-            {description && <FieldDescription>{description}</FieldDescription>}
           </Field>
           <div className="flex justify-end gap-2 border-t pt-2.5">
             <Button
@@ -114,7 +132,7 @@ export function ProductionFieldPopover({
             >
               取消
             </Button>
-            <Button type="button" size="sm" disabled={saving} onClick={save}>
+            <Button type="button" size="sm" disabled={saving || !isDirty} onClick={save}>
               {saving ? "保存中…" : "保存"}
             </Button>
           </div>

@@ -1,4 +1,4 @@
-import { TZDate } from "@date-fns/tz";
+import { TZDate, tzOffset } from "@date-fns/tz";
 
 export const DEFAULT_TIMEZONE = "Asia/Shanghai";
 
@@ -21,6 +21,15 @@ export function getSupportedTimeZones() {
     ? Intl.supportedValuesOf("timeZone")
     : [];
   return ["UTC", ...values.filter((value) => value !== "UTC")];
+}
+
+export function getTimeZoneOptions({ locale = "zh-CN", at = new Date() } = {}) {
+  return getSupportedTimeZones().map((value) => {
+    const city = timeZoneCityLabel(value);
+    const group = value === "UTC" ? "UTC" : value.split("/")[0];
+    const offset = timeZoneOffsetLabel(at, value);
+    return { value, group, city, offset, label: `${city} · ${value} (${offset})`, locale };
+  });
 }
 
 export function timeZoneOffsetLabel(instant = new Date(), timezone = DEFAULT_TIMEZONE) {
@@ -60,4 +69,61 @@ export function dateOnlyEndOfDayToInstant(dateKey, timezone = DEFAULT_TIMEZONE) 
   } catch {
     return "";
   }
+}
+
+function parseWallClock(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(value || "").trim());
+  if (!match) return null;
+  const [, year, month, day, hour, minute, second = "0"] = match;
+  const parts = [Number(year), Number(month), Number(day), Number(hour), Number(minute), Number(second)];
+  if (parts[1] < 1 || parts[1] > 12 || parts[2] < 1 || parts[2] > 31 || parts[3] > 23 || parts[4] > 59 || parts[5] > 59) return null;
+  const naive = Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], parts[5]);
+  const check = new Date(naive);
+  if (check.getUTCFullYear() !== parts[0] || check.getUTCMonth() + 1 !== parts[1] || check.getUTCDate() !== parts[2]) return null;
+  return { parts, naive };
+}
+
+function wallClockParts(instant, timezone) {
+  const values = new Intl.DateTimeFormat("en-US", {
+    timeZone: normalizeTimeZone(timezone),
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(instant).reduce((result, part) => {
+    if (part.type !== "literal") result[part.type] = Number(part.value);
+    return result;
+  }, {});
+  return [values.year, values.month, values.day, values.hour === 24 ? 0 : values.hour, values.minute, values.second];
+}
+
+export function resolveWallClockTime(value, timezone = DEFAULT_TIMEZONE, { disambiguation = "reject" } = {}) {
+  const parsed = parseWallClock(value);
+  const zone = normalizeTimeZone(timezone);
+  if (!parsed) return { status: "invalid", instant: "", candidates: [] };
+
+  const offsets = new Set();
+  for (const delta of [-3, -2, -1, 0, 1, 2, 3]) {
+    offsets.add(tzOffset(zone, new Date(parsed.naive + delta * 86400000)));
+  }
+  const candidates = [...offsets].map((offsetMinutes) => {
+    const instantDate = new Date(parsed.naive - offsetMinutes * 60000);
+    return { instantDate, offsetMinutes };
+  }).filter(({ instantDate }) => wallClockParts(instantDate, zone).every((part, index) => part === parsed.parts[index]))
+    .sort((a, b) => a.instantDate - b.instantDate)
+    .map(({ instantDate, offsetMinutes }) => ({
+      instant: instantDate.toISOString(),
+      offsetMinutes,
+      offsetLabel: timeZoneOffsetLabel(instantDate, zone),
+    }));
+
+  if (candidates.length === 0) return { status: "nonexistent", instant: "", candidates: [] };
+  if (candidates.length === 1) return { status: "valid", instant: candidates[0].instant, candidates };
+  if (disambiguation === "earlier") return { status: "ambiguous", instant: candidates[0].instant, candidates };
+  if (disambiguation === "later") return { status: "ambiguous", instant: candidates[candidates.length - 1].instant, candidates };
+  if (disambiguation === "compatible") return { status: "ambiguous", instant: candidates[0].instant, candidates };
+  return { status: "ambiguous", instant: "", candidates };
 }

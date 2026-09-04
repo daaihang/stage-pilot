@@ -93,6 +93,11 @@ function ComboboxEmpty({ className, ...props }) {
   )
 }
 
+const ComboboxGroup = ComboboxPrimitive.Group
+const ComboboxGroupLabel = React.forwardRef(function ComboboxGroupLabel({ className, ...props }, ref) {
+  return <ComboboxPrimitive.GroupLabel ref={ref} className={cn("px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground", className)} {...props} />
+})
+
 export {
   Combobox,
   ComboboxContent,
@@ -100,4 +105,6 @@ export {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
+  ComboboxGroup,
+  ComboboxGroupLabel,
 }
