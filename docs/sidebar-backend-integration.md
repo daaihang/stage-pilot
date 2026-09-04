@@ -91,7 +91,7 @@ StagePilot
 
 菜单名称、顺序、图标与分组由前端产品配置控制。后端返回用户可以访问的实体与权限，不返回一棵用于直接渲染的菜单树。
 
-侧栏 Header 显示合并后的「工作空间与活动」二级下拉：一级为工作空间列表，桌面端直接点击进入该空间工作台（悬停展开二级；触屏端 tap 仅展开，子菜单内提供「进入工作台」）；二级为该空间的活动预览与「查看全部活动」入口。预览选取规则在 `navigation.js` 的 `pickSidebarProductions`：active → upcoming（startsAt 升序）→ past（endsAt 降序）→ 时间待定，排除 archived，最多 `SIDEBAR_PRODUCTION_PREVIEW_LIMIT`（5）条。点击预览中的活动 = 必要时先切换工作空间，再直达该活动 `/overview`。预览数据来自 `listProductions(workspaceId)`，在子菜单首次展开时按需加载，加载与失败状态在菜单行内呈现，不弹 toast。该设计取代早期「活动下拉在侧栏内容区独立分组」的方案。
+侧栏 Header 显示合并后的「工作空间与活动」二级下拉：一级为工作空间列表，桌面端直接点击进入该空间工作台（悬停展开二级；触屏端 tap 仅展开，子菜单内提供「进入工作台」）；二级为该空间的活动预览与「查看全部活动」入口。预览选取规则在 `navigation.js` 的 `pickSidebarProductions`：active → upcoming（plannedStartAt 升序）→ past（plannedEndAt 降序）→ 时间待定，排除 archived，最多 `SIDEBAR_PRODUCTION_PREVIEW_LIMIT`（5）条。点击预览中的活动 = 必要时先切换工作空间，再直达该活动 `/overview`。预览数据来自 `listProductions(workspaceId)`，在子菜单首次展开时按需加载，加载与失败状态在菜单行内呈现，不弹 toast。该设计取代早期「活动下拉在侧栏内容区独立分组」的方案。
 
 ## Sidebar Context 切换（Supabase 式二级上下文）
 
