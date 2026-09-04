@@ -91,6 +91,16 @@
     transition: none !important;
 }
 
+.detail-split-pane[data-main-inert="true"] > [aria-hidden="true"],
+.detail-split-pane[data-main-inert="true"] > [aria-hidden="true"] * {
+    scrollbar-width: none;
+}
+
+.detail-split-pane[data-main-inert="true"] > [aria-hidden="true"]::-webkit-scrollbar,
+.detail-split-pane[data-main-inert="true"] > [aria-hidden="true"] *::-webkit-scrollbar {
+    display: none;
+}
+
 .t-modal {
     transform-origin: center;
     transform: scale(var(--modal-scale));
