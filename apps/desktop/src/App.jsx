@@ -19,6 +19,7 @@ import { ProductionMembersPage, ProductionRolesPage } from "@/components/product
 import { ProductionInvitePage } from "@/components/production-invite-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
 import { ProgramTypeManagementPage } from "@/components/program-type-management-page";
+import { VenueTypeManagementPage } from "@/components/venue-type-management-page";
 import { FileTypeManagementPage } from "@/components/file-type-management-page";
 import { ResourceDetailPage, WorkspaceResourcePage } from "@/components/workspace-resource-pages";
 import { FilesPage } from "@/components/files-page";
@@ -489,6 +490,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "members") content = <WorkspaceMembersPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "roles") content = <WorkspaceRolesPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "program-types") content = <ProgramTypeManagementPage workspace={workspace} key={workspace.id} />;
+  else if (route.mode === "workspace" && route.page === "venue-types") content = <VenueTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "file-types") content = <FileTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "programs" && route.resourceId) content = <ResourceDetailPage workspace={workspace} resourceType="programs" resourceId={route.resourceId} />;
   else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} />;

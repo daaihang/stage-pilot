@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -132,6 +133,10 @@ func (app *application) createWorkspace(w http.ResponseWriter, r *http.Request) 
 		serverError(w, err)
 		return
 	}
+	if err = seedWorkspaceDefaults(ctx, tx, workspaceID, userID); err != nil {
+		serverError(w, err)
+		return
+	}
 	if err = tx.Commit(ctx); err != nil {
 		serverError(w, err)
 		return
@@ -142,6 +147,42 @@ func (app *application) createWorkspace(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusCreated, created)
+}
+
+// seedWorkspaceDefaults is intentionally idempotent so migrations, retries and
+// workspace creation all use the same initialization semantics.
+func seedWorkspaceDefaults(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
+	if err := seedProgramTypes(ctx, tx, workspaceID, createdBy); err != nil {
+		return err
+	}
+	if err := seedFileTypes(ctx, tx, workspaceID, createdBy); err != nil {
+		return err
+	}
+	return seedVenueTypes(ctx, tx, workspaceID, createdBy)
+}
+
+func seedProgramTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
+	_, err := tx.Exec(ctx, `INSERT INTO program_types (id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_by)
+		SELECT md5($1 || ':' || t.key), $1, t.key, t.name, t.color, t.sort_order, TRUE, t.is_active, $2
+		FROM program_type_templates t
+		WHERE NOT EXISTS (SELECT 1 FROM program_types p WHERE p.workspace_id=$1 AND p.system_key=t.key AND p.deleted_at IS NULL)`, workspaceID, createdBy)
+	return err
+}
+
+func seedFileTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
+	_, err := tx.Exec(ctx, `INSERT INTO file_types (id,workspace_id,scope,template_key,name,description,sort_order,is_system_default,is_active,created_by)
+		SELECT md5($1 || ':' || t.key), $1, t.scope, t.key, t.name, t.description, t.sort_order, TRUE, t.is_active, $2
+		FROM file_type_templates t
+		WHERE NOT EXISTS (SELECT 1 FROM file_types f WHERE f.workspace_id=$1 AND f.scope=t.scope AND f.template_key=t.key AND f.deleted_at IS NULL)`, workspaceID, createdBy)
+	return err
+}
+
+func seedVenueTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
+	_, err := tx.Exec(ctx, `INSERT INTO venue_types (id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_by)
+		SELECT md5($1 || ':' || t.key), $1, t.key, t.name, t.color, t.sort_order, TRUE, t.is_active, $2
+		FROM venue_type_templates t
+		WHERE NOT EXISTS (SELECT 1 FROM venue_types v WHERE v.workspace_id=$1 AND v.system_key=t.key AND v.deleted_at IS NULL)`, workspaceID, createdBy)
+	return err
 }
 
 // listWorkspaces 返回当前用户拥有 active membership 的工作空间（含角色）。
