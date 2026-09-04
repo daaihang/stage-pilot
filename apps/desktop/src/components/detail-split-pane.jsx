@@ -411,8 +411,8 @@ export function DetailSplitPane({
         surfaceMode === "exclusive" && surfacePhase === "open" && "is-open",
         surfaceMode === "exclusive" && surfacePhase === "closing" && "is-closing",
         surfaceMode === "inline" && "border-l border-border bg-background",
-        surfaceMode === "exclusive" && "rounded-none bg-popover text-popover-foreground ring-1 ring-foreground/10 shadow-2xl",
-        surfaceMode === "overlay" && "bg-background",
+        surfaceMode === "exclusive" && "rounded-none bg-popover text-popover-foreground ring-1 ring-foreground/10 shadow-lg",
+        surfaceMode === "overlay" && "bg-background shadow-none",
         !isSurfaceOpen && "pointer-events-none",
       )}
       style={surfaceStyle}
