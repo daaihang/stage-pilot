@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils"
 const Combobox = ComboboxPrimitive.Root
 
 const ComboboxInput = React.forwardRef(function ComboboxInput(
-  { className, ...props },
+  { className, hideTrigger = false, ...props },
   ref
 ) {
   return (
@@ -21,12 +21,14 @@ const ComboboxInput = React.forwardRef(function ComboboxInput(
         )}
         {...props}
       />
-      <ComboboxPrimitive.Trigger
-        aria-label="打开选项"
-        className="absolute top-0 right-0 flex h-8 w-8 items-center justify-center text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
-      >
-        <ChevronDown className="size-4" />
-      </ComboboxPrimitive.Trigger>
+      {!hideTrigger && (
+        <ComboboxPrimitive.Trigger
+          aria-label="打开选项"
+          className="absolute top-0 right-0 flex h-8 w-8 items-center justify-center text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-50"
+        >
+          <ChevronDown className="size-4" />
+        </ComboboxPrimitive.Trigger>
+      )}
     </div>
   )
 })
@@ -94,6 +96,7 @@ function ComboboxEmpty({ className, ...props }) {
 }
 
 const ComboboxGroup = ComboboxPrimitive.Group
+const ComboboxTrigger = ComboboxPrimitive.Trigger
 const ComboboxGroupLabel = React.forwardRef(function ComboboxGroupLabel({ className, ...props }, ref) {
   return <ComboboxPrimitive.GroupLabel ref={ref} className={cn("px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground", className)} {...props} />
 })
@@ -105,6 +108,7 @@ export {
   ComboboxInput,
   ComboboxItem,
   ComboboxList,
+  ComboboxTrigger,
   ComboboxGroup,
   ComboboxGroupLabel,
 }

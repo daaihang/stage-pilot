@@ -25,7 +25,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { formatProductionInstant, productionStatusLabel } from "@/lib/production-api";
 import { getSupportedTimeZones, timeZoneCityLabel } from "@/lib/timezone";
@@ -101,12 +100,14 @@ function ProductionTimezoneField({ timezone, timezones, onSave, disabled = false
       <p className="text-xs text-muted-foreground">项目时区</p>
       <div className="mt-1 flex min-w-0 items-center gap-1.5 text-lg">
         <span className="min-w-0 truncate">{timeZoneCityLabel(timezone)} · {timezone}</span>
-        <Popover open={open} onOpenChange={(next) => !saving && setOpen(next)}>
-          <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-xs" aria-label="编辑项目时区" title="编辑项目时区" disabled={disabled || saving}><Pencil /></Button>} />
-          <PopoverContent align="start" className="w-80 p-2">
-            <TimezoneCombobox value={timezone} open={open} onOpenChange={(next) => !saving && setOpen(next)} onValueChange={selectTimezone} disabled={disabled || saving} autoFocus className="w-full" />
-          </PopoverContent>
-        </Popover>
+        <TimezoneCombobox
+          value={timezone}
+          open={open}
+          onOpenChange={(next) => !saving && setOpen(next)}
+          onValueChange={selectTimezone}
+          disabled={disabled || saving}
+          trigger={<Button type="button" variant="ghost" size="icon-xs" aria-label="编辑项目时区" title="编辑项目时区"><Pencil /></Button>}
+        />
       </div>
     </div>
   </div>;
