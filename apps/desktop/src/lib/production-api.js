@@ -40,9 +40,9 @@ export const listProductionInvitations = (productionId) => request(`/v1/producti
 export const createProductionInvitation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
 export const revokeProductionInvitation = (productionId, invitationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" });
 export const acceptProductionInvitation = (token) => request("/v1/production-invitations/accept", { method: "POST", body: JSON.stringify({ token }) });
-export const listProductionLocations = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`);
-export const createProductionLocation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`, { method: "POST", body: JSON.stringify(payload) });
-export const updateProductionLocation = (productionId, locationId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/${encodeURIComponent(locationId)}`, { method: "PATCH", body: JSON.stringify(payload) });
+export const listProductionLocations = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`).then((items) => items.map(toProductionLocation));
+export const createProductionLocation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`, { method: "POST", body: JSON.stringify(payload) }).then(toProductionLocation);
+export const updateProductionLocation = (productionId, locationId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/${encodeURIComponent(locationId)}`, { method: "PATCH", body: JSON.stringify(payload) }).then(toProductionLocation);
 export const deleteProductionLocation = (productionId, locationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/${encodeURIComponent(locationId)}`, { method: "DELETE" });
 export const reorderProductionLocations = (productionId, items) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/order`, { method: "PATCH", body: JSON.stringify({ items }) });
 
@@ -54,7 +54,7 @@ export const listRehearsalSessions = (productionId) => request(planningPath(prod
 export const createRehearsalSession = (productionId, payload) => request(planningPath(productionId, "rehearsal"), { method: "POST", body: JSON.stringify(payload) }).then(toRehearsalSession);
 export const updateRehearsalSession = (productionId, id, payload) => request(`${planningPath(productionId, "rehearsal")}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }).then(toRehearsalSession);
 export function toProductionLocation(location = {}) {
-  return { id: location.id, workspaceId: location.workspace_id, productionId: location.production_id, venueId: location.venue_id, venueName: location.venue_name || "", venueSpaceId: location.venue_space_id || null, spaceName: location.space_name || null, purpose: location.purpose || "", isPrimary: Boolean(location.is_primary), sortOrder: location.sort_order || 0, notes: location.notes || "" };
+  return { id: location.id, workspaceId: location.workspace_id, productionId: location.production_id, venueId: location.venue_id, venueName: location.venue_name || "", venueSpaceId: location.venue_space_id || null, spaceName: location.space_name || null, purpose: location.purpose || "", isPrimary: Boolean(location.is_primary), sortOrder: location.sort_order || 0, notes: location.notes || "", createdAt: location.created_at || null, updatedAt: location.updated_at || null };
 }
 export function toOccurrence(record = {}) {
   return { ...record, workspaceId: record.workspace_id, productionId: record.production_id, occurrenceId: record.occurrence_id || null, scheduledStartAt: record.scheduled_start_at || null, scheduledEndAt: record.scheduled_end_at || null, actualStartAt: record.actual_start_at || null, actualEndAt: record.actual_end_at || null, productionLocationId: record.production_location_id || null, venueName: record.venue_name || "", spaceName: record.space_name || null };

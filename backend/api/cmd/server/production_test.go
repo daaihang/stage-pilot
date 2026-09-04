@@ -387,3 +387,56 @@ func TestProductionLocationsWorkspaceIsolationAndPrimary(t *testing.T) {
 		t.Fatalf("cross workspace locations = %d: %s", forbidden.Code, forbidden.Body.String())
 	}
 }
+
+func TestProductionLocationCanClearSpaceAndRejectReferencedRemoval(t *testing.T) {
+	app := newIntegrationApp(t)
+	uid := createTestUser(t, app, "location-reference-"+newID()+"@example.test")
+	token := issueTestToken(t, app, uid)
+	workspaceID := createWorkspaceFor(t, app, token, "地点引用测试")["id"].(string)
+	productionID := createProductionFor(t, app, token, workspaceID, "地点引用活动", "", "")["id"].(string)
+	types := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/venue-types", nil)
+	venueTypeItems, _ := decodeResourceList(t, types.Body.Bytes())
+	venue := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "引用测试场地", "venue_type_id": venueTypeItems[0]["id"]})
+	if venue.Code != http.StatusCreated {
+		t.Fatalf("create venue = %d: %s", venue.Code, venue.Body.String())
+	}
+	venueID := resourceID(t, venue.Body.Bytes())
+	space := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues/"+venueID+"/spaces", map[string]any{"name": "主舞台"})
+	if space.Code != http.StatusCreated {
+		t.Fatalf("create venue space = %d: %s", space.Code, space.Body.String())
+	}
+	spaceID := resourceID(t, space.Body.Bytes())
+	location := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+productionID+"/locations", map[string]any{"venue_id": venueID, "venue_space_id": spaceID, "is_primary": true})
+	if location.Code != http.StatusOK {
+		t.Fatalf("create production location = %d: %s", location.Code, location.Body.String())
+	}
+	locationID := resourceID(t, location.Body.Bytes())
+
+	cleared := authedRequest(t, app, token, http.MethodPatch, "/v1/productions/"+productionID+"/locations/"+locationID, map[string]any{"venue_space_id": nil})
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("clear production location space = %d: %s", cleared.Code, cleared.Body.String())
+	}
+	var clearedBody map[string]any
+	if err := json.Unmarshal(cleared.Body.Bytes(), &clearedBody); err != nil {
+		t.Fatal(err)
+	}
+	if clearedBody["venue_space_id"] != nil {
+		t.Fatalf("venue_space_id = %v, want null", clearedBody["venue_space_id"])
+	}
+
+	occurrence := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+productionID+"/occurrences", map[string]any{"name": "引用场次", "production_location_id": locationID})
+	if occurrence.Code != http.StatusCreated {
+		t.Fatalf("create occurrence = %d: %s", occurrence.Code, occurrence.Body.String())
+	}
+	removed := authedRequest(t, app, token, http.MethodDelete, "/v1/productions/"+productionID+"/locations/"+locationID, nil)
+	if removed.Code != http.StatusConflict {
+		t.Fatalf("remove referenced location = %d: %s, want 409", removed.Code, removed.Body.String())
+	}
+	var conflict map[string]any
+	if err := json.Unmarshal(removed.Body.Bytes(), &conflict); err != nil {
+		t.Fatal(err)
+	}
+	if conflict["error"].(map[string]any)["code"] != "location_in_use" {
+		t.Fatalf("conflict body = %#v", conflict)
+	}
+}

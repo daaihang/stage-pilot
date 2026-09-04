@@ -16,6 +16,14 @@ import {
 } from "@/components/ui/popover";
 import { notify } from "@/components/ui/sonner";
 
+function describeSaveError(error) {
+  if (!error) return "保存失败";
+  const fields = error.fields && typeof error.fields === "object"
+    ? Object.values(error.fields).flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean).join("；")
+    : "";
+  return [error.message || String(error), fields && fields !== error.message ? fields : ""].filter(Boolean).join("；");
+}
+
 export function ProductionFieldPopover({
   label,
   value,
@@ -42,6 +50,13 @@ export function ProductionFieldPopover({
 
   const isDirty = draft !== (value ?? "");
 
+  const closePopover = () => {
+    setOpen(false);
+    setDraft(value ?? "");
+    setError("");
+    requestAnimationFrame(() => triggerRef.current?.focus?.());
+  };
+
   useEffect(() => {
     if (open) {
       setDraft(value ?? "");
@@ -58,9 +73,7 @@ export function ProductionFieldPopover({
     if (saving) return;
     setOpen(nextOpen);
     if (!nextOpen) {
-      setDraft(value ?? "");
-      setError("");
-      requestAnimationFrame(() => triggerRef.current?.focus?.());
+      closePopover();
     }
   };
 
@@ -79,15 +92,15 @@ export function ProductionFieldPopover({
     try {
       const result = await onSave?.(draft);
       if (result === false || result?.ok === false) {
-        const nextError = result?.error?.message || result?.message || (typeof result?.error === "string" ? result.error : "");
-        if (nextError) setError(nextError);
+        const nextError = result?.error ? describeSaveError(result.error) : result?.message || "保存失败";
+        setError(nextError);
         return;
       }
-      handleOpenChange(false);
+      closePopover();
     } catch (saveError) {
-      setError(saveError?.message || String(saveError));
+      setError(describeSaveError(saveError));
       notify.error(`无法保存${label}`, {
-        description: saveError?.message || String(saveError),
+        description: describeSaveError(saveError),
       });
     } finally {
       setSaving(false);
@@ -131,7 +144,7 @@ export function ProductionFieldPopover({
               variant="outline"
               size="sm"
               disabled={saving}
-              onClick={() => handleOpenChange(false)}
+              onClick={() => closePopover()}
             >
               取消
             </Button>

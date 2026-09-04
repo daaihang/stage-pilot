@@ -1,14 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { MapPin, Pencil } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { notify } from "@/components/ui/sonner";
-import { listProductionLocations, toProductionLocation } from "@/lib/production-api";
+import { listProductionLocations } from "@/lib/production-api";
 import { cn } from "@/lib/utils";
+import { useProductionLocationDetail } from "@/components/production-location-management-panel";
 
-export function ProductionLocationPopover({ production, onRequestEdit, disabled = false, className }) {
+export function ProductionLocationPopover({ workspace, production, onRequestEdit, onChanged, disabled = false, className, refreshKey }) {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const triggerRef = useRef(null);
+  const canWrite = ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
+  const { open } = useProductionLocationDetail({ workspace, production, triggerRef, onChanged });
 
   useEffect(() => {
     let active = true;
@@ -22,7 +26,7 @@ export function ProductionLocationPopover({ production, onRequestEdit, disabled 
     setLoading(true);
     listProductionLocations(production.id)
       .then((items) => {
-        if (active) setLocations(items.map(toProductionLocation));
+        if (active) setLocations(items);
       })
       .catch((error) => {
         if (!active) return;
@@ -37,9 +41,9 @@ export function ProductionLocationPopover({ production, onRequestEdit, disabled 
     return () => {
       active = false;
     };
-  }, [production.id]);
+  }, [production.id, refreshKey]);
 
-  const primary = locations.find((item) => item.isPrimary) || locations[0];
+  const primary = locations.find((item) => item.isPrimary);
   const display = primary
     ? `${primary.venueName}${primary.spaceName ? ` · ${primary.spaceName}` : ""}`
     : "地点待定";
@@ -51,13 +55,14 @@ export function ProductionLocationPopover({ production, onRequestEdit, disabled 
         {loading ? "地点加载中…" : display}
       </span>
       <Button
+        ref={triggerRef}
         type="button"
         variant="ghost"
         size="icon-xs"
-        disabled={disabled || !onRequestEdit}
-        aria-label="编辑主地点"
-        title="地点编辑将在活动地点详情中提供"
-        onClick={onRequestEdit}
+        disabled={disabled || !canWrite}
+        aria-label="编辑地点"
+        title="编辑活动地点"
+        onClick={onRequestEdit || open}
       >
         <Pencil />
       </Button>

@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type productionLocation struct {
@@ -22,6 +25,27 @@ type productionLocation struct {
 	Notes        string    `json:"notes"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// nullableStringPatch keeps the distinction between an omitted PATCH field
+// and an explicit null.  The latter is required to clear an optional space.
+type nullableStringPatch struct {
+	Present bool
+	Value   *string
+}
+
+func (p *nullableStringPatch) UnmarshalJSON(data []byte) error {
+	p.Present = true
+	if string(data) == "null" {
+		p.Value = nil
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	p.Value = &value
+	return nil
 }
 
 func locationQuery() string {
@@ -104,6 +128,14 @@ func (app *application) createProductionLocation(w http.ResponseWriter, r *http.
 			return
 		}
 	}
+	if !in.IsPrimary {
+		var hasLocation bool
+		if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM production_locations WHERE workspace_id=$1 AND production_id=$2)`, a.WorkspaceID, a.ProductionID).Scan(&hasLocation); err != nil {
+			serverError(w, err)
+			return
+		}
+		in.IsPrimary = !hasLocation
+	}
 	if in.IsPrimary {
 		if _, err = tx.Exec(r.Context(), `UPDATE production_locations SET is_primary=FALSE,updated_at=NOW() WHERE workspace_id=$1 AND production_id=$2`, a.WorkspaceID, a.ProductionID); err != nil {
 			serverError(w, err)
@@ -141,12 +173,12 @@ func (app *application) writeProductionLocation(w http.ResponseWriter, r *http.R
 func (app *application) updateProductionLocation(w http.ResponseWriter, r *http.Request) {
 	a := currentProductionAccess(r)
 	var in struct {
-		VenueID      *string `json:"venue_id"`
-		VenueSpaceID *string `json:"venue_space_id"`
-		Purpose      *string `json:"purpose"`
-		IsPrimary    *bool   `json:"is_primary"`
-		SortOrder    *int    `json:"sort_order"`
-		Notes        *string `json:"notes"`
+		VenueID      *string             `json:"venue_id"`
+		VenueSpaceID nullableStringPatch `json:"venue_space_id"`
+		Purpose      *string             `json:"purpose"`
+		IsPrimary    *bool               `json:"is_primary"`
+		SortOrder    *int                `json:"sort_order"`
+		Notes        *string             `json:"notes"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -167,10 +199,23 @@ func (app *application) updateProductionLocation(w http.ResponseWriter, r *http.
 		return
 	}
 	targetVenueID := currentVenueID
-	if in.VenueID != nil && strings.TrimSpace(*in.VenueID) != "" {
-		targetVenueID = strings.TrimSpace(*in.VenueID)
+	var venueID *string
+	if in.VenueID != nil {
+		value := strings.TrimSpace(*in.VenueID)
+		if value == "" {
+			errorJSON(w, 400, "invalid_input", "场地不能为空")
+			return
+		}
+		targetVenueID = value
+		venueID = &value
 	}
-	if in.VenueID != nil || in.VenueSpaceID != nil {
+	if in.VenueSpaceID.Present && in.VenueSpaceID.Value != nil && strings.TrimSpace(*in.VenueSpaceID.Value) == "" {
+		in.VenueSpaceID.Value = nil
+	}
+	// Changing the venue without explicitly supplying a space clears the old
+	// space; otherwise the old space could belong to a different venue.
+	spaceProvided := in.VenueSpaceID.Present || venueID != nil
+	if venueID != nil || in.VenueSpaceID.Present {
 		var active bool
 		if err = tx.QueryRow(r.Context(), `SELECT status='active' FROM venues WHERE workspace_id=$1 AND id=$2 AND deleted_at IS NULL`, a.WorkspaceID, targetVenueID).Scan(&active); err == pgx.ErrNoRows || !active {
 			errorJSON(w, 400, "invalid_input", "场地不存在或已归档")
@@ -179,9 +224,10 @@ func (app *application) updateProductionLocation(w http.ResponseWriter, r *http.
 			serverError(w, err)
 			return
 		}
-		if in.VenueSpaceID != nil && strings.TrimSpace(*in.VenueSpaceID) != "" {
+		if in.VenueSpaceID.Present && in.VenueSpaceID.Value != nil && strings.TrimSpace(*in.VenueSpaceID.Value) != "" {
+			spaceID := strings.TrimSpace(*in.VenueSpaceID.Value)
 			var ok bool
-			if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM venue_spaces WHERE workspace_id=$1 AND venue_id=$2 AND id=$3 AND deleted_at IS NULL)`, a.WorkspaceID, targetVenueID, *in.VenueSpaceID).Scan(&ok); err != nil {
+			if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM venue_spaces WHERE workspace_id=$1 AND venue_id=$2 AND id=$3 AND deleted_at IS NULL)`, a.WorkspaceID, targetVenueID, spaceID).Scan(&ok); err != nil {
 				serverError(w, err)
 				return
 			}
@@ -197,7 +243,7 @@ func (app *application) updateProductionLocation(w http.ResponseWriter, r *http.
 			return
 		}
 	}
-	if _, err = tx.Exec(r.Context(), `UPDATE production_locations SET venue_id=COALESCE($1,venue_id),venue_space_id=COALESCE($2,venue_space_id),purpose=COALESCE($3,purpose),is_primary=COALESCE($4,is_primary),sort_order=COALESCE($5,sort_order),notes=COALESCE($6,notes),updated_at=NOW() WHERE id=$7 AND workspace_id=$8 AND production_id=$9`, in.VenueID, in.VenueSpaceID, in.Purpose, in.IsPrimary, in.SortOrder, in.Notes, id, a.WorkspaceID, a.ProductionID); err != nil {
+	if _, err = tx.Exec(r.Context(), `UPDATE production_locations SET venue_id=COALESCE($1,venue_id),venue_space_id=CASE WHEN $2 THEN $3 ELSE venue_space_id END,purpose=COALESCE($4,purpose),is_primary=COALESCE($5,is_primary),sort_order=COALESCE($6,sort_order),notes=COALESCE($7,notes),updated_at=NOW() WHERE id=$8 AND workspace_id=$9 AND production_id=$10`, venueID, spaceProvided, in.VenueSpaceID.Value, in.Purpose, in.IsPrimary, in.SortOrder, in.Notes, id, a.WorkspaceID, a.ProductionID); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -211,8 +257,32 @@ func (app *application) updateProductionLocation(w http.ResponseWriter, r *http.
 func (app *application) deleteProductionLocation(w http.ResponseWriter, r *http.Request) {
 	a := currentProductionAccess(r)
 	id := r.PathValue("locationId")
+	var occurrences, rehearsals, scheduleItems int64
+	err := app.db.QueryRow(r.Context(), `SELECT
+		(SELECT COUNT(*) FROM production_occurrences WHERE workspace_id=$1 AND production_id=$2 AND production_location_id=$3),
+		(SELECT COUNT(*) FROM rehearsal_sessions WHERE workspace_id=$1 AND production_id=$2 AND production_location_id=$3),
+		(SELECT COUNT(*) FROM schedule_item_locations WHERE workspace_id=$1 AND production_id=$2 AND production_location_id=$3)`, a.WorkspaceID, a.ProductionID, id).Scan(&occurrences, &rehearsals, &scheduleItems)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if occurrences+rehearsals+scheduleItems > 0 {
+		errorJSONWithFields(w, http.StatusConflict, "location_in_use", "该活动地点已被场次、彩排或排程使用，无法移除", map[string]any{
+			"references": map[string]int64{
+				"occurrences":   occurrences,
+				"rehearsals":    rehearsals,
+				"scheduleItems": scheduleItems,
+			},
+		})
+		return
+	}
 	tag, err := app.db.Exec(r.Context(), `DELETE FROM production_locations WHERE id=$1 AND workspace_id=$2 AND production_id=$3`, id, a.WorkspaceID, a.ProductionID)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			errorJSON(w, http.StatusConflict, "location_in_use", "该活动地点已被场次、彩排或排程使用，无法移除")
+			return
+		}
 		serverError(w, err)
 		return
 	}

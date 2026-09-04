@@ -1,31 +1,40 @@
-import { useCallback, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, MapPin, Pencil, Plus, Star, Trash2 } from "@/components/ui/icons";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { MapPin, Pencil, Star } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { notify } from "@/components/ui/sonner";
-import { listResource, listVenueSpaces } from "@/lib/resource-api";
-import { createProductionLocation, deleteProductionLocation, listProductionLocations, reorderProductionLocations, updateProductionLocation } from "@/lib/production-api";
+import { listProductionLocations } from "@/lib/production-api";
+import { useProductionLocationDetail } from "@/components/production-location-management-panel";
 
-const purposes = [["primary", "主地点"], ["performance", "演出"], ["rehearsal", "排练"], ["office", "办公"], ["other", "其他"]];
+const locationName = (location) => `${location.venueName || "未命名场地"}${location.spaceName ? ` · ${location.spaceName}` : " · 整个场地"}`;
 
 export function ProductionLocations({ workspace, production, compact = false }) {
+  const [locations, setLocations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const triggerRef = useRef(null);
   const canWrite = ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
-  const [locations, setLocations] = useState([]); const [venues, setVenues] = useState([]); const [spaces, setSpaces] = useState([]);
-  const [venueId, setVenueId] = useState(""); const [spaceId, setSpaceId] = useState(""); const [busy, setBusy] = useState(false); const [editing, setEditing] = useState(null);
-  const load = useCallback(async () => { try { const list = await listProductionLocations(production.id); setLocations(list); if (workspace?.role) { const result = await listResource(workspace.id, "venues", { limit: 200 }); setVenues(result.items); } } catch (error) { notify.error("无法加载活动地点", { description: error?.message || String(error) }); } }, [production.id, workspace.id, workspace?.role]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setLocations(await listProductionLocations(production.id));
+    } catch (error) {
+      setLocations([]);
+      notify.error("无法加载活动地点", { description: error?.message || String(error) });
+    } finally {
+      setLoading(false);
+    }
+  }, [production.id]);
+
   useEffect(() => { load(); }, [load]);
-  const loadSpaces = useCallback(async (id) => { if (!id) { setSpaces([]); return; } try { setSpaces(await listVenueSpaces(workspace.id, id)); } catch (error) { setSpaces([]); notify.error("无法加载场地空间", { description: error?.message || String(error) }); } }, [workspace.id]);
-  useEffect(() => { loadSpaces(venueId); }, [loadSpaces, venueId]);
-  const add = async () => { if (!venueId || busy) return; setBusy(true); const toast = notify.loading("正在添加活动地点…"); try { await createProductionLocation(production.id, { venue_id: venueId, venue_space_id: spaceId || null, is_primary: locations.length === 0, sort_order: locations.length }); notify.success("活动地点已添加", { id: toast }); setVenueId(""); setSpaceId(""); await load(); } catch (error) { notify.error("添加活动地点失败", { id: toast, description: error?.message || String(error) }); } finally { setBusy(false); } };
-  const saveEdit = async (event) => { event.preventDefault(); if (!editing || busy) return; setBusy(true); const toast = notify.loading("正在保存活动地点…"); try { await updateProductionLocation(production.id, editing.id, { venue_id: editing.venueId, venue_space_id: editing.spaceId || null, purpose: editing.purpose, notes: editing.notes }); notify.success("活动地点已保存", { id: toast }); setEditing(null); await load(); } catch (error) { notify.error("保存活动地点失败", { id: toast, description: error?.message || String(error) }); } finally { setBusy(false); } };
-  const primary = async (item) => { const toast = notify.loading("正在设置主地点…"); try { await updateProductionLocation(production.id, item.id, { is_primary: true }); notify.success("主地点已更新", { id: toast }); await load(); } catch (error) { notify.error("设置主地点失败", { id: toast, description: error?.message || String(error) }); } };
-  const remove = async (item) => { const toast = notify.loading("正在移除活动地点…"); try { await deleteProductionLocation(production.id, item.id); notify.success("活动地点已移除", { id: toast }); await load(); } catch (error) { notify.error("移除活动地点失败", { id: toast, description: error?.message || String(error) }); } };
-  const move = async (index, delta) => { const next = [...locations]; const target = index + delta; if (target < 0 || target >= next.length) return; [next[index], next[target]] = [next[target], next[index]]; setLocations(next); try { await reorderProductionLocations(production.id, next.map((item, order) => ({ id: item.id, sort_order: order }))); } catch (error) { notify.error("地点排序失败", { description: error?.message || String(error) }); await load(); } };
-  const primaryLocation = locations.find((item) => item.is_primary) || locations[0];
-  if (compact) return <div className="flex items-center gap-2 text-sm"><MapPin className="size-4 text-muted-foreground" />{primaryLocation ? <span className="truncate">{primaryLocation.venue_name}{primaryLocation.space_name ? ` · ${primaryLocation.space_name}` : ""}</span> : <span className="text-muted-foreground">地点待定</span>}</div>;
-  return <><Card><CardHeader><CardTitle>活动地点</CardTitle><CardDescription>可添加多个地点，并设置一个主地点。</CardDescription></CardHeader><CardContent className="space-y-4">{locations.length ? <div className="divide-y">{locations.map((item, index) => <div key={item.id} className="flex items-center gap-3 py-3"><MapPin className="size-4 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{item.venue_name}{item.space_name ? ` · ${item.space_name}` : ""}</p><div className="mt-1 flex flex-wrap gap-1">{item.is_primary && <Badge variant="secondary"><Star className="mr-1 size-3" />主地点</Badge>}{item.purpose !== "primary" && <Badge variant="outline">{purposes.find(([value]) => value === item.purpose)?.[1] || item.purpose}</Badge>}</div></div>{canWrite && <><Button size="icon-sm" variant="ghost" disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp /></Button><Button size="icon-sm" variant="ghost" disabled={index === locations.length - 1} onClick={() => move(index, 1)}><ArrowDown /></Button>{!item.is_primary && <Button size="sm" variant="outline" onClick={() => primary(item)}>设为主地点</Button>}<Button size="icon-sm" variant="ghost" onClick={() => { setEditing({ ...item, venueId: item.venue_id, spaceId: item.venue_space_id || "", purpose: item.purpose || "primary", notes: item.notes || "" }); loadSpaces(item.venue_id); }} aria-label="编辑活动地点" title="编辑活动地点"><Pencil /></Button><Button size="icon-sm" variant="ghost" onClick={() => remove(item)}><Trash2 /></Button></>}</div>)}</div> : <p className="text-sm text-muted-foreground">尚未添加活动地点。</p>}{canWrite && venues.length > 0 && <div className="flex flex-wrap items-center gap-2 border-t pt-4"><Select items={venues.map((venue) => ({ value: venue.id, label: venue.name }))} value={venueId} onValueChange={setVenueId}><SelectTrigger className="w-52"><SelectValue placeholder="选择场地" /></SelectTrigger><SelectContent>{venues.map((venue) => <SelectItem key={venue.id} value={venue.id}>{venue.name}</SelectItem>)}</SelectContent></Select><Select items={spaces.filter((space) => space.status !== "archived").map((space) => ({ value: space.id, label: space.name }))} value={spaceId} onValueChange={setSpaceId}><SelectTrigger className="w-52"><SelectValue placeholder="选择空间（可选）" /></SelectTrigger><SelectContent>{spaces.filter((space) => space.status !== "archived").map((space) => <SelectItem key={space.id} value={space.id}>{space.name}</SelectItem>)}</SelectContent></Select><Button disabled={!venueId || busy} onClick={add}><Plus />添加</Button></div>}</CardContent></Card><Dialog open={Boolean(editing)} onOpenChange={(open) => { if (!open && !busy) setEditing(null); }}><DialogContent><DialogHeader><DialogTitle>编辑活动地点</DialogTitle><DialogDescription>修改场地、空间、用途或备注。</DialogDescription></DialogHeader>{editing && <form className="space-y-4" onSubmit={saveEdit}><Select items={venues.map((venue) => ({ value: venue.id, label: venue.name }))} value={editing.venueId} onValueChange={(value) => { setEditing((current) => ({ ...current, venueId: value, spaceId: "" })); loadSpaces(value); }}><SelectTrigger><SelectValue placeholder="选择场地" /></SelectTrigger><SelectContent>{venues.map((venue) => <SelectItem key={venue.id} value={venue.id}>{venue.name}</SelectItem>)}</SelectContent></Select><Select items={spaces.filter((space) => space.status !== "archived").map((space) => ({ value: space.id, label: space.name }))} value={editing.spaceId || ""} onValueChange={(value) => setEditing((current) => ({ ...current, spaceId: value }))}><SelectTrigger><SelectValue placeholder="选择空间（可选）" /></SelectTrigger><SelectContent>{spaces.filter((space) => space.status !== "archived").map((space) => <SelectItem key={space.id} value={space.id}>{space.name}</SelectItem>)}</SelectContent></Select><Select items={purposes.map(([value, label]) => ({ value, label }))} value={editing.purpose} onValueChange={(value) => setEditing((current) => ({ ...current, purpose: value }))}><SelectTrigger><SelectValue placeholder="用途" /></SelectTrigger><SelectContent>{purposes.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Input value={editing.notes} onChange={(event) => setEditing((current) => ({ ...current, notes: event.target.value }))} placeholder="备注（可选）" /><DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => setEditing(null)}>取消</Button><Button type="submit" disabled={busy || !editing.venueId}>{busy ? "保存中…" : "保存"}</Button></DialogFooter></form>}</DialogContent></Dialog></>;
+  const { open } = useProductionLocationDetail({ workspace, production, triggerRef, onChanged: load });
+  const primary = locations.find((location) => location.isPrimary);
+
+  if (compact) {
+    return <div className="flex items-center gap-2 text-sm"><MapPin className="size-4 text-muted-foreground" />{loading ? <span className="text-muted-foreground">地点加载中…</span> : primary ? <span className="truncate">{locationName(primary)}</span> : <span className="text-muted-foreground">地点待定</span>}<Button ref={triggerRef} type="button" variant="ghost" size="icon-xs" disabled={!canWrite} onClick={open} aria-label="编辑活动地点" title="编辑活动地点"><Pencil /></Button></div>;
+  }
+
+  return <Card><CardHeader><div className="flex items-start justify-between gap-4"><div><CardTitle>活动地点</CardTitle><CardDescription>地点属于活动资源配置，排程记录会引用这里的场地和空间。</CardDescription></div><Button ref={triggerRef} type="button" variant="outline" size="sm" disabled={!canWrite} onClick={open}><Pencil />管理地点</Button></div></CardHeader><CardContent>{loading ? <p className="text-sm text-muted-foreground">地点加载中…</p> : locations.length ? <div className="divide-y">{locations.map((location) => <div key={location.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0"><MapPin className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{locationName(location)}</p>{location.notes && <p className="mt-1 truncate text-xs text-muted-foreground">{location.notes}</p>}</div>{location.isPrimary && <Badge variant="secondary"><Star className="mr-1 size-3" />主地点</Badge>}</div>)}</div> : <div className="flex items-center justify-between gap-4"><p className="text-sm text-muted-foreground">尚未添加活动地点。</p>{canWrite && <Button type="button" variant="outline" size="sm" onClick={open}>添加地点</Button>}</div>}</CardContent></Card>;
 }

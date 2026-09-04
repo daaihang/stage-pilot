@@ -62,7 +62,7 @@ export function ProductionOverviewField({
             !value && "text-muted-foreground",
           )}
         >
-          <span className={cn("min-w-0 whitespace-pre-wrap", titleVariant && "truncate", valueClassName)}>
+          <span className={cn("min-w-0 whitespace-pre-wrap", titleVariant && "truncate", valueClassName)} title={typeof shownValue === "string" && shownValue.length > 180 ? shownValue : undefined}>
             {shownValue}
           </span>
           {canEdit && renderEditor && onSave && (
