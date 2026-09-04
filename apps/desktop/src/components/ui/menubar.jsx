@@ -24,7 +24,7 @@ function MenubarTrigger({ className, ...props }) {
     <MenuPrimitive.Trigger
       data-slot="menubar-trigger"
       className={cn(
-        "flex h-7 cursor-default items-center rounded-none px-2 text-xs font-medium outline-hidden select-none hover:bg-muted focus:bg-muted data-popup-open:bg-muted data-popup-open:text-foreground",
+        "flex h-7 cursor-default items-center rounded-none px-2 text-xs font-medium outline-hidden select-none hover:bg-muted focus-visible:bg-muted data-popup-open:bg-muted data-popup-open:text-foreground",
         className
       )}
       {...props}
