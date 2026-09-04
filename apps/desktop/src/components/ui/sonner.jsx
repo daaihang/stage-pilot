@@ -157,6 +157,7 @@ function AppSonner() {
       style={{
         "--width": sidebarOffset ? `calc(100% - ${sidebarOffset})` : "100%",
         "--app-sonner-left": sidebarOffset || "0px",
+        fontFamily: "var(--font-sans)",
       }}
     />
   )

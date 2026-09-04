@@ -414,6 +414,7 @@
 .app-sonner-notification {
   display: flex;
   width: 100%;
+  font-family: var(--font-sans);
   min-height: var(--app-titlebar-height);
   box-sizing: border-box;
   align-items: center;
