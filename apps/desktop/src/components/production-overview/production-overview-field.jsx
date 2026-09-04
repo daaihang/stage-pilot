@@ -23,6 +23,7 @@ export function ProductionOverviewField({
   className,
   valueClassName,
   hideFieldLabel = false,
+  flush = false,
 }) {
   const shownValue = displayValue || placeholder;
   const titleVariant = variant === "title";
@@ -77,6 +78,7 @@ export function ProductionOverviewField({
               contentClassName={contentClassName}
               trigger={trigger}
               triggerRef={triggerRef}
+              flush={flush}
             />
           )}
         </ValueElement>

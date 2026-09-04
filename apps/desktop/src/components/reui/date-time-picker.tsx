@@ -131,6 +131,6 @@ export function DateTimePicker({ value, onChange, timezone = DEFAULT_TIMEZONE, d
   const display = formatDateTimeValue(value, timezone)
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger render={<Button type="button" variant="outline" disabled={disabled} size={iconOnly ? "icon" : "default"} className={cn(iconOnly ? "size-8" : "group/date-time w-full justify-between font-normal", className)} aria-label={iconOnly ? (display || "选择日期与时间") : undefined} title={iconOnly ? (display || "选择日期与时间") : undefined}>{!iconOnly && <span className={cn("truncate", !display && "text-muted-foreground")}>{display || placeholder}</span>}<IconPlaceholder lucide="CalendarIcon" tabler="IconCalendarEvent" hugeicons="Calendar04Icon" phosphor="CalendarBlankIcon" remixicon="RiCalendarLine" aria-hidden="true" className="shrink-0 text-muted-foreground/80 transition-colors group-hover/date-time:text-foreground" /></Button>} />
-    <PopoverContent align={align} className="w-auto p-0"><DateTimePickerPanel value={value} timezone={timezone} active={open} disabled={disabled} clearable={clearable} step={step} onChange={(next) => { onChange?.(next); setOpen(false) }} /></PopoverContent>
+    <PopoverContent align={align} flush className="w-auto"><DateTimePickerPanel value={value} timezone={timezone} active={open} disabled={disabled} clearable={clearable} step={step} onChange={(next) => { onChange?.(next); setOpen(false) }} /></PopoverContent>
   </Popover>
 }

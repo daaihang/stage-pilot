@@ -28,6 +28,7 @@ export function ProductionFieldPopover({
   contentClassName = "w-72",
   triggerRef: restoreFocusRef,
   hideFieldLabel = false,
+  flush = false,
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(value ?? "");
@@ -96,7 +97,7 @@ export function ProductionFieldPopover({
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger disabled={disabled || saving} render={trigger} />
-      <PopoverContent align="start" className={contentClassName}>
+      <PopoverContent align="start" flush={flush} className={contentClassName}>
         <div
           ref={contentRef}
           className="space-y-3"
