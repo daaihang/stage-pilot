@@ -3,7 +3,7 @@ import { CalendarClock, CheckCircle2, Circle, ClipboardCheck, Copy, FileText, Ma
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { formatProductionInstant, productionStatusLabel } from "@/lib/production-api";
 import { ProductionPageHeader } from "@/components/production-page-shell";
@@ -17,7 +17,7 @@ function ChecklistItem({ complete, icon: Icon, title, description, future = fals
 }
 
 function ProductionActions() {
-  return <DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="icon-sm" aria-label="活动操作"><MoreHorizontal /></Button>} /><DropdownMenuContent align="end" className="w-48"><DropdownMenuLabel>活动操作</DropdownMenuLabel><DropdownMenuItem disabled><Copy />复制活动</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem disabled>更多操作即将开放</DropdownMenuItem></DropdownMenuContent></DropdownMenu>;
+  return <DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="icon-sm" aria-label="活动操作"><MoreHorizontal /></Button>} /><DropdownMenuContent align="end" className="w-48"><DropdownMenuGroup><DropdownMenuLabel>活动操作</DropdownMenuLabel><DropdownMenuItem disabled><Copy />复制活动</DropdownMenuItem><DropdownMenuSeparator /><DropdownMenuItem disabled>更多操作即将开放</DropdownMenuItem></DropdownMenuGroup></DropdownMenuContent></DropdownMenu>;
 }
 
 function InlineField({ value, displayValue, label, multiline = false, type = "text", placeholder, onSave, children }) {
