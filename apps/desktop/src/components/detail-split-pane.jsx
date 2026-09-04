@@ -8,7 +8,9 @@ const MIN_DETAIL_WIDTH = 280;
 const DEFAULT_DETAIL_WIDTH = 420;
 const MIN_MAIN_WIDTH = 320;
 const INLINE_MIN_WIDTH = 960;
-const PANE_TRANSITION_MS = 200;
+const INLINE_TRANSITION_MS = 300;
+const EXCLUSIVE_CLOSE_TRANSITION_MS = 150;
+const OVERLAY_TRANSITION_MS = 200;
 const contentWidthClassName = { standard: "max-w-6xl", wide: "max-w-7xl", full: "max-w-none" };
 
 function maxDetailWidth(containerWidth) {
@@ -121,7 +123,7 @@ export function DetailSplitPane({
       return undefined;
     }
     setInlineVisible(false);
-    if (inlineMounted) inlineCloseTimerRef.current = setTimeout(() => setInlineMounted(false), PANE_TRANSITION_MS);
+    if (inlineMounted) inlineCloseTimerRef.current = setTimeout(() => setInlineMounted(false), INLINE_TRANSITION_MS);
     return undefined;
   }, [inlineMounted, isInline]);
 
@@ -136,7 +138,7 @@ export function DetailSplitPane({
     }
     setExclusiveVisible(false);
     if (exclusiveMounted) {
-      exclusiveCloseTimerRef.current = setTimeout(() => setExclusiveMounted(false), PANE_TRANSITION_MS);
+      exclusiveCloseTimerRef.current = setTimeout(() => setExclusiveMounted(false), EXCLUSIVE_CLOSE_TRANSITION_MS);
     }
     return undefined;
   }, [exclusive, exclusiveMounted]);
@@ -152,7 +154,7 @@ export function DetailSplitPane({
     }
     setOverlayVisible(false);
     if (overlayMounted) {
-      overlayCloseTimerRef.current = setTimeout(() => setOverlayMounted(false), PANE_TRANSITION_MS);
+      overlayCloseTimerRef.current = setTimeout(() => setOverlayMounted(false), OVERLAY_TRANSITION_MS);
     }
     return undefined;
   }, [isOverlay, overlayMounted]);
@@ -237,16 +239,16 @@ export function DetailSplitPane({
 
   const mainWidth = isInline ? `calc(100% - ${constrainedWidth + 1}px)` : "100%";
   return <div ref={containerRef} className={cn("relative flex h-full min-h-0 min-w-0", className)}>
-    <div className={cn("min-h-0 min-w-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none", (exclusive || isOverlay) && "pointer-events-none")} style={{ width: mainWidth }} aria-hidden={exclusive || isOverlay}>{children}</div>
+    <div className={cn("t-resize min-h-0 min-w-0 shrink-0 overflow-hidden", (exclusive || isOverlay) && "pointer-events-none")} style={{ width: mainWidth }} aria-hidden={exclusive || isOverlay}>{children}</div>
     {exclusiveMounted && <section aria-hidden={!exclusiveVisible} className={cn("absolute inset-0 z-10 flex min-h-0 min-w-0 overflow-hidden transition-opacity duration-200 ease-out motion-reduce:transition-none", exclusiveVisible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0")}>
-      <div aria-hidden="true" className={cn("absolute inset-0 bg-background/40 transition-opacity duration-200 ease-out motion-reduce:transition-none", exclusiveVisible ? "opacity-100" : "opacity-0")} />
-      <div className={cn("absolute inset-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl transition-[opacity,transform] duration-200 ease-out md:inset-6 lg:inset-8 motion-reduce:transition-none", exclusiveVisible ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0")}>
+      <div aria-hidden="true" className={cn("absolute inset-0 bg-black/10 transition-opacity duration-200 ease-out motion-reduce:transition-none", exclusiveVisible ? "opacity-100" : "opacity-0")} />
+      <div className={cn("t-modal absolute inset-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-none bg-popover text-popover-foreground ring-1 ring-foreground/10 shadow-2xl md:inset-6 lg:inset-8", exclusiveVisible ? "is-open" : "is-closing")}>
         <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6"><div className={cn("mx-auto w-full", contentWidthClassName[contentWidth] || contentWidthClassName.standard)}>{detail}</div></div>
       </div>
     </section>}
-    {inlineMounted && <div className="relative flex min-h-0 shrink-0 overflow-visible border-l border-border transition-[width] duration-200 ease-out motion-reduce:transition-none" style={{ width: inlineVisible ? constrainedWidth + 1 : 0 }}>
+    {inlineMounted && <div className="t-resize relative flex min-h-0 shrink-0 overflow-visible border-l border-border" style={{ width: inlineVisible ? constrainedWidth + 1 : 0 }}>
       <div role="separator" aria-orientation="vertical" aria-label="调整详情面板宽度" aria-valuemin={MIN_DETAIL_WIDTH} aria-valuemax={maxDetailWidth(containerWidth || INLINE_MIN_WIDTH)} aria-valuenow={constrainedWidth} tabIndex={0} className={cn("absolute inset-y-0 -left-2 z-10 w-4 touch-none cursor-col-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-200 after:ease-linear hover:after:bg-sidebar-border focus-visible:after:bg-ring", !inlineVisible && "pointer-events-none opacity-0")} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onKeyDown={onKeyDown} />
-      <div className="min-h-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none" style={{ width: inlineVisible ? constrainedWidth : 0 }}>
+      <div className="t-resize min-h-0 shrink-0 overflow-hidden" style={{ width: inlineVisible ? constrainedWidth : 0 }}>
         <aside className={cn("min-h-0 shrink-0 overflow-y-auto bg-background transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", !inlineVisible && "pointer-events-none translate-x-2 opacity-0")} style={{ width: constrainedWidth }}>{detail}</aside>
       </div>
     </div>}
