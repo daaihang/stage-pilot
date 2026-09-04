@@ -69,9 +69,14 @@ function WorkspaceSwitcher({ workspace, production, recentContexts, onOpenRecent
 }
 
 function NavigationGroups({ groups, route, workspace, production, disabled = false, creationSession = false, account = false, accountReturnPath }) {
+  const canViewProductionMembers = production && (
+    (Array.isArray(production.permissionKeys) && production.permissionKeys.includes("production.members.view"))
+    || ["owner", "admin"].includes(workspace?.role)
+    || ["producer", "editor", "stage_manager"].includes(production.directRole)
+  );
   return groups.map((group, index) => <SidebarGroup key={group.label ?? `primary-${index}`}>
     {group.label && <SidebarGroupLabel className={disabled ? "opacity-50" : undefined}>{group.label}</SidebarGroupLabel>}
-    <SidebarMenu>{group.items.filter(([page]) => !(production && Array.isArray(production.permissionKeys) && ["members", "roles"].includes(page) && !production.permissionKeys.includes("production.members.view"))).map(([page, label, Icon]) => {
+    <SidebarMenu>{group.items.filter(([page]) => !(production && ["members", "roles"].includes(page) && !canViewProductionMembers)).map(([page, label, Icon]) => {
       const itemDisabled = disabled || Boolean(creationSession && page !== "overview");
       const href = account ? accountPath(page, accountReturnPath) : (workspace ? (production ? (production.workspaceNavigable === false ? directProductionPath(production.id, page) : productionPath(workspace.id, production.id, page)) : workspacePath(workspace.id, page)) : undefined);
       const active = Boolean(route?.page === page);
