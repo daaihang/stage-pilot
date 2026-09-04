@@ -22,7 +22,7 @@
  * @property {string} id
  * @property {string} workspaceId
  * @property {string} name
- * @property {"planning"|"recruiting"|"confirmed"|"live"|"completed"} status
+ * @property {"active"|"completed"|"archived"} status
  * @property {string} startsAt
  * @property {string} endsAt
  * @property {string} venue
@@ -37,7 +37,7 @@
  */
 
 import { getWorkspace as fetchWorkspace, listWorkspaces as fetchWorkspaces, toWorkspaceSummary } from "@/lib/workspace-api";
-import { getProduction as fetchProduction, listProductions as fetchProductions, toProductionSummary } from "@/lib/production-api";
+import { getAccessibleProduction, listAccessibleProductions, toProductionSummary } from "@/lib/production-api";
 
 /** @type {NavigationRepository} */
 export const apiNavigationRepository = {
@@ -55,12 +55,14 @@ export const apiNavigationRepository = {
     }
   },
   async listProductions(workspaceId) {
-    const productions = await fetchProductions(workspaceId);
-    return productions.map(toProductionSummary);
+    const productions = await listAccessibleProductions();
+    return productions.filter((production) => production.workspace_id === workspaceId).map(toProductionSummary);
   },
   async getProduction(workspaceId, productionId) {
     try {
-      return toProductionSummary(await fetchProduction(workspaceId, productionId));
+      const production = await getAccessibleProduction(productionId);
+      if (production.workspace_id !== workspaceId) return null;
+      return toProductionSummary(production);
     } catch (error) {
       // 不存在 / 越权 / 父子伪造统一按不可访问处理（后端统一 404，不泄露存在性）。
       if (error?.status === 403 || error?.status === 404) return null;
@@ -77,9 +79,9 @@ const mockWorkspaces = [
 
 /** @type {ProductionSummary[]} */
 const mockProductions = [
-  { id: "prod-youth-festival-2026", workspaceId: "ws-nanning-media", name: "2026 青年音乐节", status: "recruiting", startsAt: "2026-09-18T10:00:00+08:00", endsAt: "2026-09-20T22:00:00+08:00", venue: "东盟盛天地" },
-  { id: "prod-seven-schools", workspaceId: "ws-nanning-media", name: "七高校联合歌会", status: "planning", startsAt: "2026-11-07T14:00:00+08:00", endsAt: "2026-11-07T22:00:00+08:00", venue: "广西文化艺术中心" },
-  { id: "prod-new-year-2027", workspaceId: "ws-nanning-media", name: "2027 跨年晚会", status: "confirmed", startsAt: "2026-12-31T18:00:00+08:00", endsAt: "2027-01-01T00:30:00+08:00", venue: "南宁剧场" },
+  { id: "prod-youth-festival-2026", workspaceId: "ws-nanning-media", name: "2026 青年音乐节", status: "active", startsAt: "2026-09-18T10:00:00+08:00", endsAt: "2026-09-20T22:00:00+08:00", venue: "东盟盛天地" },
+  { id: "prod-seven-schools", workspaceId: "ws-nanning-media", name: "七高校联合歌会", status: "active", startsAt: "2026-11-07T14:00:00+08:00", endsAt: "2026-11-07T22:00:00+08:00", venue: "广西文化艺术中心" },
+  { id: "prod-new-year-2027", workspaceId: "ws-nanning-media", name: "2027 跨年晚会", status: "completed", startsAt: "2026-12-31T18:00:00+08:00", endsAt: "2027-01-01T00:30:00+08:00", venue: "南宁剧场" },
 ];
 
 const pause = () => Promise.resolve();
