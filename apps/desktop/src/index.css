@@ -400,7 +400,7 @@
   width: var(--width);
   transform: none;
   gap: 0;
-  transition: left var(--resize-dur) var(--resize-ease), width var(--resize-dur) var(--resize-ease) !important;
+  transition: left 200ms linear, width 200ms linear !important;
 }
 
 .app-sonner[data-x-position="center"][data-y-position="bottom"] [data-sonner-toast] {
