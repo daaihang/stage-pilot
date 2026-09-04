@@ -71,7 +71,7 @@ export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, in
   };
   const onboarding = status === "none";
 
-  return <div className="mx-auto w-full space-y-6">
+  return <div className="@container/work-context mx-auto min-w-0 w-full space-y-6">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">我的工作</h1>
@@ -90,7 +90,7 @@ export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, in
           <Button variant="outline" disabled><SlidersHorizontal />筛选</Button>
         </div>
         {onboarding ? <EmptyState title="还没有工作空间" description="创建你的第一个工作空间，开始沉淀活动与团队资源。" />
-          : filteredWorkspaces.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{filteredWorkspaces.map((workspace) => <WorkspaceCard key={workspace.id} workspace={workspace} onEnter={enter} />)}</div>
+          : filteredWorkspaces.length ? <div className="grid gap-4 @min-[40rem]/work-context:grid-cols-2 @min-[56rem]/work-context:grid-cols-3">{filteredWorkspaces.map((workspace) => <WorkspaceCard key={workspace.id} workspace={workspace} onEnter={enter} />)}</div>
           : <EmptyState title="没有匹配的工作空间" description="尝试修改搜索关键词，或创建一个新的工作空间。" />}
       </TabsContent>
       <TabsContent value="participating" className="space-y-3 pt-5">{participating.length ? participating.map((item) => <button key={item.id} type="button" onClick={() => navigate(directProductionPath(item.id))} className="flex w-full items-center gap-4 border p-4 text-left hover:bg-muted/40"><div className="min-w-0 flex-1"><p className="font-medium">{item.name}</p><p className="mt-1 text-sm text-muted-foreground">{item.workspaceName} · {item.directRole || "Viewer"}</p></div><span className="text-xs text-muted-foreground">{item.expiresAt ? `访问至 ${formatInstantInTimeZone(item.expiresAt, timezone, { dateStyle: "short", timeStyle: undefined })}` : "长期访问"}</span></button>) : <EmptyState title="暂无参与的活动" description="当你被邀请或分配到其他工作空间的活动时，活动会显示在这里。" />}</TabsContent>

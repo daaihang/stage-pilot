@@ -118,7 +118,7 @@ function ProductionSummary({ workspace, production, onSave, onLocationChanged, l
   const timezone = production.timezone || "Asia/Shanghai";
 
   return (
-    <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-4 @min-[40rem]/production-overview:grid-cols-2 @min-[64rem]/production-overview:grid-cols-4">
       <Card>
         <CardHeader>
           <CardDescription>地点</CardDescription>
@@ -201,7 +201,7 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
   );
 
   return (
-    <div className="space-y-6">
+    <div className="@container/production-overview min-w-0 space-y-6">
       <ProductionPageHeader
         workspace={workspace}
         production={production}
@@ -240,7 +240,7 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
 
       <ProductionSummary workspace={workspace} production={production} onSave={saveField} onLocationChanged={() => setLocationRefreshKey((value) => value + 1)} locationRefreshKey={locationRefreshKey} disabled={creationBusy} />
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+      <section className="grid gap-4 @min-[64rem]/production-overview:grid-cols-[minmax(0,1fr)_320px]">
         <Card>
           <CardHeader><CardTitle>活动说明</CardTitle></CardHeader>
           <CardContent className="min-h-28 text-sm text-muted-foreground">

@@ -336,7 +336,7 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
   if (loading) return <div className="min-h-full p-6 text-sm text-muted-foreground">正在加载资源…</div>;
   if (error || !item) return <div className="space-y-3 p-6"><p className="text-sm text-destructive">无法加载{resourceDefinitions[type].singular}</p><div className="flex gap-2"><Button variant="outline" onClick={load}>重试</Button><Button variant="ghost" onClick={onClose}>返回资源库</Button></div></div>;
 
-  return <div className="min-h-full space-y-5 p-5">
+  return <div className="@container/resource-detail min-w-0 min-h-full space-y-5 p-5">
     <div className="flex items-start justify-between gap-3">
       <div>
         <p className="text-xs text-muted-foreground">{resourceDefinitions[type].title}</p>
@@ -346,8 +346,8 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
       {canManage(workspace) && <Button variant="destructive" size="sm" onClick={remove}><Trash2 />删除</Button>}
     </div>
     <Card>
-      <CardContent className="grid gap-4 p-5 sm:grid-cols-2">
-        {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 sm:col-span-2" : "space-y-1"}>
+      <CardContent className="grid gap-4 p-5 @min-[36rem]/resource-detail:grid-cols-2">
+        {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 @min-[36rem]/resource-detail:col-span-2" : "space-y-1"}>
           <span className="text-sm font-medium">{fieldLabels[key]}</span>
           {["kind", "category", "ownership", "status", "program_type_id", "venue_type_id"].includes(key)
             ? <Select

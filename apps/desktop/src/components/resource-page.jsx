@@ -6,9 +6,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // 卡片型页面根据网格容器的实际宽度决定列数，而不是绑定窗口 viewport 断点。
-// 260px 只作为卡片保持可读性的最小宽度；卡片填满自己的网格轨道，不再设置最大宽度。
+// 14rem（默认 224px）是卡片保持可读性的最小宽度；auto-fill 保持未填满的列轨道，避免最后一行卡片异常变宽。
 // 活动页、资源库和场次网格共用该规则，因此右侧详情收窄主区时会自然重排。
-export const resourceGridClassName = "grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))] [&>*]:w-full [&>*]:min-w-0";
+export const resourceGridClassName = "grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,14rem),1fr))] [&>*]:w-full [&>*]:min-w-0";
 
 export function ResourcePage({
   title,
