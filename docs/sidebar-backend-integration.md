@@ -34,7 +34,9 @@ User / Account
 - `workspaces`：id / name / slug（唯一）/ description / avatar_url / 时间戳 / 软删除
 - `workspace_memberships`：workspace_id + user_id 唯一，role ∈ owner > admin > member，status ∈ active / invited / suspended
 - `user_preferences.last_workspace_id`：服务端持久化最近工作空间，恢复时重新校验 membership
-- `productions`：workspace_id（强制外键，CASCADE）/ name / status ∈ draft|active|completed|archived / timezone（IANA）/ start_at / end_at / description / created_by / archived_at / 软删除；索引 workspace_id 与 workspace_id+status
+- `productions`：workspace_id（强制外键，CASCADE）/ name / status ∈ active|completed|archived / timezone（IANA）/ start_at / end_at / description / created_by / archived_at / 软删除；索引 workspace_id 与 workspace_id+status
+- `production_memberships`：指定活动的直接授权；角色为 producer / editor / stage_manager / contributor / viewer，状态为 active / suspended / revoked，过期时间在每次授权检查时即时生效。
+- `production_invitations`：只存邀请码 hash；支持指定邮箱单次邀请和 1–100 次通用邀请码，不接入邮件投递。
 
 ## Workspace API
 
@@ -54,14 +56,19 @@ User / Account
 
 ## Production API
 
-Production 权限完全继承 WorkspaceMembership，没有 ProductionMembership（future extension：仅当出现「workspace 100 人但某场活动只开放 20 人」的真实需求时再引入）。授权原语 `requireProductionAccess(roleFloor)` 同时验证 authenticated user + workspace membership + `productions.workspace_id == URL workspaceId` 父子关系，禁止只凭 productionId 全局唯一就放行：
+Production 权限由 `requireProductionPermission(permission)` 统一计算：Workspace OWNER/ADMIN 具备完整活动治理权限，Workspace MEMBER 仅默认查看；直接 `ProductionMembership` 在单场活动中额外授予权限。活动归属 Workspace 不等于该 Workspace 可导航。
 
 | 方法与路径 | 说明 | 最低角色 |
 | --- | --- | --- |
 | `GET /v1/workspaces/:id/productions` | 当前 workspace 的 production 列表，`?status=` 过滤 | MEMBER |
-| `POST /v1/workspaces/:id/productions` | 创建；workspace_id 来自 URL，created_by 为当前用户；默认 draft + Asia/Shanghai | ADMIN |
+| `POST /v1/workspaces/:id/productions` | 创建；workspace_id 来自 URL，created_by 为当前用户；默认 active + Asia/Shanghai | ADMIN |
 | `GET /v1/workspaces/:id/productions/:pid` | 详情（校验父子关系） | MEMBER |
 | `PATCH /v1/workspaces/:id/productions/:pid` | 更新 name/description/timezone/start_at/end_at/status；status=archived 同时写 archived_at | ADMIN |
+| `GET /v1/productions` | 当前用户所有可访问活动，附访问来源和可导航 Workspace 标识 | 登录 |
+| `GET/PATCH /v1/productions/:pid` | 规范的活动详情与编辑接口，支持 Production-only 成员 | production.view / production.edit |
+| `GET/POST/PATCH/DELETE /v1/productions/:pid/members` | 查看或管理直接活动成员；DELETE 为 revoked | members.view / members.manage |
+| `GET/POST/DELETE /v1/productions/:pid/invitations` | 列出、创建、撤销邀请码 | members.manage |
+| `POST /v1/production-invitations/accept` | 已登录用户接受邀请码 | 登录 |
 
 时间模型：`end_at < start_at` 与非法 IANA 时区在服务端拒绝（400）。前端展示一律使用 production.timezone，不使用运行机器本地时区。
 
@@ -131,10 +138,10 @@ ProductionSummary {
   id: string
   workspaceId: string
   name: string
-  status: "draft" | "active" | "completed" | "archived"
+  status: "active" | "completed" | "archived"
   startsAt: string // ISO 8601，可为空
   endsAt: string   // ISO 8601，可为空
-  venue: string    // Venue 领域暂缓，本阶段固定为 ""
+  venue: string    // Venue 领域暂缓，仅当前窗口展示，不提交 Production API
   timezone: string // IANA，展示与排期一律使用它
   description: string
   archivedAt: string | null
@@ -158,7 +165,7 @@ NavigationRepository {
 
 - 列表缓存：`NavigationProvider.productionsByWorkspace`，按 workspaceId 分桶；进入 workspace 路由时惰性加载。
 - 深链恢复：URL 指向列表缓存中没有的 production 时，`App.jsx` 单独调用 `getProduction(workspaceId, productionId)` 并把结果合并回列表缓存（`setProductionsByWorkspaceEntry`），保证单一事实源；404/403 统一渲染「活动不可访问」。
-- 前端 Draft 预览：`ProductionsPage` 的“新建活动”当前创建仅存在于 React 会话内的 `local-draft-*`，立即跳转 `/w/:wid/p/:localDraftId/overview`；它不会调用 `createProduction`、不会写入本机存储，刷新后显示“草稿预览已结束”。后端支持 minimal Draft 创建后，此临时适配层应由 `createDraftProduction` 替换。
+- 前端创建会话：`ProductionsPage` 的“新建活动”只在当前 React 窗口创建内存中的 `creation-session-*` 会话，不调用 API，也不会进入活动列表、侧栏预览或统计。默认名称 `活动-<时间戳>` 只是占位展示，不算有效字段；用户首次提交名称、描述、时区或任一时间字段时才调用 `POST`。创建成功后使用服务端真实 ID 替换临时路由并进入正式 `active` 活动；后续字段修改使用 `PATCH` 自动保存。地点目前只保留在当前窗口展示，不提交到 Production API。未提交时离开会话或刷新页面会静默丢弃内容，不提供恢复提示。
 - 视图偏好（列表 / 网格 / 甘特）经 `appStore` 按 `productionsView:<workspaceId>` 持久化。
 
 ## 状态、权限与错误
@@ -173,7 +180,7 @@ NavigationRepository {
 - 加载中：使用页面骨架，不暂时渲染另一个 Workspace 或 Production 的旧数据。
 - 权限：后端返回能力标识后，由前端基于静态导航配置过滤不可访问模块，不改变剩余菜单的顺序。
 
-Production 生命周期状态到中文标签和颜色的映射位于 `productionStatus`（draft 草稿 / active 进行中 / completed 已结束 / archived 已归档），与后端 CHECK 约束一致。后端新增状态时，应先更新共享业务约定，再添加前端映射；未知状态临时降级为「草稿」样式，不应导致侧栏崩溃。
+Production 生命周期状态到中文标签和颜色的映射位于 `productionStatus`（active 进行中 / completed 已结束 / archived 已归档），与后端 CHECK 约束一致。后端新增状态时，应先更新共享业务约定，再添加前端映射；未知状态临时降级为「进行中」样式，不应导致侧栏崩溃。
 
 ## Mock 移除检查
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Building2, Plus, Search, SlidersHorizontal } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspaceContext } from "@/components/workspace-provider";
-import { workspacePath } from "@/lib/navigation";
+import { directProductionPath, workspacePath } from "@/lib/navigation";
+import { listAccessibleProductions, toProductionSummary } from "@/lib/production-api";
 import { notify } from "@/components/ui/sonner";
 
 const tabs = [
@@ -49,6 +50,8 @@ export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, in
   const { workspaces, status } = useWorkspaceContext();
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
+  const [participating, setParticipating] = useState([]);
+  useEffect(() => { listAccessibleProductions().then((items) => setParticipating(items.map(toProductionSummary).filter((item) => item.contextKind === "participating"))).catch(() => setParticipating([])); }, []);
   const tab = tabs.some(([value]) => value === initialTab) ? initialTab : "workspaces";
   const filteredWorkspaces = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -87,7 +90,7 @@ export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, in
           : filteredWorkspaces.length ? <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{filteredWorkspaces.map((workspace) => <WorkspaceCard key={workspace.id} workspace={workspace} onEnter={enter} />)}</div>
           : <EmptyState title="没有匹配的工作空间" description="尝试修改搜索关键词，或创建一个新的工作空间。" />}
       </TabsContent>
-      <TabsContent value="participating" className="pt-5"><EmptyState title="暂无参与的活动" description="当你被邀请或分配到其他工作空间的活动时，活动会显示在这里。" /></TabsContent>
+      <TabsContent value="participating" className="space-y-3 pt-5">{participating.length ? participating.map((item) => <button key={item.id} type="button" onClick={() => navigate(directProductionPath(item.id))} className="flex w-full items-center gap-4 border p-4 text-left hover:bg-muted/40"><div className="min-w-0 flex-1"><p className="font-medium">{item.name}</p><p className="mt-1 text-sm text-muted-foreground">{item.workspaceName} · {item.directRole || "Viewer"}</p></div><span className="text-xs text-muted-foreground">{item.expiresAt ? `访问至 ${new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(new Date(item.expiresAt))}` : "长期访问"}</span></button>) : <EmptyState title="暂无参与的活动" description="当你被邀请或分配到其他工作空间的活动时，活动会显示在这里。" />}</TabsContent>
       <TabsContent value="collaboration" className="pt-5"><EmptyState title="暂无协作事项" description="节目报名、招募申请和其他协作事项接入后，会显示在这里。" /></TabsContent>
     </Tabs>
   </div>;

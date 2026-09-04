@@ -28,6 +28,19 @@ export async function getProduction(workspaceId, productionId) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/productions/${encodeURIComponent(productionId)}`);
 }
 
+/** Canonical activity API: works for both Workspace members and direct collaborators. */
+export const listAccessibleProductions = () => request("/v1/productions");
+export const getAccessibleProduction = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}`);
+export const updateAccessibleProduction = (productionId, patch) => request(`/v1/productions/${encodeURIComponent(productionId)}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const listProductionMembers = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/members`);
+export const addProductionMember = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/members`, { method: "POST", body: JSON.stringify(payload) });
+export const updateProductionMember = (productionId, memberId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/members/${encodeURIComponent(memberId)}`, { method: "PATCH", body: JSON.stringify(payload) });
+export const revokeProductionMember = (productionId, memberId) => request(`/v1/productions/${encodeURIComponent(productionId)}/members/${encodeURIComponent(memberId)}`, { method: "DELETE" });
+export const listProductionInvitations = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations`);
+export const createProductionInvitation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
+export const revokeProductionInvitation = (productionId, invitationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" });
+export const acceptProductionInvitation = (token) => request("/v1/production-invitations/accept", { method: "POST", body: JSON.stringify({ token }) });
+
 export async function updateProduction(workspaceId, productionId, patch) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/productions/${encodeURIComponent(productionId)}`, {
     method: "PATCH",
@@ -36,14 +49,13 @@ export async function updateProduction(workspaceId, productionId, patch) {
 }
 
 export const productionStatusLabels = {
-  draft: { label: "草稿", className: "bg-slate-500/10 text-slate-700 dark:text-slate-300" },
   active: { label: "进行中", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
   completed: { label: "已结束", className: "bg-blue-500/10 text-blue-700 dark:text-blue-300" },
   archived: { label: "已归档", className: "bg-muted text-muted-foreground" },
 };
 
 export function productionStatusLabel(status) {
-  return productionStatusLabels[status] ?? productionStatusLabels.draft;
+  return productionStatusLabels[status] ?? productionStatusLabels.active;
 }
 
 /**
@@ -80,5 +92,13 @@ export function toProductionSummary(production) {
     timezone: production.timezone,
     description: production.description || "",
     archivedAt: production.archived_at || null,
+    createdAt: production.created_at || "",
+    updatedAt: production.updated_at || "",
+    workspaceName: production.workspace_name || "",
+    workspaceNavigable: Boolean(production.workspace_navigable),
+    workspaceRole: production.workspace_role || "",
+    directRole: production.direct_role || "",
+    contextKind: production.context_kind || "workspace",
+    permissionKeys: production.permission_keys || [],
   };
 }

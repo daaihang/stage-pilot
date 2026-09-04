@@ -126,12 +126,76 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/workspaces/{id}/members", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceMembers))))
 	mux.Handle("PUT /me/last-workspace", app.auth(http.HandlerFunc(app.putLastWorkspace)))
 	mux.Handle("GET /me/last-workspace", app.auth(http.HandlerFunc(app.getLastWorkspace)))
+	// Workspace resources. Read operations are available to every active
+	// member; mutations require ADMIN or OWNER through the same workspace
+	// membership boundary used by the workspace endpoints above.
+	mux.Handle("GET /v1/workspaces/{id}/program-types", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listProgramTypes))))
+	mux.Handle("POST /v1/workspaces/{id}/program-types", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createProgramType))))
+	mux.Handle("PATCH /v1/workspaces/{id}/program-types/{programTypeId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateProgramType))))
+	mux.Handle("PATCH /v1/workspaces/{id}/program-types/order", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.reorderProgramTypes))))
+	mux.Handle("POST /v1/workspaces/{id}/program-types/{programTypeId}/delete", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.deleteProgramType))))
+	mux.Handle("GET /v1/workspaces/{id}/programs", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listPrograms))))
+	mux.Handle("POST /v1/workspaces/{id}/programs", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createProgram))))
+	mux.Handle("GET /v1/workspaces/{id}/programs/{programId}", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.getProgram))))
+	mux.Handle("PATCH /v1/workspaces/{id}/programs/{programId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateProgram))))
+	mux.Handle("DELETE /v1/workspaces/{id}/programs/{programId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.deleteProgram))))
+	// The remaining resource handlers use the same workspace-scoped policy.
+	for _, route := range []struct {
+		method string
+		path   string
+		role   string
+		handle http.HandlerFunc
+	}{
+		{"GET", "/v1/workspaces/{id}/people", workspaceRoleMember, app.listPeople},
+		{"POST", "/v1/workspaces/{id}/people", workspaceRoleAdmin, app.createPerson},
+		{"GET", "/v1/workspaces/{id}/people/{personId}", workspaceRoleMember, app.getPerson},
+		{"PATCH", "/v1/workspaces/{id}/people/{personId}", workspaceRoleAdmin, app.updatePerson},
+		{"DELETE", "/v1/workspaces/{id}/people/{personId}", workspaceRoleAdmin, app.deletePerson},
+		{"GET", "/v1/workspaces/{id}/organizations", workspaceRoleMember, app.listOrganizations},
+		{"POST", "/v1/workspaces/{id}/organizations", workspaceRoleAdmin, app.createOrganization},
+		{"GET", "/v1/workspaces/{id}/organizations/{organizationId}", workspaceRoleMember, app.getOrganization},
+		{"PATCH", "/v1/workspaces/{id}/organizations/{organizationId}", workspaceRoleAdmin, app.updateOrganization},
+		{"DELETE", "/v1/workspaces/{id}/organizations/{organizationId}", workspaceRoleAdmin, app.deleteOrganization},
+		{"GET", "/v1/workspaces/{id}/organizations/{organizationId}/contacts", workspaceRoleMember, app.listOrganizationContacts},
+		{"POST", "/v1/workspaces/{id}/organizations/{organizationId}/contacts", workspaceRoleAdmin, app.createOrganizationContact},
+		{"DELETE", "/v1/workspaces/{id}/organizations/{organizationId}/contacts/{contactId}", workspaceRoleAdmin, app.deleteOrganizationContact},
+		{"GET", "/v1/workspaces/{id}/venues", workspaceRoleMember, app.listVenues},
+		{"POST", "/v1/workspaces/{id}/venues", workspaceRoleAdmin, app.createVenue},
+		{"GET", "/v1/workspaces/{id}/venues/{venueId}", workspaceRoleMember, app.getVenue},
+		{"PATCH", "/v1/workspaces/{id}/venues/{venueId}", workspaceRoleAdmin, app.updateVenue},
+		{"DELETE", "/v1/workspaces/{id}/venues/{venueId}", workspaceRoleAdmin, app.deleteVenue},
+		{"GET", "/v1/workspaces/{id}/venues/{venueId}/spaces", workspaceRoleMember, app.listVenueSpaces},
+		{"POST", "/v1/workspaces/{id}/venues/{venueId}/spaces", workspaceRoleAdmin, app.createVenueSpace},
+		{"PATCH", "/v1/workspaces/{id}/venues/{venueId}/spaces/{spaceId}", workspaceRoleAdmin, app.updateVenueSpace},
+		{"DELETE", "/v1/workspaces/{id}/venues/{venueId}/spaces/{spaceId}", workspaceRoleAdmin, app.deleteVenueSpace},
+		{"GET", "/v1/workspaces/{id}/equipment", workspaceRoleMember, app.listEquipment},
+		{"POST", "/v1/workspaces/{id}/equipment", workspaceRoleAdmin, app.createEquipment},
+		{"GET", "/v1/workspaces/{id}/equipment/{equipmentId}", workspaceRoleMember, app.getEquipment},
+		{"PATCH", "/v1/workspaces/{id}/equipment/{equipmentId}", workspaceRoleAdmin, app.updateEquipment},
+		{"DELETE", "/v1/workspaces/{id}/equipment/{equipmentId}", workspaceRoleAdmin, app.deleteEquipment},
+	} {
+		wrapped := app.auth(app.requireWorkspaceRole(route.role, http.HandlerFunc(route.handle)))
+		mux.Handle(route.method+" "+route.path, wrapped)
+	}
 	// Production Foundation：production 路由挂载在 workspace 下，
 	// requireProductionAccess 同时验证 membership 与父子关系。
 	mux.Handle("GET /v1/workspaces/{id}/productions", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listProductions))))
 	mux.Handle("POST /v1/workspaces/{id}/productions", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createProduction))))
 	mux.Handle("GET /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleMember, http.HandlerFunc(app.getProduction))))
 	mux.Handle("PATCH /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleAdmin, http.HandlerFunc(app.updateProduction))))
+	// Canonical Production-scoped API. These routes deliberately do not require a
+	// navigable Workspace: direct collaborators operate only within a Production.
+	mux.Handle("GET /v1/productions", app.auth(http.HandlerFunc(app.listAccessibleProductions)))
+	mux.Handle("GET /v1/productions/{productionId}", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getAccessibleProduction))))
+	mux.Handle("PATCH /v1/productions/{productionId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProduction))))
+	mux.Handle("GET /v1/productions/{productionId}/members", app.auth(app.requireProductionPermission(productionMembersView, http.HandlerFunc(app.listProductionMembers))))
+	mux.Handle("POST /v1/productions/{productionId}/members", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.createProductionMember))))
+	mux.Handle("PATCH /v1/productions/{productionId}/members/{memberId}", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.updateProductionMember))))
+	mux.Handle("DELETE /v1/productions/{productionId}/members/{memberId}", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.revokeProductionMember))))
+	mux.Handle("GET /v1/productions/{productionId}/invitations", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.listProductionInvitations))))
+	mux.Handle("POST /v1/productions/{productionId}/invitations", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.createProductionInvitation))))
+	mux.Handle("DELETE /v1/productions/{productionId}/invitations/{invitationId}", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.revokeProductionInvitation))))
+	mux.Handle("POST /v1/production-invitations/accept", app.auth(http.HandlerFunc(app.acceptProductionInvitation)))
 	registerFileRoutes(app, mux)
 	return mux
 }
@@ -585,7 +649,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 func errorJSON(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
+	errorJSONWithFields(w, status, code, message, nil)
+}
+func errorJSONWithFields(w http.ResponseWriter, status int, code, message string, fields map[string]any) {
+	error := map[string]any{"code": code, "message": message}
+	for key, value := range fields {
+		error[key] = value
+	}
+	writeJSON(w, status, map[string]any{"error": error})
 }
 func serverError(w http.ResponseWriter, _ error) {
 	errorJSON(w, 500, "internal_error", "服务器暂时无法处理请求")

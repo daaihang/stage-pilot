@@ -3,6 +3,8 @@ export const workspacePages = {
   productions: { title: "活动", description: "创建并管理工作空间中的演出与制作活动。" },
   calendar: { title: "日历", description: "从时间维度查看活动、彩排和执行计划。" },
   programs: { title: "节目库", description: "沉淀可在不同活动中复用的长期节目资产。" },
+  "program-types": { title: "节目类型", description: "管理当前工作空间的节目类型、排序和使用情况。" },
+  "file-types": { title: "文件类型", description: "管理当前工作空间各类资产的文件分类。" },
   people: { title: "人员", description: "管理艺人、工作人员和其他长期联系人。" },
   organizations: { title: "机构", description: "管理品牌、学校、合作方和供应商资料。" },
   venues: { title: "场地", description: "管理场地资料、舞台条件和历史使用记录。" },
@@ -25,6 +27,8 @@ export const productionPages = {
   stage: { title: "舞台执行", description: "管理灯光、音响、视频和舞台 Cue。" },
   access: { title: "通行与签到", description: "管理通行证、区域权限、报名与签到。" },
   files: { title: "文件", description: "集中管理仅属于本场活动的文档和媒体文件。" },
+  members: { title: "成员", description: "管理本场活动的协作成员与访问期限。" },
+  roles: { title: "角色与权限", description: "查看固定活动角色及其权限范围。" },
   settings: { title: "活动设置", description: "管理活动信息、权限、功能模块和归档。" },
 };
 
@@ -41,7 +45,6 @@ export const workTabs = new Set(["workspaces", "participating", "collaboration"]
 // Production 生命周期状态（Production Foundation）：只表达生命周期，
 // 不表达节目征集或现场状态。与后端 CHECK 约束保持一致。
 export const productionStatus = {
-  draft: { label: "草稿", className: "bg-slate-500/10 text-slate-700 dark:text-slate-300" },
   active: { label: "进行中", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" },
   completed: { label: "已结束", className: "bg-blue-500/10 text-blue-700 dark:text-blue-300" },
   archived: { label: "已归档", className: "bg-muted text-muted-foreground" },
@@ -51,7 +54,7 @@ export function workspacePath(workspaceId, page = "home") {
   const paths = {
     home: "home", productions: "productions", calendar: "calendar",
     programs: "library/programs", people: "library/people", organizations: "library/organizations",
-    venues: "library/venues", equipment: "library/equipment", files: "files", members: "members", roles: "roles", templates: "templates", settings: "settings",
+    "program-types": "library/program-types", "file-types": "library/file-types", venues: "library/venues", equipment: "library/equipment", files: "files", members: "members", roles: "roles", templates: "templates", settings: "settings",
   };
   return `/w/${workspaceId}/${paths[page] ?? paths.home}`;
 }
@@ -63,6 +66,10 @@ export function resourcePath(workspaceId, resourceType, resourceId) {
 
 export function productionPath(workspaceId, productionId, page = "overview") {
   return `/w/${workspaceId}/p/${productionId}/${productionPages[page] ? page : "overview"}`;
+}
+
+export function directProductionPath(productionId, page = "overview") {
+  return `/p/${productionId}/${productionPages[page] ? page : "overview"}`;
 }
 
 export function accountPath(page = "profile", from) {
@@ -78,6 +85,8 @@ export function resolveAccountReturnTarget(search, fallback) {
 }
 
 export function matchStagePilotRoute(pathname, search = "") {
+  const inviteMatch = pathname.match(/^\/invite\/([^/]+)\/?$/);
+  if (inviteMatch) return { mode: "invite", token: inviteMatch[1], meta: { title: "接受活动邀请", description: "加入受邀请的活动" } };
   if (pathname === "/work") {
     const requestedTab = new URLSearchParams(search).get("tab");
     return { mode: "work", page: "work", tab: workTabs.has(requestedTab) ? requestedTab : "workspaces", meta: { title: "我的工作", description: "访问你的工作空间、参与的活动和协作事项" } };
@@ -93,12 +102,18 @@ export function matchStagePilotRoute(pathname, search = "") {
     const [, workspaceId, productionId, page] = productionMatch;
     return productionPages[page] ? { mode: "production", workspaceId, productionId, page, meta: productionPages[page] } : null;
   }
+  const directProductionMatch = pathname.match(/^\/p\/([^/]+)(?:\/([^/]+))?\/?$/);
+  if (directProductionMatch) {
+    const [, productionId, requestedPage] = directProductionMatch;
+    const page = requestedPage || "overview";
+    return productionPages[page] ? { mode: "production", workspaceId: null, productionId, page, direct: true, meta: productionPages[page] } : null;
+  }
   const resourceMatch = pathname.match(/^\/w\/([^/]+)\/library\/(programs|people|organizations|venues|equipment)\/([^/]+)\/?$/);
   if (resourceMatch) {
     const [, workspaceId, page, resourceId] = resourceMatch;
     return { mode: "workspace", workspaceId, productionId: null, page, resourceId, meta: workspacePages[page] };
   }
-  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|people|organizations|venues|equipment))\/?$/);
+  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|program-types|file-types|people|organizations|venues|equipment))\/?$/);
   if (!workspaceMatch) return null;
   const [, workspaceId, routePage, libraryPage] = workspaceMatch;
   const page = libraryPage || routePage;
@@ -124,7 +139,7 @@ const isArchivedProduction = (item) => Boolean(item?.archivedAt) || item?.status
 
 /**
  * 侧栏二级菜单的活动预览选取规则（纯函数）：
- * active（进行中）→ upcoming（未开始）→ past（已结束）→ undated（草稿/时间待定），
+ * active（进行中）→ upcoming（未开始）→ past（已结束）→ undated（时间待定），
  * archived 不进预览，只能通过「查看全部活动」到达；最多返回 limit 条。
  * upcoming 按 startsAt 升序（越临近越靠前）；past 按 endsAt 降序（越刚结束越靠前）。
  */

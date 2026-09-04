@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"strings"
 	"time"
@@ -49,30 +50,110 @@ func validProductionTimezone(name string) bool {
 }
 
 const (
-	productionStatusDraft     = "draft"
 	productionStatusActive    = "active"
 	productionStatusCompleted = "completed"
 	productionStatusArchived  = "archived"
 )
 
 func validProductionStatus(status string) bool {
-	return status == productionStatusDraft || status == productionStatusActive ||
-		status == productionStatusCompleted || status == productionStatusArchived
+	return status == productionStatusActive || status == productionStatusCompleted || status == productionStatusArchived
 }
 
 // workspaceAccess 来自 requireWorkspaceRole（workspace.go）。
 // currentProductionAccess 语义与其一致：请求已通过 workspace membership 校验，
 // 且 production 已验证属于该 workspace。
 type productionAccess struct {
-	WorkspaceID   string
-	ProductionID  string
-	WorkspaceRole string
+	WorkspaceID        string
+	ProductionID       string
+	WorkspaceRole      string
+	WorkspaceName      string
+	WorkspaceNavigable bool
+	DirectRole         string
+	Permissions        map[string]bool
 }
 
 const productionKey contextKey = "stagepilot.auth.production_access"
 
 func currentProductionAccess(r *http.Request) productionAccess {
 	return r.Context().Value(productionKey).(productionAccess)
+}
+
+const (
+	productionView          = "production.view"
+	productionEdit          = "production.edit"
+	productionArchive       = "production.archive"
+	productionMembersView   = "production.members.view"
+	productionMembersManage = "production.members.manage"
+)
+
+var productionRolePermissions = map[string][]string{
+	"producer":      {productionView, productionEdit, productionArchive, productionMembersView, productionMembersManage},
+	"editor":        {productionView, productionEdit, productionMembersView},
+	"stage_manager": {productionView, productionMembersView},
+	"contributor":   {productionView},
+	"viewer":        {productionView},
+}
+
+func validProductionRole(role string) bool { _, ok := productionRolePermissions[role]; return ok }
+
+func productionPermissionList(access productionAccess) []string {
+	result := make([]string, 0, len(access.Permissions))
+	for key := range access.Permissions {
+		result = append(result, key)
+	}
+	return result
+}
+
+// productionAccessFor resolves all access sources. It deliberately does not use a
+// role rank: Workspace governance and Production execution roles are separate scopes.
+func (app *application) productionAccessFor(ctx context.Context, userID, productionID string) (productionAccess, error) {
+	var access productionAccess
+	err := app.db.QueryRow(ctx, `SELECT p.workspace_id,w.name FROM productions p JOIN workspaces w ON w.id=p.workspace_id
+		WHERE p.id=$1 AND p.deleted_at IS NULL AND w.deleted_at IS NULL`, productionID).Scan(&access.WorkspaceID, &access.WorkspaceName)
+	if err != nil {
+		return access, err
+	}
+	access.ProductionID, access.Permissions = productionID, map[string]bool{}
+	var workspaceRole string
+	err = app.db.QueryRow(ctx, `SELECT role FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2 AND status='active'`, access.WorkspaceID, userID).Scan(&workspaceRole)
+	if err == nil {
+		access.WorkspaceRole, access.WorkspaceNavigable = workspaceRole, true
+		access.Permissions[productionView] = true
+		if workspaceRole == workspaceRoleOwner || workspaceRole == workspaceRoleAdmin {
+			for _, permission := range productionRolePermissions["producer"] {
+				access.Permissions[permission] = true
+			}
+		}
+	} else if err != sql.ErrNoRows {
+		return access, err
+	}
+	var directRole string
+	err = app.db.QueryRow(ctx, `SELECT role_key FROM production_memberships WHERE production_id=$1 AND user_id=$2
+		AND status='active' AND (expires_at IS NULL OR expires_at>NOW()) ORDER BY created_at DESC LIMIT 1`, productionID, userID).Scan(&directRole)
+	if err == nil {
+		access.DirectRole = directRole
+		for _, permission := range productionRolePermissions[directRole] {
+			access.Permissions[permission] = true
+		}
+	} else if err != sql.ErrNoRows {
+		return access, err
+	}
+	if !access.Permissions[productionView] {
+		return access, sql.ErrNoRows
+	}
+	return access, nil
+}
+
+func (app *application) requireProductionPermission(permission string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		productionID := r.PathValue("productionId")
+		access, err := app.productionAccessFor(r.Context(), claims(r).Subject, productionID)
+		if err != nil || !access.Permissions[permission] {
+			errorJSON(w, http.StatusNotFound, "production_not_found", "活动不存在或无权访问")
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), productionKey, access)))
+	})
 }
 
 // requireProductionAccess 是统一的 Production 授权原语：
@@ -82,20 +163,17 @@ func currentProductionAccess(r *http.Request) productionAccess {
 // （AC-P05 / AC-P06）。不存在与越权统一 404，与 workspace 层策略一致：
 // 不向调用者泄露 production 是否存在于其他 workspace。
 func (app *application) requireProductionAccess(roleFloor string, next http.Handler) http.Handler {
-	return app.requireWorkspaceRole(roleFloor, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		workspaceID := r.PathValue("id")
-		productionID := r.PathValue("productionId")
-		var exists bool
-		err := app.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM productions
-			WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL)`,
-			productionID, workspaceID).Scan(&exists)
-		if err != nil || !exists {
-			errorJSON(w, http.StatusNotFound, "production_not_found", "活动不存在")
+	permission := productionView
+	if roleFloor == workspaceRoleAdmin {
+		permission = productionEdit
+	}
+	return app.requireProductionPermission(permission, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		access := currentProductionAccess(r)
+		if access.WorkspaceID != r.PathValue("id") {
+			errorJSON(w, http.StatusNotFound, "production_not_found", "活动不存在或无权访问")
 			return
 		}
-		workspaceAccess := currentWorkspaceAccess(r)
-		access := productionAccess{WorkspaceID: workspaceID, ProductionID: productionID, WorkspaceRole: workspaceAccess.Role}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), productionKey, access)))
+		next.ServeHTTP(w, r)
 	}))
 }
 
@@ -146,7 +224,7 @@ func (app *application) createProduction(w http.ResponseWriter, r *http.Request)
 	access := currentWorkspaceAccess(r)
 	status := in.Status
 	if status == "" {
-		status = productionStatusDraft
+		status = productionStatusActive
 	}
 	name, description, timezone, startAt, endAt, status, ok := app.productionInput(w, in.Name, in.Description, in.Timezone, in.StartAt, in.EndAt, status)
 	if !ok {
@@ -288,4 +366,348 @@ func (app *application) findProduction(ctx context.Context, workspaceID, product
 		FROM productions WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`,
 		productionID, workspaceID).Scan(&p.ID, &p.WorkspaceID, &p.Name, &p.Status, &p.Timezone, &p.StartAt, &p.EndAt, &p.Description, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt)
 	return p, err
+}
+
+type accessibleProduction struct {
+	production
+	WorkspaceName      string   `json:"workspace_name"`
+	WorkspaceNavigable bool     `json:"workspace_navigable"`
+	WorkspaceRole      string   `json:"workspace_role,omitempty"`
+	DirectRole         string   `json:"direct_role,omitempty"`
+	ContextKind        string   `json:"context_kind"`
+	PermissionKeys     []string `json:"permission_keys"`
+}
+
+func (app *application) accessibleProduction(ctx context.Context, access productionAccess) (accessibleProduction, error) {
+	p, err := app.findProduction(ctx, access.WorkspaceID, access.ProductionID)
+	if err != nil {
+		return accessibleProduction{}, err
+	}
+	kind := "participating"
+	if access.WorkspaceNavigable {
+		kind = "workspace"
+	}
+	return accessibleProduction{production: p, WorkspaceName: access.WorkspaceName, WorkspaceNavigable: access.WorkspaceNavigable,
+		WorkspaceRole: access.WorkspaceRole, DirectRole: access.DirectRole, ContextKind: kind, PermissionKeys: productionPermissionList(access)}, nil
+}
+
+func (app *application) getAccessibleProduction(w http.ResponseWriter, r *http.Request) {
+	item, err := app.accessibleProduction(r.Context(), currentProductionAccess(r))
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (app *application) listAccessibleProductions(w http.ResponseWriter, r *http.Request) {
+	rows, err := app.db.Query(r.Context(), `SELECT DISTINCT p.id FROM productions p
+		JOIN workspaces w ON w.id=p.workspace_id AND w.deleted_at IS NULL
+		LEFT JOIN workspace_memberships wm ON wm.workspace_id=p.workspace_id AND wm.user_id=$1 AND wm.status='active'
+		LEFT JOIN production_memberships pm ON pm.production_id=p.id AND pm.user_id=$1 AND pm.status='active' AND (pm.expires_at IS NULL OR pm.expires_at>NOW())
+		WHERE p.deleted_at IS NULL AND (wm.id IS NOT NULL OR pm.id IS NOT NULL)
+		ORDER BY p.id`, claims(r).Subject)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+	items := []accessibleProduction{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			serverError(w, err)
+			return
+		}
+		access, err := app.productionAccessFor(r.Context(), claims(r).Subject, id)
+		if err != nil {
+			continue
+		}
+		item, err := app.accessibleProduction(r.Context(), access)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (app *application) canGrantProducer(r *http.Request) bool {
+	role := currentProductionAccess(r).WorkspaceRole
+	return role == workspaceRoleOwner || role == workspaceRoleAdmin
+}
+
+func (app *application) canManageProductionMembers(r *http.Request) bool {
+	return currentProductionAccess(r).Permissions[productionMembersManage]
+}
+
+func (app *application) listProductionMembers(w http.ResponseWriter, r *http.Request) {
+	access := currentProductionAccess(r)
+	rows, err := app.db.Query(r.Context(), `SELECT u.id,u.display_name,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),u.avatar_url,
+		wm.role, pm.id,pm.role_key,pm.status,pm.expires_at,pm.created_at
+		FROM workspace_memberships wm JOIN users u ON u.id=wm.user_id
+		LEFT JOIN LATERAL (SELECT id,role_key,status,expires_at,created_at FROM production_memberships WHERE production_id=$1 AND user_id=wm.user_id AND status <> 'revoked' ORDER BY created_at DESC LIMIT 1) pm ON TRUE
+		WHERE wm.workspace_id=$2 AND wm.status='active' ORDER BY u.display_name`, access.ProductionID, access.WorkspaceID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+	inherited := []map[string]any{}
+	for rows.Next() {
+		var uid, name, email, avatar, role string
+		var id, directRole, status *string
+		var expires *time.Time
+		var created *time.Time
+		if err := rows.Scan(&uid, &name, &email, &avatar, &role, &id, &directRole, &status, &expires, &created); err != nil {
+			serverError(w, err)
+			return
+		}
+		inherited = append(inherited, map[string]any{"user_id": uid, "display_name": name, "email": email, "avatar_url": avatar, "workspace_role": role, "membership_id": id, "direct_role": directRole, "status": status, "expires_at": expires, "created_at": created, "access_source": "workspace_membership"})
+	}
+	directRows, err := app.db.Query(r.Context(), `SELECT pm.id,pm.user_id,u.display_name,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),u.avatar_url,pm.role_key,pm.status,pm.expires_at,pm.created_at
+		FROM production_memberships pm JOIN users u ON u.id=pm.user_id WHERE pm.production_id=$1 AND pm.status <> 'revoked'
+		ORDER BY pm.created_at DESC`, access.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer directRows.Close()
+	direct := []map[string]any{}
+	for directRows.Next() {
+		var id, uid, name, email, avatar, role, status string
+		var expires *time.Time
+		var created time.Time
+		if err := directRows.Scan(&id, &uid, &name, &email, &avatar, &role, &status, &expires, &created); err != nil {
+			serverError(w, err)
+			return
+		}
+		direct = append(direct, map[string]any{"id": id, "user_id": uid, "display_name": name, "email": email, "avatar_url": avatar, "role_key": role, "status": status, "expires_at": expires, "created_at": created, "access_source": "production_membership"})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"inherited": inherited, "direct": direct, "can_manage": app.canManageProductionMembers(r)})
+}
+
+func (app *application) createProductionMember(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		UserID    string     `json:"user_id"`
+		RoleKey   string     `json:"role_key"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.RoleKey = strings.ToLower(strings.TrimSpace(in.RoleKey))
+	if in.UserID == "" || !validProductionRole(in.RoleKey) {
+		errorJSON(w, 400, "invalid_input", "成员或角色无效")
+		return
+	}
+	if in.RoleKey == "producer" && !app.canGrantProducer(r) {
+		errorJSON(w, 403, "production_forbidden", "只有工作空间管理者可以授予 Producer")
+		return
+	}
+	access := currentProductionAccess(r)
+	_, err := app.db.Exec(r.Context(), `INSERT INTO production_memberships(id,production_id,user_id,role_key,status,expires_at,invited_by) VALUES($1,$2,$3,$4,'active',$5,$6)`, newID(), access.ProductionID, in.UserID, in.RoleKey, in.ExpiresAt, claims(r).Subject)
+	if err != nil {
+		errorJSON(w, 409, "membership_exists", "该用户已有有效活动成员关系")
+		return
+	}
+	writeJSON(w, 201, map[string]string{"status": "ok"})
+}
+
+func (app *application) updateProductionMember(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		RoleKey   *string    `json:"role_key"`
+		Status    *string    `json:"status"`
+		ExpiresAt *time.Time `json:"expires_at"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	access := currentProductionAccess(r)
+	id := r.PathValue("memberId")
+	var existingRole, existingStatus string
+	if err := app.db.QueryRow(r.Context(), `SELECT role_key,status FROM production_memberships WHERE id=$1 AND production_id=$2 AND status <> 'revoked'`, id, access.ProductionID).Scan(&existingRole, &existingStatus); err != nil {
+		errorJSON(w, 404, "member_not_found", "活动成员不存在")
+		return
+	}
+	role := existingRole
+	if in.RoleKey != nil {
+		role = strings.ToLower(strings.TrimSpace(*in.RoleKey))
+		if !validProductionRole(role) || (role == "producer" && !app.canGrantProducer(r)) {
+			errorJSON(w, 403, "production_forbidden", "不能授予该角色")
+			return
+		}
+	}
+	status := existingStatus
+	if in.Status != nil {
+		status = *in.Status
+		if status != "active" && status != "suspended" {
+			errorJSON(w, 400, "invalid_input", "状态无效")
+			return
+		}
+	}
+	_, err := app.db.Exec(r.Context(), `UPDATE production_memberships SET role_key=$1,status=$2,expires_at=COALESCE($3,expires_at),updated_at=NOW() WHERE id=$4 AND production_id=$5`, role, status, in.ExpiresAt, id, access.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+func (app *application) revokeProductionMember(w http.ResponseWriter, r *http.Request) {
+	access := currentProductionAccess(r)
+	tag, err := app.db.Exec(r.Context(), `UPDATE production_memberships SET status='revoked',revoked_at=NOW(),updated_at=NOW() WHERE id=$1 AND production_id=$2 AND status <> 'revoked'`, r.PathValue("memberId"), access.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() != 1 {
+		errorJSON(w, 404, "member_not_found", "活动成员不存在")
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "revoked"})
+}
+
+func (app *application) createProductionInvitation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		RoleKey         string     `json:"role_key"`
+		TargetEmail     string     `json:"target_email"`
+		MaxUses         int        `json:"max_uses"`
+		ExpiresAt       *time.Time `json:"expires_at"`
+		MemberExpiresAt *time.Time `json:"member_expires_at"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.RoleKey = strings.ToLower(strings.TrimSpace(in.RoleKey))
+	in.TargetEmail = normalizeEmail(in.TargetEmail)
+	if !validProductionRole(in.RoleKey) {
+		errorJSON(w, 400, "invalid_input", "角色无效")
+		return
+	}
+	if in.RoleKey == "producer" && !app.canGrantProducer(r) {
+		errorJSON(w, 403, "production_forbidden", "只有工作空间管理者可以邀请 Producer")
+		return
+	}
+	if in.MaxUses == 0 {
+		in.MaxUses = 1
+	}
+	if in.MaxUses < 1 || in.MaxUses > 100 || (in.TargetEmail != "" && in.MaxUses != 1) {
+		errorJSON(w, 400, "invalid_input", "邀请码次数无效")
+		return
+	}
+	expires := time.Now().Add(7 * 24 * time.Hour)
+	if in.ExpiresAt != nil {
+		expires = *in.ExpiresAt
+	}
+	if !expires.After(time.Now()) {
+		errorJSON(w, 400, "invalid_input", "邀请码必须在未来过期")
+		return
+	}
+	token := randomToken()
+	access := currentProductionAccess(r)
+	id := newID()
+	_, err := app.db.Exec(r.Context(), `INSERT INTO production_invitations(id,production_id,role_key,target_email,token_hash,max_uses,expires_at,member_expires_at,created_by) VALUES($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8,$9)`, id, access.ProductionID, in.RoleKey, in.TargetEmail, tokenHash(token), in.MaxUses, expires, in.MemberExpiresAt, claims(r).Subject)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, 201, map[string]any{"id": id, "accept_token": token, "expires_at": expires, "max_uses": in.MaxUses})
+}
+
+func (app *application) listProductionInvitations(w http.ResponseWriter, r *http.Request) {
+	access := currentProductionAccess(r)
+	rows, err := app.db.Query(r.Context(), `SELECT id,role_key,COALESCE(target_email,''),max_uses,accepted_count,expires_at,member_expires_at,revoked_at,created_at FROM production_invitations WHERE production_id=$1 ORDER BY created_at DESC`, access.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, role, email string
+		var max, accepted int
+		var expires time.Time
+		var memberExpires, revoked *time.Time
+		var created time.Time
+		if err := rows.Scan(&id, &role, &email, &max, &accepted, &expires, &memberExpires, &revoked, &created); err != nil {
+			serverError(w, err)
+			return
+		}
+		items = append(items, map[string]any{"id": id, "role_key": role, "target_email": email, "max_uses": max, "accepted_count": accepted, "expires_at": expires, "member_expires_at": memberExpires, "revoked_at": revoked, "created_at": created})
+	}
+	writeJSON(w, 200, items)
+}
+
+func (app *application) revokeProductionInvitation(w http.ResponseWriter, r *http.Request) {
+	access := currentProductionAccess(r)
+	tag, err := app.db.Exec(r.Context(), `UPDATE production_invitations SET revoked_at=NOW() WHERE id=$1 AND production_id=$2 AND revoked_at IS NULL`, r.PathValue("invitationId"), access.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() != 1 {
+		errorJSON(w, 404, "invitation_not_found", "邀请码不存在")
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "revoked"})
+}
+
+func (app *application) acceptProductionInvitation(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &in) || in.Token == "" {
+		if in.Token == "" {
+			errorJSON(w, 400, "invalid_input", "邀请码无效")
+		}
+		return
+	}
+	tx, err := app.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var id, productionID, role string
+	var targetEmail *string
+	var max, accepted int
+	var expires time.Time
+	var memberExpires *time.Time
+	var revoked *time.Time
+	err = tx.QueryRow(r.Context(), `SELECT id,production_id,role_key,target_email,max_uses,accepted_count,expires_at,member_expires_at,revoked_at FROM production_invitations WHERE token_hash=$1 FOR UPDATE`, tokenHash(in.Token)).Scan(&id, &productionID, &role, &targetEmail, &max, &accepted, &expires, &memberExpires, &revoked)
+	if err != nil || revoked != nil || !expires.After(time.Now()) || accepted >= max {
+		errorJSON(w, 404, "invitation_not_found", "邀请码无效或已失效")
+		return
+	}
+	var email string
+	err = tx.QueryRow(r.Context(), `SELECT provider_subject FROM user_identities WHERE user_id=$1 AND provider='email' LIMIT 1`, claims(r).Subject).Scan(&email)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if targetEmail != nil && normalizeEmail(email) != *targetEmail {
+		errorJSON(w, 403, "invitation_forbidden", "该邀请仅限指定邮箱接受")
+		return
+	}
+	_, err = tx.Exec(r.Context(), `INSERT INTO production_memberships(id,production_id,user_id,role_key,status,expires_at,invited_by) VALUES($1,$2,$3,$4,'active',$5,NULL)`, newID(), productionID, claims(r).Subject, role, memberExpires)
+	if err != nil {
+		errorJSON(w, 409, "membership_exists", "你已拥有该活动的有效成员关系")
+		return
+	}
+	_, err = tx.Exec(r.Context(), `UPDATE production_invitations SET accepted_count=accepted_count+1 WHERE id=$1`, id)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"production_id": productionID, "status": "accepted"})
 }

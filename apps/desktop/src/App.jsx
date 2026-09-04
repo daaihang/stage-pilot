@@ -15,6 +15,8 @@ import { UnifiedWorkContextPage } from "@/components/unified-work-context-page";
 import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
 import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
+import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
+import { ProductionInvitePage } from "@/components/production-invite-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
 import { ProgramTypeManagementPage } from "@/components/program-type-management-page";
 import { FileTypeManagementPage } from "@/components/file-type-management-page";
@@ -35,8 +37,8 @@ import { AuthDialog } from "@/components/auth-dialog";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { login as loginAccount, register as registerAccount, onSessionInvalidated, restoreSession, logout as logoutAccount } from "@/lib/auth";
 import { appStore, getRecentContexts, isTauriRuntime, saveRecentContext } from "@/lib/app-store";
-import { accountPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
-import { createProduction, toProductionSummary, updateProduction } from "@/lib/production-api";
+import { accountPath, directProductionPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
+import { createProduction, getAccessibleProduction, toProductionSummary, updateAccessibleProduction, updateProduction } from "@/lib/production-api";
 
 const documentationUrl = "https://github.com/daaihang/stagepilot";
 const subscriptionDefaults = { plan: "free" };
@@ -90,8 +92,10 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const [creationRequestPending, setCreationRequestPending] = useState(false);
   navigationRepositoryRef.current = repository;
   const route = matchStagePilotRoute(location.pathname, location.search);
+  const [directProductionState, setDirectProductionState] = useState({ id: "", loading: false, value: null, failed: false });
   const isWorkspacesRoute = location.pathname === "/workspaces";
   const isWorkRoute = route?.mode === "work";
+  const isInviteRoute = route?.mode === "invite";
   const isAccountRoute = route?.mode === "account";
   const accountReturnPath = isAccountRoute ? resolveAccountReturnTarget(location.search, currentWorkspace ? workspacePath(currentWorkspace.id) : "/workspaces") : null;
   const accountReturnRoute = accountReturnPath ? matchStagePilotRoute(accountReturnPath.split("?")[0]) : null;
@@ -108,11 +112,20 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     const next = await saveRecentContext(recentContextAccountKey, { ...context, lastOpenedAt: Date.now() });
     setRecentContexts(next);
   }, [recentContextAccountKey]);
-  const workspace = route ? workspaces.find((item) => item.id === route.workspaceId) : null;
+  const workspace = route?.direct && directProductionState.value ? { id: directProductionState.value.workspaceId, name: directProductionState.value.workspaceName, role: directProductionState.value.workspaceRole, plan: "活动协作者", workspaceNavigable: directProductionState.value.workspaceNavigable } : (route ? workspaces.find((item) => item.id === route.workspaceId) : null);
   const productionsLoaded = route ? Object.prototype.hasOwnProperty.call(productionsByWorkspace, route.workspaceId) : false;
   const remoteProductions = route ? productionsByWorkspace[route.workspaceId] ?? [] : [];
   const productions = remoteProductions;
   const isProductionRoute = route?.mode === "production";
+  useEffect(() => {
+    if (!route?.direct || authStatus !== "authenticated") return undefined;
+    let active = true;
+    setDirectProductionState({ id: route.productionId, loading: true, value: null, failed: false });
+    getAccessibleProduction(route.productionId).then((value) => {
+      if (active) setDirectProductionState({ id: route.productionId, loading: false, value: toProductionSummary(value), failed: false });
+    }).catch(() => { if (active) setDirectProductionState({ id: route.productionId, loading: false, value: null, failed: true }); });
+    return () => { active = false; };
+  }, [authStatus, route?.direct, route?.productionId]);
   // Production Context：依附 currentWorkspace/route.workspaceId；
   // 深链恢复时由 productionDetail 单独加载，绝不出现父子和 URL 不一致的状态。
   const creationRoute = Boolean(isProductionRoute && creationSession?.id === route.productionId && creationSession.workspaceId === route.workspaceId);
@@ -151,14 +164,14 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     })();
     return () => { active = false; };
   }, [productionDeepLink, productionRouteKey, route?.workspaceId, route?.productionId, setProductionsByWorkspaceEntry]);
-  const production = productionFromList || (creationRoute ? creationSession : null) || (productionDeepLink && routeProductionDetail && !routeProductionDetail.loading && !routeProductionDetail.failed ? routeProductionDetail.production : null);
+  const production = route?.direct ? directProductionState.value : (productionFromList || (creationRoute ? creationSession : null) || (productionDeepLink && routeProductionDetail && !routeProductionDetail.loading && !routeProductionDetail.failed ? routeProductionDetail.production : null));
   const productionUnavailable = Boolean(productionDeepLink && routeProductionDetail && !routeProductionDetail.loading && routeProductionDetail.failed);
   const creationSessionExpired = Boolean(isCreationSessionRoute && !creationRoute);
 
   useEffect(() => {
     if (authStatus !== "authenticated" || !route || !workspace) return;
     if (route.mode === "production" && production && !production.isCreationSession) {
-      void rememberContext({ type: "production", id: production.id, name: production.name, path: productionPath(workspace.id, production.id), workspaceId: workspace.id, workspaceName: workspace.name });
+      void rememberContext({ type: "production", id: production.id, name: production.name, path: route.direct ? directProductionPath(production.id) : productionPath(workspace.id, production.id), workspaceId: workspace.id, workspaceName: workspace.name });
       return;
     }
     if (route.mode === "workspace") {
@@ -214,17 +227,17 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   // - 多个工作空间且无可恢复记录 → /workspaces selector
   useEffect(() => {
     if (authStatus !== "authenticated" || workspaceStatus === "loading") return;
-    if (isAccountRoute || isWorkRoute) return;
+    if (isAccountRoute || isWorkRoute || isInviteRoute || route?.direct) return;
     if (location.pathname !== "/") {
       if ((workspaceStatus === "none") || (workspaceStatus === "selecting")) navigate("/workspaces", { replace: true });
       return;
     }
     if (workspaceStatus === "none" || workspaceStatus === "selecting") navigate("/workspaces", { replace: true });
     else if (workspaceStatus === "ready" && currentWorkspace) navigate(workspacePath(currentWorkspace.id), { replace: true });
-  }, [authStatus, workspaceStatus, currentWorkspace, location.pathname, navigate, isAccountRoute, isWorkRoute]);
+  }, [authStatus, workspaceStatus, currentWorkspace, location.pathname, navigate, isAccountRoute, isWorkRoute, isInviteRoute, route?.direct]);
 
   // 已登录状态下访问 /w/:id/* 且 id 不在可访问列表时，渲染不可访问页面。
-  const workspaceForbidden = Boolean(route && authStatus === "authenticated" && workspaceStatus === "ready" && !workspace);
+  const workspaceForbidden = Boolean(route && !route.direct && authStatus === "authenticated" && workspaceStatus === "ready" && !workspace);
 
   const changeWorkspace = async (nextWorkspace) => {
     if (!nextWorkspace || nextWorkspace.id === workspace?.id) return;
@@ -380,7 +393,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
         }
         return true;
       }
-      const updated = await updateProduction(workspace.id, production.id, body);
+      const updated = route?.direct ? await updateAccessibleProduction(production.id, body) : await updateProduction(workspace.id, production.id, body);
       setProductionsByWorkspaceEntry(workspace.id, { ...toProductionSummary(updated), venue: localVenue });
       notify.success("活动信息已保存");
       return true;
@@ -391,7 +404,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   };
   const updateProductionSettings = async (patch) => {
     if (!workspace || !production || production.isCreationSession) throw new Error("创建会话只能在活动概览中完善基础信息。");
-    const updated = await updateProduction(workspace.id, production.id, patch);
+    const updated = route?.direct ? await updateAccessibleProduction(production.id, patch) : await updateProduction(workspace.id, production.id, patch);
     const summary = { ...toProductionSummary(updated), venue: production.venue || "" };
     setProductionsByWorkspaceEntry(workspace.id, summary);
     return summary;
@@ -455,11 +468,14 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
   else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} initialAction={new URLSearchParams(location.search).get("action")} />;
+  else if (route?.mode === "invite") content = <ProductionInvitePage token={route.token} />;
   else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} />;
   else if (isWorkspacesRoute) content = <WorkspacesPage onCreateWorkspace={() => setCreateWorkspaceOpen(true)} />;
   else if (workspaceError) content = <NavigationFailure description={workspaceError.message} onRetry={retryWorkspaces} />;
   else if (location.pathname === "/") content = <AppLoading />;
   else if (!route) content = <NavigationFailure title="页面不存在" description="这个 StagePilot 页面地址无效或已经移动。" homePath={currentWorkspace ? workspacePath(currentWorkspace.id) : undefined} />;
+  else if (route.direct && directProductionState.loading) content = <AppLoading />;
+  else if (route.direct && directProductionState.failed) content = <NavigationFailure title="活动不可访问" description="这场活动不存在，或你已没有访问权限。" homePath="/work?tab=participating" />;
   else if (workspaceForbidden) content = <NavigationFailure title="工作空间不可访问" description="你访问的工作空间不存在，或者当前账号无权访问。" homePath={currentWorkspace ? workspacePath(currentWorkspace.id) : (workspaces[0] ? workspacePath(workspaces[0].id) : undefined)} />;
   else if (!workspace) content = <NavigationFailure title="工作空间不存在" description="你访问的工作空间不存在，或者当前账号无权访问。" homePath={currentWorkspace ? workspacePath(currentWorkspace.id) : undefined} />;
   else if (creationSessionExpired) content = <NavigationFailure title="创建会话已结束" description="这次创建内容尚未提交，离开或刷新后不会恢复。" homePath={workspacePath(workspace.id, "productions")} />;
@@ -483,6 +499,8 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;
   else if (route.mode === "production" && production?.isCreationSession) content = <NavigationFailure title="创建会话仅支持概览" description="提交第一个有效字段后，活动的其他模块会自动开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
+  else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage production={production} key={production.id} />;
+  else if (route.mode === "production" && route.page === "roles") content = <ProductionRolesPage production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
 

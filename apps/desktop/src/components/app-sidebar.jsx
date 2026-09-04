@@ -15,9 +15,7 @@ import {
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarRail, useSidebar,
 } from "@/components/ui/sidebar";
 import { NavUser } from "@/components/nav-user";
-import {
-  accountPath, productionPath, workspacePath,
-} from "@/lib/navigation";
+import { accountPath, directProductionPath, productionPath, workspacePath } from "@/lib/navigation";
 import { notify } from "@/components/ui/sonner";
 
 const workspaceGroups = [
@@ -31,7 +29,8 @@ const productionGroups = [
   { label: null, items: [["overview", "概览", Gauge]] },
   { label: "筹备", items: [["recruitment", "征集与审核", ClipboardCheck], ["programs", "节目", Mic2], ["people", "人员", UsersRound]] },
   { label: "制作与现场", items: [["rundown", "流程编排", Workflow], ["stage", "舞台执行", Theater]] },
-  { label: "资料", items: [["files", "文件", FileText], ["settings", "活动设置", Settings]] },
+  { label: "协作与权限", items: [["members", "成员", UsersRound], ["roles", "角色与权限", KeyRound]] },
+  { label: "资料", items: [["settings", "活动设置", Settings]] },
 ];
 
 const accountGroups = [
@@ -72,9 +71,9 @@ function WorkspaceSwitcher({ workspace, production, recentContexts, onOpenRecent
 function NavigationGroups({ groups, route, workspace, production, disabled = false, creationSession = false, account = false, accountReturnPath }) {
   return groups.map((group, index) => <SidebarGroup key={group.label ?? `primary-${index}`}>
     {group.label && <SidebarGroupLabel className={disabled ? "opacity-50" : undefined}>{group.label}</SidebarGroupLabel>}
-    <SidebarMenu>{group.items.map(([page, label, Icon]) => {
+    <SidebarMenu>{group.items.filter(([page]) => !(production && Array.isArray(production.permissionKeys) && ["members", "roles"].includes(page) && !production.permissionKeys.includes("production.members.view"))).map(([page, label, Icon]) => {
       const itemDisabled = disabled || Boolean(creationSession && page !== "overview");
-      const href = account ? accountPath(page, accountReturnPath) : (workspace ? (production ? productionPath(workspace.id, production.id, page) : workspacePath(workspace.id, page)) : undefined);
+      const href = account ? accountPath(page, accountReturnPath) : (workspace ? (production ? (production.workspaceNavigable === false ? directProductionPath(production.id, page) : productionPath(workspace.id, production.id, page)) : workspacePath(workspace.id, page)) : undefined);
       const active = Boolean(route?.page === page);
       if (itemDisabled) {
         return <SidebarMenuItem key={page}><SidebarMenuButton disabled tooltip={`${label}（当前不可用）`} className="opacity-50 blur-[1px]"><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>;
@@ -97,7 +96,7 @@ export function AppSidebar({ route, workspace, production, recentContexts = [], 
     <SidebarContent>
       {route?.mode === "account" && <AccountNavigation route={route} returnPath={accountReturnPath} returnLabel={accountReturnLabel} />}
       {route?.mode === "production" && workspace && production && <>
-        <SidebarGroup className="pb-0"><SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip={`返回 ${workspace.name}`} onClick={(event) => { if (production?.isCreationSession && onLeaveCreation) { event.preventDefault(); onLeaveCreation(); } }} render={<NavLink to={workspacePath(workspace.id, "home")} />}><ArrowLeft /><span className="truncate">{workspace.name}</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu></SidebarGroup>
+        <SidebarGroup className="pb-0"><SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip={production.workspaceNavigable === false ? "返回我的活动" : `返回 ${workspace.name}`} onClick={(event) => { if (production?.isCreationSession && onLeaveCreation) { event.preventDefault(); onLeaveCreation(); } }} render={<NavLink to={production.workspaceNavigable === false ? "/work?tab=participating" : workspacePath(workspace.id, "home")} />}><ArrowLeft /><span className="truncate">{production.workspaceNavigable === false ? "我的活动" : workspace.name}</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu></SidebarGroup>
         <NavigationGroups groups={productionGroups} route={route} workspace={workspace} production={production} creationSession={Boolean(production?.isCreationSession)} />
       </>}
       {route?.mode === "workspace" && workspace && <NavigationGroups groups={workspaceGroups} route={route} workspace={workspace} />}
