@@ -47,12 +47,29 @@ export const deleteProductionLocation = (productionId, locationId) => request(`/
 export const reorderProductionLocations = (productionId, items) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/order`, { method: "PATCH", body: JSON.stringify({ items }) });
 
 const planningPath = (productionId, type) => `/v1/productions/${encodeURIComponent(productionId)}/${type === "rehearsal" ? "rehearsals" : "occurrences"}`;
-export const listProductionOccurrences = (productionId) => request(planningPath(productionId, "occurrence"));
-export const createProductionOccurrence = (productionId, payload) => request(planningPath(productionId, "occurrence"), { method: "POST", body: JSON.stringify(payload) });
-export const updateProductionOccurrence = (productionId, id, payload) => request(`${planningPath(productionId, "occurrence")}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
-export const listRehearsalSessions = (productionId) => request(planningPath(productionId, "rehearsal"));
-export const createRehearsalSession = (productionId, payload) => request(planningPath(productionId, "rehearsal"), { method: "POST", body: JSON.stringify(payload) });
-export const updateRehearsalSession = (productionId, id, payload) => request(`${planningPath(productionId, "rehearsal")}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+export const listProductionOccurrences = (productionId) => request(planningPath(productionId, "occurrence")).then((items) => items.map(toOccurrence));
+export const createProductionOccurrence = (productionId, payload) => request(planningPath(productionId, "occurrence"), { method: "POST", body: JSON.stringify(payload) }).then(toOccurrence);
+export const updateProductionOccurrence = (productionId, id, payload) => request(`${planningPath(productionId, "occurrence")}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }).then(toOccurrence);
+export const listRehearsalSessions = (productionId) => request(planningPath(productionId, "rehearsal")).then((items) => items.map(toRehearsalSession));
+export const createRehearsalSession = (productionId, payload) => request(planningPath(productionId, "rehearsal"), { method: "POST", body: JSON.stringify(payload) }).then(toRehearsalSession);
+export const updateRehearsalSession = (productionId, id, payload) => request(`${planningPath(productionId, "rehearsal")}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }).then(toRehearsalSession);
+export function toProductionLocation(location = {}) {
+  return { id: location.id, workspaceId: location.workspace_id, productionId: location.production_id, venueId: location.venue_id, venueName: location.venue_name || "", venueSpaceId: location.venue_space_id || null, spaceName: location.space_name || null, purpose: location.purpose || "", isPrimary: Boolean(location.is_primary), sortOrder: location.sort_order || 0, notes: location.notes || "" };
+}
+export function toOccurrence(record = {}) {
+  return { ...record, workspaceId: record.workspace_id, productionId: record.production_id, occurrenceId: record.occurrence_id || null, scheduledStartAt: record.scheduled_start_at || null, scheduledEndAt: record.scheduled_end_at || null, actualStartAt: record.actual_start_at || null, actualEndAt: record.actual_end_at || null, productionLocationId: record.production_location_id || null, venueName: record.venue_name || "", spaceName: record.space_name || null };
+}
+export function toRehearsalSession(record = {}) {
+  return { ...toOccurrence(record), rehearsalSessionId: record.id };
+}
+export function toScheduleItem(record = {}) {
+  return { ...record, workspaceId: record.workspace_id, productionId: record.production_id, contextType: record.context_type, occurrenceId: record.occurrence_id || null, rehearsalSessionId: record.rehearsal_session_id || null, itemType: record.item_type, scheduledStartAt: record.scheduled_start_at || null, scheduledEndAt: record.scheduled_end_at || null, actualStartAt: record.actual_start_at || null, actualEndAt: record.actual_end_at || null, productionLocationIds: (record.locations || []).map((item) => item.production_location_id), locations: (record.locations || []).map((item) => ({ id: item.production_location_id, venueName: item.venue_name || "", spaceName: item.space_name || null, role: item.role || "primary", sortOrder: item.sort_order || 0 })), conflicts: record.conflicts || [] };
+}
+export const listScheduleItems = (productionId, params = {}) => { const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== "")); const suffix = query.toString() ? `?${query}` : ""; return request(`/v1/productions/${encodeURIComponent(productionId)}/schedule-items${suffix}`).then((items) => items.map(toScheduleItem)); };
+export const getScheduleItem = (productionId, id) => request(`/v1/productions/${encodeURIComponent(productionId)}/schedule-items/${encodeURIComponent(id)}`).then(toScheduleItem);
+export const createScheduleItem = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/schedule-items`, { method: "POST", body: JSON.stringify(payload) }).then(toScheduleItem);
+export const updateScheduleItem = (productionId, id, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/schedule-items/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(payload) }).then(toScheduleItem);
+export const deleteScheduleItem = (productionId, id) => request(`/v1/productions/${encodeURIComponent(productionId)}/schedule-items/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const getProductionPlanningSettings = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/settings`);
 export const updateProductionPlanningSettings = (productionId, patch) => request(`/v1/productions/${encodeURIComponent(productionId)}/settings`, { method: "PATCH", body: JSON.stringify(patch) });
 
