@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { notify } from "@/components/ui/sonner";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { usePageChrome } from "@/components/page-chrome";
@@ -42,7 +41,9 @@ export function DetailSplitPane({
   const saveTimerRef = useRef(null);
   const inlineCloseTimerRef = useRef(null);
   const exclusiveCloseTimerRef = useRef(null);
+  const overlayCloseTimerRef = useRef(null);
   const exclusiveFrameRef = useRef(null);
+  const overlayFrameRef = useRef(null);
   const wasOpenRef = useRef(open);
   const [containerWidth, setContainerWidth] = useState(0);
   const [detailWidth, setDetailWidth] = useState(DEFAULT_DETAIL_WIDTH);
@@ -51,6 +52,8 @@ export function DetailSplitPane({
   const [exclusive, setExclusive] = useState(false);
   const [exclusiveMounted, setExclusiveMounted] = useState(false);
   const [exclusiveVisible, setExclusiveVisible] = useState(false);
+  const [overlayMounted, setOverlayMounted] = useState(false);
+  const [overlayVisible, setOverlayVisible] = useState(false);
   const exclusiveRef = useRef(false);
   const { setDetailAction } = usePageChrome();
 
@@ -73,6 +76,7 @@ export function DetailSplitPane({
 
   const canInline = open && containerWidth >= INLINE_MIN_WIDTH;
   const isInline = canInline && !exclusive;
+  const isOverlay = open && !exclusive && containerWidth > 0 && containerWidth < INLINE_MIN_WIDTH;
   const constrainedWidth = clampDetailWidth(detailWidth, containerWidth || INLINE_MIN_WIDTH);
 
   useLayoutEffect(() => {
@@ -140,6 +144,22 @@ export function DetailSplitPane({
   }, [exclusive, exclusiveMounted]);
 
   useEffect(() => {
+    if (isOverlay) {
+      if (overlayCloseTimerRef.current) clearTimeout(overlayCloseTimerRef.current);
+      setOverlayMounted(true);
+      overlayFrameRef.current = requestAnimationFrame(() => setOverlayVisible(true));
+      return () => {
+        if (overlayFrameRef.current) cancelAnimationFrame(overlayFrameRef.current);
+      };
+    }
+    setOverlayVisible(false);
+    if (overlayMounted) {
+      overlayCloseTimerRef.current = setTimeout(() => setOverlayMounted(false), PANE_TRANSITION_MS);
+    }
+    return undefined;
+  }, [isOverlay, overlayMounted]);
+
+  useEffect(() => {
     if (!open) {
       setDetailAction(null);
       return undefined;
@@ -162,7 +182,9 @@ export function DetailSplitPane({
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     if (inlineCloseTimerRef.current) clearTimeout(inlineCloseTimerRef.current);
     if (exclusiveCloseTimerRef.current) clearTimeout(exclusiveCloseTimerRef.current);
+    if (overlayCloseTimerRef.current) clearTimeout(overlayCloseTimerRef.current);
     if (exclusiveFrameRef.current) cancelAnimationFrame(exclusiveFrameRef.current);
+    if (overlayFrameRef.current) cancelAnimationFrame(overlayFrameRef.current);
   }, []);
 
   const commitWidth = (nextWidth) => {
@@ -234,7 +256,7 @@ export function DetailSplitPane({
 
   const mainWidth = isInline ? `calc(100% - ${constrainedWidth + 1}px)` : "100%";
   return <div ref={containerRef} className={cn("relative flex h-full min-h-0 min-w-0", className)}>
-    <div className={cn("min-h-0 min-w-0 shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none", exclusive && "pointer-events-none opacity-0")} style={{ width: exclusive ? 0 : mainWidth }} aria-hidden={exclusive}>{children}</div>
+    <div className={cn("min-h-0 min-w-0 shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none", (exclusive || isOverlay) && "pointer-events-none", exclusive && "opacity-0")} style={{ width: exclusive ? 0 : mainWidth }} aria-hidden={exclusive || isOverlay}>{children}</div>
     {exclusiveMounted && <section aria-hidden={!exclusiveVisible} className={cn("absolute inset-0 z-10 min-h-0 min-w-0 overflow-y-auto bg-background transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", exclusiveVisible ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-2 opacity-0")}>
       <div role="separator" aria-orientation="vertical" aria-label="向右拖动以退出独占详情" aria-valuemin={0} aria-valuemax={containerWidth} aria-valuenow={0} aria-valuetext="独占详情；向右拖动超过阈值关闭详情" tabIndex={0} className="absolute inset-y-0 left-0 z-10 w-px touch-none cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20" onPointerDown={onExclusivePointerDown} onPointerMove={onExclusivePointerMove} onKeyDown={onExclusiveKeyDown} />
       <div className="min-h-full p-4 md:p-6"><div className={cn("mx-auto w-full", contentWidthClassName[contentWidth] || contentWidthClassName.standard)}>{detail}</div></div>
@@ -243,11 +265,8 @@ export function DetailSplitPane({
       <div role="separator" aria-orientation="vertical" aria-label="调整详情面板宽度" aria-valuemin={MIN_DETAIL_WIDTH} aria-valuemax={maxDetailWidth(containerWidth || INLINE_MIN_WIDTH)} aria-valuenow={constrainedWidth} tabIndex={0} className={cn("relative z-10 w-px shrink-0 touch-none cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20", !inlineVisible && "pointer-events-none opacity-0")} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onKeyDown={onKeyDown} />
       <aside className={cn("min-h-0 shrink-0 overflow-y-auto bg-background transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", !inlineVisible && "pointer-events-none translate-x-2 opacity-0")} style={{ width: constrainedWidth }}>{detail}</aside>
     </div>}
-    {open && !canInline && <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" overlayClassName="top-[var(--app-titlebar-height)] bottom-0" className="top-[var(--app-titlebar-height)] bottom-0 h-auto w-full max-w-none overflow-y-auto border-l shadow-none sm:w-[min(30rem,100vw)] sm:max-w-none" showCloseButton={false}>
-        <SheetHeader className="sr-only"><SheetTitle>详情面板</SheetTitle><SheetDescription>当前选中内容的详情。</SheetDescription></SheetHeader>
-        {detail}
-      </SheetContent>
-    </Sheet>}
+    {overlayMounted && <section role="region" aria-label="详情页面" aria-hidden={!overlayVisible} className={cn("absolute inset-0 z-10 min-h-0 min-w-0 overflow-y-auto bg-background transition-transform duration-200 ease-out motion-reduce:transition-none", overlayVisible ? "translate-x-0" : "pointer-events-none translate-x-4")}>
+      <div className="min-h-full p-4 md:p-6"><div className={cn("mx-auto w-full", contentWidthClassName[contentWidth] || contentWidthClassName.standard)}>{detail}</div></div>
+    </section>}
   </div>;
 }

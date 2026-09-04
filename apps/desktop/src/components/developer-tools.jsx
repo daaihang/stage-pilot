@@ -35,7 +35,7 @@ function LayoutInspector() {
       <div><h2 className="text-sm font-semibold">布局检查器</h2><p className="mt-0.5 text-xs text-muted-foreground">开发工具页详情面板试验</p></div>
     </header>
     <div className="space-y-6 p-4 text-sm">
-      <section className="border-y py-4"><p className="text-xs text-muted-foreground">当前呈现</p><p className="mt-1 font-medium">{mode === "exclusive" ? "详情独占工作区" : mode === "inline" ? "嵌入式分栏" : "右侧覆盖详情"}</p><p className="mt-1 text-xs text-muted-foreground">{mode === "exclusive" ? "详情占据中央工作区；左侧应用导航仍保持可见。" : mode === "inline" ? `详情宽度 ${width}px；拖动左侧分割线或使用键盘方向键调整。` : "可用宽度不足，详情不压缩主工作区。"}</p></section>
+      <section className="border-y py-4"><p className="text-xs text-muted-foreground">当前呈现</p><p className="mt-1 font-medium">{mode === "exclusive" ? "详情独占工作区" : mode === "inline" ? "嵌入式分栏" : "详情页覆盖主工作区"}</p><p className="mt-1 text-xs text-muted-foreground">{mode === "exclusive" ? "详情占据中央工作区；左侧应用导航仍保持可见。" : mode === "inline" ? `详情宽度 ${width}px；拖动左侧分割线或使用键盘方向键调整。` : "窄屏时详情作为主工作区内的独立页面显示，不模糊背景，也不覆盖应用标题栏。"}</p></section>
       <section className="space-y-2"><h3 className="font-medium">试验目标</h3><p className="text-xs leading-5 text-muted-foreground">此区域不是卡片或浮层式侧栏。在宽屏中，它与主内容共享同一个工作区，仅由一条竖向分割线区隔；继续向左拖到阈值可让详情独占工作区，标题栏也可切换。</p></section>
       <section className="space-y-2 border-t pt-4"><h3 className="font-medium">后续接入</h3><p className="text-xs leading-5 text-muted-foreground">资源库、活动实例或工作会话可复用同一容器，将列表保留在主区，并把选中对象放到这里。</p></section>
     </div>
