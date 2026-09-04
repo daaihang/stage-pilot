@@ -6,8 +6,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // 资源卡片按实际内容容器宽度自动决定列数，而不是绑定 viewport 断点。
-// 260px 是卡片保持可读性的最小宽度，未来机构、场地、人员、设备页统一复用。
-export const resourceGridClassName = "grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))]";
+// 260px 是卡片保持可读性的最小宽度；卡片最大 400px，少量项目不会铺成横幅。
+// 该规则也供活动页复用，统一卡片型列表的自适应行为。
+export const resourceGridClassName = "grid justify-items-start gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))] [&>*]:w-full [&>*]:max-w-[400px]";
 
 export function ResourcePage({
   title,
