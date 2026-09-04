@@ -97,6 +97,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const creationRequestRef = useRef(null);
   const creationRouteIdRef = useRef(null);
   const [creationRequestPending, setCreationRequestPending] = useState(false);
+  const [detailModalActive, setDetailModalActive] = useState(false);
   navigationRepositoryRef.current = repository;
   const route = matchStagePilotRoute(location.pathname, location.search);
   const [directProductionState, setDirectProductionState] = useState({ id: "", loading: false, value: null, failed: false });
@@ -338,13 +339,13 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const updateProductionData = async (patch) => {
     if (!workspace || !production) return false;
     const next = { ...production, ...patch };
-    if (next.startsAt && next.endsAt && new Date(next.endsAt) < new Date(next.startsAt)) {
+    if (next.plannedStartAt && next.plannedEndAt && new Date(next.plannedEndAt) < new Date(next.plannedStartAt)) {
       notify.error("无法保存活动信息", { description: "结束时间不能早于开始时间。" });
       return false;
     }
     const hasMeaningfulInfo = Boolean(
       (next.name?.trim() && next.name.trim() !== (next.defaultName || "活动-0")) ||
-      next.startsAt || next.endsAt || next.description?.trim() ||
+      next.plannedStartAt || next.plannedEndAt || next.description?.trim() ||
       (next.timezone && next.timezone !== "Asia/Shanghai"),
     );
     try {
@@ -364,7 +365,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
           try {
             const created = await createProduction(workspace.id, {
               name: latest.name?.trim() || production.name, description: latest.description?.trim() || "", timezone: latest.timezone || "Asia/Shanghai",
-              startAt: latest.startsAt || null, endAt: latest.endsAt || null,
+              plannedStartAt: latest.plannedStartAt || null, plannedEndAt: latest.plannedEndAt || null,
             });
             const latestSession = getCreationSession() || latest;
             const summary = { ...toProductionSummary(created), venue: latestSession.venue || "" };
@@ -389,8 +390,8 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
       if (Object.prototype.hasOwnProperty.call(patch, "name")) body.name = String(patch.name).trim();
       if (Object.prototype.hasOwnProperty.call(patch, "description")) body.description = String(patch.description ?? "").trim();
       if (Object.prototype.hasOwnProperty.call(patch, "timezone")) body.timezone = patch.timezone;
-      if (Object.prototype.hasOwnProperty.call(patch, "startsAt")) body.start_at = patch.startsAt || null;
-      if (Object.prototype.hasOwnProperty.call(patch, "endsAt")) body.end_at = patch.endsAt || null;
+      if (Object.prototype.hasOwnProperty.call(patch, "plannedStartAt")) body.planned_start_at = patch.plannedStartAt || null;
+      if (Object.prototype.hasOwnProperty.call(patch, "plannedEndAt")) body.planned_end_at = patch.plannedEndAt || null;
       const hasVenuePatch = Object.prototype.hasOwnProperty.call(patch, "venue");
       const localVenue = hasVenuePatch ? String(patch.venue ?? "").trim() : (production.venue || "");
       if (!Object.keys(body).length) {
@@ -525,9 +526,9 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   // 创建会话需要保留 Production Context 的返回入口和禁用导航，
   // 但它从未加入 productionsByWorkspace，因此不会出现在正式活动预览中。
   const sidebarProduction = production;
-  return <PageChromeProvider><WindowDetailProvider contentWidth={contentWidth}><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+  return <PageChromeProvider><WindowDetailProvider contentWidth={contentWidth} onModalActiveChange={setDetailModalActive}><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("relative z-20 flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><div className="flex size-7 shrink-0 items-center justify-center text-primary" aria-label="StagePilot" title="StagePilot"><Sparkles className="size-4" /></div><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div><TitlebarBreadcrumbs items={titlebarBreadcrumbItems} title={pageTitle} showTitle={showTitlebarTitle} /><div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region /><PageDetailTitlebarAction />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
-    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
+    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar inert={detailModalActive || undefined} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /></SidebarProvider></WindowDetailProvider></PageChromeProvider>;
 }
 

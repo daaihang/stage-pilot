@@ -35,8 +35,8 @@ function LayoutInspector() {
       <div><h2 className="text-sm font-semibold">布局检查器</h2><p className="mt-0.5 text-xs text-muted-foreground">开发工具页详情面板试验</p></div>
     </header>
     <div className="space-y-6 p-4 text-sm">
-      <section className="border-y py-4"><p className="text-xs text-muted-foreground">当前呈现</p><p className="mt-1 font-medium">{mode === "exclusive" ? "详情独占工作区" : mode === "inline" ? "嵌入式分栏" : "详情页覆盖主工作区"}</p><p className="mt-1 text-xs text-muted-foreground">{mode === "exclusive" ? "详情以带外边距的大窗口覆盖中央工作区；左侧应用导航仍保持可见。" : mode === "inline" ? `详情宽度 ${width}px；拖动左侧分割线或使用键盘方向键调整，独占与关闭由标题栏控制。` : "窄屏时详情作为主工作区内的独立页面显示，不模糊背景，也不覆盖应用标题栏。"}</p></section>
-      <section className="space-y-2"><h3 className="font-medium">试验目标</h3><p className="text-xs leading-5 text-muted-foreground">此区域不是卡片或浮层式侧栏。在宽屏中，它与主内容共享同一个工作区，仅由一条竖向分割线区隔；分割线只调整详情宽度，独占和关闭通过窗口标题栏控制。</p></section>
+      <section className="border-y py-4"><p className="text-xs text-muted-foreground">当前呈现</p><p className="mt-1 font-medium">{mode === "exclusive" ? "详情独占工作区" : mode === "inline" ? "嵌入式分栏" : "详情页覆盖主工作区"}</p><p className="mt-1 text-xs text-muted-foreground">{mode === "exclusive" ? "详情以带外边距的大窗口覆盖中央工作区；左侧应用导航仍保持可见但不可交互。点击外围阴影或按 Escape 会恢复右侧详情栏，不会关闭详情。" : mode === "inline" ? `详情宽度 ${width}px；拖动左侧分割线或使用键盘方向键调整，分割线不会触发独占或关闭，窗口标题栏负责这两个动作。` : "窄屏时详情作为主工作区内的独立页面显示，不模糊背景、不渲染遮罩，也不覆盖应用标题栏。"}</p></section>
+      <section className="space-y-2"><h3 className="font-medium">试验目标</h3><p className="text-xs leading-5 text-muted-foreground">详情内容始终只有一个 Surface，在嵌入、独占和窄屏覆盖之间连续变形。宽屏用竖向分割线区隔，独占按钮会变为“恢复详情侧栏”，关闭详情仍通过窗口标题栏完成。</p></section>
       <section className="space-y-2 border-t pt-4"><h3 className="font-medium">后续接入</h3><p className="text-xs leading-5 text-muted-foreground">资源库、活动实例或工作会话可复用同一容器，将列表保留在主区，并把选中对象放到这里。</p></section>
     </div>
   </div>;
@@ -188,7 +188,7 @@ export function DeveloperTools({ workspace, devtools, onDevtoolsChange, initialA
   }, [addActivity, workspace]);
 
   const demos = useMemo(() => [[ContextMenuDemo1, "基础菜单"], [ContextMenuDemo2, "图标操作"], [ContextMenuDemo3, "快捷键标注"], [ContextMenuDemo4, "嵌套子菜单"], [ContextMenuDemo5, "分组标签"], [ContextMenuDemo6, "复选项"], [ContextMenuDemo7, "单选项"], [ContextMenuDemo8, "危险操作"]], []);
-  useEffect(() => registerDetail({ key: "developer-tools", getDetail: () => <LayoutInspector />, triggerRef: detailTriggerRef, storageKey: "detailPane:window:v1" }), [registerDetail]);
+  useEffect(() => registerDetail({ key: "developer-tools", detailLabel: "布局检查器", getDetail: () => <LayoutInspector />, triggerRef: detailTriggerRef, storageKey: "detailPane:window:v1" }), [registerDetail]);
 
   const mainWidthClass = { standard: "max-w-6xl", wide: "max-w-7xl", full: "max-w-none" }[contentWidth] || "max-w-6xl";
   return <div className="h-full min-h-0 overflow-y-auto p-4 md:p-6"><div className={`mx-auto w-full ${mainWidthClass} space-y-4`}><div><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="text-sm text-muted-foreground">{description}</p></div><Card><CardHeader><CardTitle>开发者选项</CardTitle><CardDescription>这些能力只在开发构建中显示。</CardDescription></CardHeader><CardContent className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium">开发者工具</p><p className="text-xs text-muted-foreground">关闭后需重启应用才能完全禁用</p></div><div className="flex flex-wrap items-center justify-end gap-2"><Button ref={detailTriggerRef} size="sm" variant="outline" onClick={() => setDetailOpen(!detailOpen)} aria-pressed={detailOpen}><PanelRightOpen />{detailOpen ? "关闭详情" : "打开详情"}</Button><Button size="sm" variant="outline" onClick={openDevtools}><Terminal />打开</Button><Switch checked={devtools} onCheckedChange={onDevtoolsChange} /></div></CardContent></Card>

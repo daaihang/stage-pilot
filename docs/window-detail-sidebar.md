@@ -40,6 +40,7 @@ const { detailOpen, registerDetail, setDetailOpen } = useWindowDetail();
 
 useEffect(() => registerDetail({
   key: "developer-tools",
+  detailLabel: "布局检查器",
   getDetail: () => <LayoutInspector />,
   triggerRef: detailTriggerRef,
   storageKey: "detailPane:window:v1",
@@ -55,6 +56,8 @@ useEffect(() => registerDetail({
 ```
 
 页面不得再自行维护以下状态：`open`、详情宽度、嵌入/覆盖/独占模式。页面只读取 `detailOpen` 或 `detailPresentation` 来更新入口文案、详情说明等页面特有文本。
+
+`DetailSplitPane` 只保留一个 `[data-detail-surface]` 详情节点。嵌入、独占和覆盖是同一节点的三种几何状态；页面详情内容不得为了不同宽度再渲染第二份。
 
 ## 何时使用 workspace 模式
 
@@ -93,9 +96,13 @@ useEffect(() => registerDetail({
 
 独占详情不是普通的满幅侧栏：它在中间/右侧工作区内以带外边距的大窗口呈现。窗口表面沿用项目当前 shadcn/ui 的弹层语义（`bg-popover`、`text-popover-foreground`、`rounded-none`、`ring-1 ring-foreground/10`），只保留阴影作为独占层级的额外提示；主工作区留在下方但不可交互，使用轻量遮罩区分层级，不使用背景模糊。应用标题栏和左侧 `AppSidebar` 始终位于这个窗口之外。
 
+独占表面是真正的 modal dialog：使用 `role="dialog"`、`aria-modal="true"`，进入时聚焦详情容器，Tab/Shift+Tab 只在详情控件和标题栏的详情独占/关闭按钮之间循环，背景主区与左侧导航设置为 `inert`。点击独占阴影或按 Escape 只退出独占并回到嵌入式详情，不关闭详情；标题栏关闭才会关闭详情。退出独占恢复进入独占前的焦点，关闭详情恢复页面触发按钮。
+
 打开/关闭动画采用统一的 `cubic-bezier(0.22, 1, 0.36, 1)`：工作区尺寸使用 300ms 的 `t-resize`，独占窗口使用 250ms 打开、150ms 关闭，并从 `scale(0.96)` 过渡到 `scale(1)`；`prefers-reduced-motion` 下全部关闭过渡。
 
 窄屏覆盖不是模态抽屉：详情在 `WindowDetailHost` 内绝对定位，覆盖中间/右侧主工作区，使用不透明页面背景，不渲染遮罩或背景模糊；应用标题栏和左侧 `AppSidebar` 始终位于覆盖层之外。关闭可通过标题栏详情按钮或 Escape 完成，并使用进入/退出位移动画。
+
+窄屏覆盖保持页面语义（`role="region"`，不设置 `aria-modal` 或焦点陷阱），但主工作区内容在覆盖期间设置为 `inert`，详情标题/容器获得初始焦点。窗口从 `<960px` 切换到宽屏时，同一 Surface 从全工作区平滑收缩为右侧栏；反向切换执行相同的几何过渡。关闭阶段由 `transitionend`/`transitioncancel` 管理卸载，只有 reduced-motion 或无有效 transition 时才在下一帧兜底，不使用固定时长作为主要依据。
 
 ## 新页面接入检查清单
 

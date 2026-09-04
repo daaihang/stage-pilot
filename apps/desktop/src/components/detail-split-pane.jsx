@@ -8,9 +8,16 @@ const MIN_DETAIL_WIDTH = 280;
 const DEFAULT_DETAIL_WIDTH = 420;
 const MIN_MAIN_WIDTH = 320;
 const INLINE_MIN_WIDTH = 960;
-const INLINE_TRANSITION_MS = 300;
-const EXCLUSIVE_CLOSE_TRANSITION_MS = 150;
-const OVERLAY_TRANSITION_MS = 200;
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "area[href]",
+  "button:not([disabled])",
+  "input:not([disabled]):not([type=hidden])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[contenteditable=\"true\"]",
+  "[tabindex]:not([tabindex=\"-1\"])",
+].join(",");
 const contentWidthClassName = { standard: "max-w-6xl", wide: "max-w-7xl", full: "max-w-none" };
 
 function maxDetailWidth(containerWidth) {
@@ -21,13 +28,31 @@ function clampDetailWidth(width, containerWidth) {
   return Math.min(maxDetailWidth(containerWidth), Math.max(MIN_DETAIL_WIDTH, Math.round(width)));
 }
 
+function isVisible(element) {
+  if (!element || element.hidden) return false;
+  const styles = window.getComputedStyle(element);
+  return styles.display !== "none" && styles.visibility !== "hidden";
+}
+
+function transitionDurationMs(element) {
+  if (!element) return 0;
+  const styles = window.getComputedStyle(element);
+  const durations = styles.transitionDuration.split(",").map((value) => {
+    const trimmed = value.trim();
+    if (trimmed.endsWith("ms")) return Number.parseFloat(trimmed) || 0;
+    return (Number.parseFloat(trimmed) || 0) * 1000;
+  });
+  return Math.max(...durations, 0);
+}
+
 /**
- * Window-level master/detail surface. The main content remains mounted while
- * the detail changes presentation between inline, exclusive, and overlay.
+ * Window-level master/detail surface. The detail content is rendered exactly
+ * once; only its geometry changes between inline, exclusive and overlay.
  */
 export function DetailSplitPane({
   children,
   detail,
+  detailLabel = "详情",
   open,
   onOpenChange,
   storageKey,
@@ -38,24 +63,28 @@ export function DetailSplitPane({
   className,
 }) {
   const containerRef = useRef(null);
+  const surfaceRef = useRef(null);
   const saveTimerRef = useRef(null);
-  const inlineCloseTimerRef = useRef(null);
-  const exclusiveCloseTimerRef = useRef(null);
-  const overlayCloseTimerRef = useRef(null);
-  const exclusiveFrameRef = useRef(null);
-  const overlayFrameRef = useRef(null);
+  const fallbackFrameRef = useRef(null);
+  const openFocusRef = useRef(null);
   const wasOpenRef = useRef(open);
+  const exclusiveRef = useRef(false);
+  const surfaceMountedRef = useRef(false);
+  const surfacePhaseRef = useRef("idle");
+  const restoreExclusiveFocusRef = useRef(false);
+  const closeFocusToTriggerRef = useRef(false);
   const [containerWidth, setContainerWidth] = useState(0);
   const [detailWidth, setDetailWidth] = useState(DEFAULT_DETAIL_WIDTH);
-  const [inlineMounted, setInlineMounted] = useState(false);
-  const [inlineVisible, setInlineVisible] = useState(false);
   const [exclusive, setExclusive] = useState(false);
-  const [exclusiveMounted, setExclusiveMounted] = useState(false);
-  const [exclusiveVisible, setExclusiveVisible] = useState(false);
-  const [overlayMounted, setOverlayMounted] = useState(false);
-  const [overlayVisible, setOverlayVisible] = useState(false);
-  const exclusiveRef = useRef(false);
+  const [surfaceMounted, setSurfaceMounted] = useState(false);
+  const [surfaceMode, setSurfaceMode] = useState("overlay");
+  const [surfacePhase, setSurfacePhase] = useState("idle");
+  const [isResizing, setIsResizing] = useState(false);
   const { setDetailAction } = usePageChrome();
+
+  const isSurfaceOpen = surfacePhase === "open";
+  surfacePhaseRef.current = surfacePhase;
+  exclusiveRef.current = exclusive;
 
   const setExclusiveMode = useCallback((nextMode) => {
     const next = typeof nextMode === "function" ? nextMode(exclusiveRef.current) : Boolean(nextMode);
@@ -64,20 +93,33 @@ export function DetailSplitPane({
     return next;
   }, []);
 
-  const toggleExclusive = useCallback(() => {
-    const next = setExclusiveMode((current) => !current);
-    notify.info(next ? "详情已独占工作区" : "已退出独占详情");
+  const enterExclusive = useCallback(() => {
+    if (!exclusiveRef.current) openFocusRef.current = document.activeElement;
+    restoreExclusiveFocusRef.current = false;
+    setExclusiveMode(true);
+    notify.info("详情已独占工作区");
+  }, [setExclusiveMode]);
+
+  const exitExclusive = useCallback(() => {
+    if (!exclusiveRef.current) return;
+    restoreExclusiveFocusRef.current = true;
+    setExclusiveMode(false);
+    notify.info("已退出独占详情");
   }, [setExclusiveMode]);
 
   const closeDetail = useCallback(() => {
+    closeFocusToTriggerRef.current = true;
+    restoreExclusiveFocusRef.current = false;
     setExclusiveMode(false);
     onOpenChange(false);
   }, [onOpenChange, setExclusiveMode]);
 
   const canInline = open && containerWidth >= INLINE_MIN_WIDTH;
-  const isInline = canInline && !exclusive;
-  const isOverlay = open && !exclusive && containerWidth > 0 && containerWidth < INLINE_MIN_WIDTH;
+  const desiredMode = open ? (canInline ? (exclusive ? "exclusive" : "inline") : "overlay") : null;
+  const isInline = open && desiredMode === "inline";
+  const isOverlay = open && desiredMode === "overlay";
   const constrainedWidth = clampDetailWidth(detailWidth, containerWidth || INLINE_MIN_WIDTH);
+  const exclusiveInset = containerWidth >= 1280 ? "32px" : containerWidth >= 1080 ? "24px" : "16px";
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -112,52 +154,44 @@ export function DetailSplitPane({
   useEffect(() => { onDetailWidthChange?.(constrainedWidth); }, [constrainedWidth, onDetailWidthChange]);
 
   useEffect(() => {
-    if (open) onPresentationChange?.(exclusive ? "exclusive" : isInline ? "inline" : "overlay");
-  }, [exclusive, isInline, onPresentationChange, open]);
+    if (open) onPresentationChange?.(desiredMode);
+  }, [desiredMode, onPresentationChange, open]);
 
+  // Keep one surface mounted through mode changes and the close transition.
   useEffect(() => {
-    if (isInline) {
-      if (inlineCloseTimerRef.current) clearTimeout(inlineCloseTimerRef.current);
-      setInlineMounted(true);
-      requestAnimationFrame(() => setInlineVisible(true));
+    if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
+    if (open) {
+      setSurfaceMode(desiredMode);
+      if (!surfaceMountedRef.current) {
+        surfaceMountedRef.current = true;
+        setSurfaceMounted(true);
+        setSurfacePhase("opening");
+        fallbackFrameRef.current = requestAnimationFrame(() => setSurfacePhase("open"));
+      } else {
+        setSurfacePhase("open");
+      }
       return undefined;
     }
-    setInlineVisible(false);
-    if (inlineMounted) inlineCloseTimerRef.current = setTimeout(() => setInlineMounted(false), INLINE_TRANSITION_MS);
+    if (surfaceMountedRef.current) setSurfacePhase("closing");
     return undefined;
-  }, [inlineMounted, isInline]);
+  }, [desiredMode, open]);
+
+  const finishClose = useCallback(() => {
+    if (surfacePhaseRef.current !== "closing") return;
+    surfaceMountedRef.current = false;
+    setSurfaceMounted(false);
+    setSurfacePhase("idle");
+  }, []);
 
   useEffect(() => {
-    if (exclusive) {
-      if (exclusiveCloseTimerRef.current) clearTimeout(exclusiveCloseTimerRef.current);
-      setExclusiveMounted(true);
-      exclusiveFrameRef.current = requestAnimationFrame(() => setExclusiveVisible(true));
-      return () => {
-        if (exclusiveFrameRef.current) cancelAnimationFrame(exclusiveFrameRef.current);
-      };
-    }
-    setExclusiveVisible(false);
-    if (exclusiveMounted) {
-      exclusiveCloseTimerRef.current = setTimeout(() => setExclusiveMounted(false), EXCLUSIVE_CLOSE_TRANSITION_MS);
-    }
-    return undefined;
-  }, [exclusive, exclusiveMounted]);
-
-  useEffect(() => {
-    if (isOverlay) {
-      if (overlayCloseTimerRef.current) clearTimeout(overlayCloseTimerRef.current);
-      setOverlayMounted(true);
-      overlayFrameRef.current = requestAnimationFrame(() => setOverlayVisible(true));
-      return () => {
-        if (overlayFrameRef.current) cancelAnimationFrame(overlayFrameRef.current);
-      };
-    }
-    setOverlayVisible(false);
-    if (overlayMounted) {
-      overlayCloseTimerRef.current = setTimeout(() => setOverlayMounted(false), OVERLAY_TRANSITION_MS);
-    }
-    return undefined;
-  }, [isOverlay, overlayMounted]);
+    if (surfacePhase !== "closing" || !surfaceMounted) return undefined;
+    fallbackFrameRef.current = requestAnimationFrame(() => {
+      if (transitionDurationMs(surfaceRef.current) === 0) finishClose();
+    });
+    return () => {
+      if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
+    };
+  }, [finishClose, surfaceMounted, surfacePhase]);
 
   useEffect(() => {
     if (!open) {
@@ -168,34 +202,99 @@ export function DetailSplitPane({
       label: "关闭详情",
       exclusive,
       onClose: closeDetail,
-      onToggleExclusive: canInline ? toggleExclusive : undefined,
+      onToggleExclusive: canInline ? (exclusive ? exitExclusive : enterExclusive) : undefined,
     });
     return () => setDetailAction(null);
-  }, [canInline, closeDetail, exclusive, open, setDetailAction, toggleExclusive]);
+  }, [canInline, closeDetail, enterExclusive, exclusive, exitExclusive, open, setDetailAction]);
+
+  // Focus the surface on entering either exclusive or narrow page mode.
+  useEffect(() => {
+    if (!open || !surfaceMounted || !isSurfaceOpen) return undefined;
+    const enteringExclusive = exclusive && surfaceMode === "exclusive";
+    const enteringOverlay = isOverlay && surfaceMode === "overlay";
+    if (!enteringExclusive && !enteringOverlay) return undefined;
+    const frame = requestAnimationFrame(() => surfaceRef.current?.focus?.());
+    return () => cancelAnimationFrame(frame);
+  }, [exclusive, isOverlay, isSurfaceOpen, open, surfaceMode, surfaceMounted]);
+
+  // Explicit exclusive exit restores the focus that was active before entry.
+  useEffect(() => {
+    if (exclusive || !restoreExclusiveFocusRef.current) return undefined;
+    restoreExclusiveFocusRef.current = false;
+    const frame = requestAnimationFrame(() => {
+      const element = openFocusRef.current;
+      if (element && document.contains(element) && !element.closest("[inert]")) element.focus?.();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [exclusive]);
 
   useEffect(() => {
-    if (wasOpenRef.current && !open) requestAnimationFrame(() => triggerRef?.current?.focus?.());
+    if (wasOpenRef.current && !open) {
+      const frame = requestAnimationFrame(() => {
+        if (closeFocusToTriggerRef.current) {
+          closeFocusToTriggerRef.current = false;
+          triggerRef?.current?.focus?.();
+        }
+      });
+      wasOpenRef.current = open;
+      return () => cancelAnimationFrame(frame);
+    }
     wasOpenRef.current = open;
+    return undefined;
   }, [open, triggerRef]);
 
   useEffect(() => {
-    if (!open || (!isOverlay && !exclusive)) return undefined;
+    if (!open || (!exclusive && !isOverlay)) return undefined;
     const handleEscape = (event) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
-      closeDetail();
+      if (exclusive) exitExclusive();
+      else closeDetail();
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [closeDetail, exclusive, isOverlay, open]);
+  }, [closeDetail, exitExclusive, exclusive, isOverlay, open]);
+
+  useEffect(() => {
+    if (!open || !exclusive) return undefined;
+    const getFocusable = () => {
+      const titlebarControls = [...document.querySelectorAll("[data-detail-titlebar-control]")];
+      const surfaceControls = surfaceRef.current ? [...surfaceRef.current.querySelectorAll(FOCUSABLE_SELECTOR)] : [];
+      return [...titlebarControls, ...surfaceControls].filter((element, index, items) => items.indexOf(element) === index && !element.disabled && isVisible(element));
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Tab") return;
+      const focusable = getFocusable();
+      if (!focusable.length) {
+        event.preventDefault();
+        surfaceRef.current?.focus?.();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !focusable.includes(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !focusable.includes(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    const handleFocusIn = (event) => {
+      if (surfaceRef.current?.contains(event.target) || event.target.closest?.("[data-detail-titlebar-control]")) return;
+      surfaceRef.current?.focus?.();
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+    };
+  }, [exclusive, open]);
 
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    if (inlineCloseTimerRef.current) clearTimeout(inlineCloseTimerRef.current);
-    if (exclusiveCloseTimerRef.current) clearTimeout(exclusiveCloseTimerRef.current);
-    if (overlayCloseTimerRef.current) clearTimeout(overlayCloseTimerRef.current);
-    if (exclusiveFrameRef.current) cancelAnimationFrame(exclusiveFrameRef.current);
-    if (overlayFrameRef.current) cancelAnimationFrame(overlayFrameRef.current);
+    if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
   }, []);
 
   const commitWidth = (nextWidth) => {
@@ -210,13 +309,13 @@ export function DetailSplitPane({
   const resizeFromClientX = (clientX) => {
     const bounds = containerRef.current?.getBoundingClientRect();
     if (!bounds) return;
-    const requestedWidth = bounds.right - clientX;
-    commitWidth(requestedWidth);
+    commitWidth(bounds.right - clientX);
   };
 
   const onPointerDown = (event) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
+    setIsResizing(true);
     event.currentTarget.setPointerCapture?.(event.pointerId);
     resizeFromClientX(event.clientX);
   };
@@ -226,34 +325,102 @@ export function DetailSplitPane({
     resizeFromClientX(event.clientX);
   };
 
+  const onPointerUp = (event) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setIsResizing(false);
+  };
+
   const onKeyDown = (event) => {
     const step = event.shiftKey ? 48 : 16;
     if (event.key === "ArrowLeft") { event.preventDefault(); commitWidth(constrainedWidth + step); }
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      commitWidth(constrainedWidth - step);
-    }
+    if (event.key === "ArrowRight") { event.preventDefault(); commitWidth(constrainedWidth - step); }
     if (event.key === "Home") { event.preventDefault(); commitWidth(MIN_DETAIL_WIDTH); }
     if (event.key === "End") { event.preventDefault(); commitWidth(maxDetailWidth(containerWidth || INLINE_MIN_WIDTH)); }
   };
 
-  const mainWidth = isInline ? `calc(100% - ${constrainedWidth + 1}px)` : "100%";
-  return <div ref={containerRef} className={cn("relative flex h-full min-h-0 min-w-0", className)}>
-    <div className={cn("t-resize min-h-0 min-w-0 shrink-0 overflow-hidden", (exclusive || isOverlay) && "pointer-events-none")} style={{ width: mainWidth }} aria-hidden={exclusive || isOverlay}>{children}</div>
-    {exclusiveMounted && <section aria-hidden={!exclusiveVisible} className={cn("absolute inset-0 z-10 flex min-h-0 min-w-0 overflow-hidden transition-opacity duration-200 ease-out motion-reduce:transition-none", exclusiveVisible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0")}>
-      <div aria-hidden="true" className={cn("absolute inset-0 bg-black/10 transition-opacity duration-200 ease-out motion-reduce:transition-none", exclusiveVisible ? "opacity-100" : "opacity-0")} />
-      <div className={cn("t-modal absolute inset-4 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-none bg-popover text-popover-foreground ring-1 ring-foreground/10 shadow-2xl md:inset-6 lg:inset-8", exclusiveVisible ? "is-open" : "is-closing")}>
-        <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6"><div className={cn("mx-auto w-full", contentWidthClassName[contentWidth] || contentWidthClassName.standard)}>{detail}</div></div>
+  const handleSurfaceTransitionEnd = (event) => {
+    if (event.target !== event.currentTarget || event.propertyName !== "opacity") return;
+    if (surfacePhaseRef.current === "closing") finishClose();
+  };
+
+  const mainInert = exclusive || isOverlay;
+  const mainWidth = isInline ? `calc(100% - ${constrainedWidth}px)` : "100%";
+  const surfaceStyle = surfaceMode === "inline"
+    ? {
+      left: isSurfaceOpen ? `calc(100% - ${constrainedWidth}px)` : "100%",
+      right: 0,
+      top: 0,
+      bottom: 0,
+      opacity: isSurfaceOpen ? 1 : 0,
+      transform: isSurfaceOpen ? "translateX(0)" : "translateX(8px)",
+    }
+    : surfaceMode === "exclusive"
+      ? {
+        left: exclusiveInset,
+        right: exclusiveInset,
+        top: exclusiveInset,
+        bottom: exclusiveInset,
+        opacity: isSurfaceOpen ? 1 : 0,
+        transform: isSurfaceOpen ? "scale(1)" : "scale(0.96)",
+      }
+      : {
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        opacity: isSurfaceOpen ? 1 : 0,
+        transform: isSurfaceOpen ? "translateX(0)" : "translateX(16px)",
+      };
+
+  return <div ref={containerRef} data-resizing={isResizing || undefined} className={cn("detail-split-pane relative flex h-full min-h-0 min-w-0", className)}>
+    <div className={cn("t-resize min-h-0 min-w-0 shrink-0 overflow-hidden", mainInert && "pointer-events-none")} style={{ width: mainWidth }} inert={mainInert || undefined} aria-hidden={mainInert || undefined}>{children}</div>
+    {surfaceMounted && surfaceMode === "exclusive" && <button type="button" aria-hidden="true" tabIndex={-1} className={cn("absolute inset-0 z-10 cursor-default border-0 bg-black/10 p-0 outline-none transition-opacity", isSurfaceOpen ? "opacity-100" : "pointer-events-none opacity-0")} onClick={exitExclusive} />}
+    {surfaceMounted && <div
+      ref={surfaceRef}
+      data-detail-surface
+      data-detail-closing={surfacePhase === "closing" ? "true" : undefined}
+      role={surfaceMode === "exclusive" ? "dialog" : "region"}
+      aria-modal={surfaceMode === "exclusive" ? "true" : undefined}
+      aria-hidden={!isSurfaceOpen || undefined}
+      aria-label={detailLabel}
+      tabIndex={-1}
+      className={cn(
+        "detail-surface absolute z-10 flex min-h-0 min-w-0 flex-col overflow-hidden outline-none",
+        surfaceMode === "exclusive" && "t-modal",
+        surfaceMode === "exclusive" && surfacePhase === "open" && "is-open",
+        surfaceMode === "exclusive" && surfacePhase === "closing" && "is-closing",
+        surfaceMode === "inline" && "border-l border-border bg-background",
+        surfaceMode === "exclusive" && "rounded-none bg-popover text-popover-foreground ring-1 ring-foreground/10 shadow-2xl",
+        surfaceMode === "overlay" && "bg-background",
+        !isSurfaceOpen && "pointer-events-none",
+      )}
+      style={surfaceStyle}
+      onTransitionEnd={handleSurfaceTransitionEnd}
+      onTransitionCancel={(event) => {
+        if (event.target !== event.currentTarget || event.propertyName !== "opacity") return;
+        requestAnimationFrame(() => {
+          if (surfacePhaseRef.current === "closing" && transitionDurationMs(surfaceRef.current) === 0) finishClose();
+        });
+      }}
+    >
+      <div className={cn("min-h-0 flex-1 overflow-y-auto", surfaceMode === "inline" ? "w-full" : "p-4 md:p-6")}>
+        <div className={cn("w-full", surfaceMode === "inline" ? "" : cn("mx-auto", contentWidthClassName[contentWidth] || contentWidthClassName.standard))}>{detail}</div>
       </div>
-    </section>}
-    {inlineMounted && <div className="t-resize relative flex min-h-0 shrink-0 overflow-visible" style={{ width: inlineVisible ? constrainedWidth + 1 : 0 }}>
-      <div role="separator" aria-orientation="vertical" aria-label="调整详情面板宽度" aria-valuemin={MIN_DETAIL_WIDTH} aria-valuemax={maxDetailWidth(containerWidth || INLINE_MIN_WIDTH)} aria-valuenow={constrainedWidth} tabIndex={0} className={cn("absolute inset-y-0 -left-2 z-10 w-4 touch-none cursor-ew-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-200 after:ease-linear hover:after:bg-sidebar-border focus-visible:after:bg-ring", !inlineVisible && "pointer-events-none opacity-0")} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onKeyDown={onKeyDown} />
-      <div className="t-resize min-h-0 shrink-0 overflow-hidden" style={{ width: inlineVisible ? constrainedWidth : 0 }}>
-        <aside className={cn("min-h-0 shrink-0 overflow-y-auto bg-background transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", !inlineVisible && "pointer-events-none translate-x-2 opacity-0")} style={{ width: constrainedWidth }}>{detail}</aside>
-      </div>
+      {surfaceMode === "inline" && <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整详情面板宽度"
+        aria-valuemin={MIN_DETAIL_WIDTH}
+        aria-valuemax={maxDetailWidth(containerWidth || INLINE_MIN_WIDTH)}
+        aria-valuenow={constrainedWidth}
+        tabIndex={0}
+        className={cn("absolute inset-y-0 -left-2 z-20 w-4 touch-none cursor-ew-resize outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent after:transition-colors after:duration-200 after:ease-linear hover:after:bg-sidebar-border focus-visible:after:bg-ring", !isSurfaceOpen && "pointer-events-none opacity-0")}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onKeyDown={onKeyDown}
+      />}
     </div>}
-    {overlayMounted && <section role="region" aria-label="详情页面" aria-hidden={!overlayVisible} className={cn("absolute inset-0 z-10 min-h-0 min-w-0 overflow-y-auto bg-background transition-transform duration-200 ease-out motion-reduce:transition-none", overlayVisible ? "translate-x-0" : "pointer-events-none translate-x-4")}>
-      <div className="min-h-full p-4 md:p-6"><div className={cn("mx-auto w-full", contentWidthClassName[contentWidth] || contentWidthClassName.standard)}>{detail}</div></div>
-    </section>}
   </div>;
 }
