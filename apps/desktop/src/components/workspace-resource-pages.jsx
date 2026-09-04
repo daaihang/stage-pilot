@@ -15,7 +15,8 @@ import { useWindowDetail } from "@/components/window-detail-context";
 import { appStore } from "@/lib/app-store";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { createOrganizationContact, createResource, createVenueSpace, deleteOrganizationContact, deleteResource, deleteVenueSpace, getResource, listOrganizationContacts, listProgramTypes, listVenueTypes, listResource, listVenueSpaces, updateResource, resourceDefinitions } from "@/lib/resource-api";
-import { resourcePath, workspacePath } from "@/lib/navigation";
+import { ResourceTypeManagementPanel } from "@/components/resource-type-management-panel";
+import { resourcePath, resourceTypePanelPath, workspacePath } from "@/lib/navigation";
 
 const configs = {
   programs: { icon: FileMusic, primary: "name", kind: "program_type_id", label: "节目类型", defaults: [], fields: ["name", "program_type_id", "default_duration_seconds", "tags", "description", "technical_notes", "status"] },
@@ -39,7 +40,7 @@ function subtitle(type, item, types) { const cfg = configs[type]; const kind = t
 
 function CreateResourceDialog({ workspace, type, open, onOpenChange, programTypes, onCreated }) { const cfg = configs[type]; const [name, setName] = useState(""); const [kind, setKind] = useState(""); const [busy, setBusy] = useState(false); useEffect(() => { if (open) { setName(""); setKind(type === "programs" ? "" : selectOptions(type, programTypes)[0]?.[0] || ""); } }, [open, type]); useEffect(() => { if (open && type === "programs" && kind && !programTypes.some((item) => item.id === kind && item.is_active)) setKind(""); }, [kind, open, programTypes, type]); const submit = async (event) => { event.preventDefault(); if (!name.trim()) return notify.error(`请输入${resourceDefinitions[type].singular}名称`); const body = type === "programs" ? { name: name.trim(), program_type_id: kind || null } : type === "equipment" ? { name: name.trim(), category: kind, quantity_total: 1, ownership: "owned" } : { [cfg.primary]: name.trim(), [cfg.kind]: kind }; setBusy(true); const toast = notify.loading(`正在创建${resourceDefinitions[type].singular}…`); try { const item = await createResource(workspace.id, type, body); notify.success(`已创建${resourceDefinitions[type].singular}`, { id: toast }); onOpenChange(false); onCreated(item); } catch (error) { notify.error(`创建${resourceDefinitions[type].singular}失败`, { id: toast, description: error?.message || String(error) }); } finally { setBusy(false); } }; const options = selectOptions(type, programTypes); const selectItems = options.map(([value, label]) => ({ value: value || "unassigned", label })); return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={submit}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={selectItems} value={kind || "unassigned"} onValueChange={(value) => setKind(value === "unassigned" ? "" : value)}><SelectTrigger className="h-9 w-full"><SelectValue placeholder={`选择${cfg.label}`} /></SelectTrigger><SelectContent>{options.map(([value, label]) => <SelectItem key={value || "unassigned"} value={value || "unassigned"}>{label}</SelectItem>)}</SelectContent></Select></div><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "创建中…" : "创建"}</Button></div></form></DialogContent></Dialog>; }
 
-export function WorkspaceResourcePage({ workspace, resourceType, selectedResourceId }) {
+export function WorkspaceResourcePage({ workspace, resourceType, selectedResourceId, panel }) {
   const type = resourceType;
   const cfg = configs[type];
   const navigate = useNavigate();
@@ -54,26 +55,33 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   const [types, setTypes] = useState([]);
   const requestSequence = useRef(0);
   const triggerRefs = useRef(new Map());
+  const typePanelTriggerRef = useRef(null);
   const reloadRef = useRef(null);
   const { registerDetail, setDetailOpen } = useWindowDetail();
+  const typePanelOpen = panel === "types";
 
   useEffect(() => {
-    if (!selectedResourceId) {
+    if (!selectedResourceId && !typePanelOpen) {
       setDetailOpen(false, { announce: false });
       return undefined;
     }
-    const triggerRef = triggerRefs.current.get(selectedResourceId) || { current: null };
-    triggerRefs.current.set(selectedResourceId, triggerRef);
+    const triggerRef = typePanelOpen
+      ? typePanelTriggerRef
+      : (triggerRefs.current.get(selectedResourceId) || { current: null });
+    if (selectedResourceId) triggerRefs.current.set(selectedResourceId, triggerRef);
     const unregister = registerDetail({
-      key: `workspace-resource:${workspace.id}:${type}:${selectedResourceId}`,
-      detailLabel: `${resourceDefinitions[type].singular}详情`,
-      getDetail: () => <ResourceDetailPanel workspace={workspace} resourceType={type} resourceId={selectedResourceId} onClose={() => navigate(workspacePath(workspace.id, type))} onUpdated={() => reloadRef.current?.().catch(() => {})} onDeleted={async () => { await reloadRef.current?.().catch(() => {}); navigate(workspacePath(workspace.id, type)); }} />,
+      key: typePanelOpen ? `workspace-resource-types:${workspace.id}:${type}` : `workspace-resource:${workspace.id}:${type}:${selectedResourceId}`,
+      detailLabel: typePanelOpen ? `${resourceDefinitions[type].singular}类型` : `${resourceDefinitions[type].singular}详情`,
+      getDetail: () => typePanelOpen
+        ? <ResourceTypeManagementPanel workspace={workspace} resourceType={type} onChanged={() => reloadRef.current?.().catch(() => {})} />
+        : <ResourceDetailPanel workspace={workspace} resourceType={type} resourceId={selectedResourceId} onClose={() => navigate(workspacePath(workspace.id, type))} onUpdated={() => reloadRef.current?.().catch(() => {})} onDeleted={async () => { await reloadRef.current?.().catch(() => {}); navigate(workspacePath(workspace.id, type)); }} />,
       triggerRef,
       storageKey: "detailPane:workspace-resources:v1",
+      onClose: () => navigate(workspacePath(workspace.id, type)),
     });
     setDetailOpen(true, { announce: false });
     return unregister;
-  }, [navigate, registerDetail, selectedResourceId, setDetailOpen, type, workspace]);
+  }, [navigate, panel, registerDetail, selectedResourceId, setDetailOpen, type, typePanelOpen, workspace]);
 
   const reload = useCallback(async () => {
     const requestId = ++requestSequence.current;
@@ -157,7 +165,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
       ? <button ref={itemRef} type="button" className={`text-left ${selected ? "ring-2 ring-primary" : ""}`} onClick={() => openResource(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openResource(item); } }} aria-current={selected ? "page" : undefined}><Card className="cursor-pointer hover:bg-muted/40"><CardHeader><div className="flex justify-between"><div className="flex size-10 items-center justify-center bg-primary/10 text-primary"><Icon className="size-5" /></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></div><CardTitle className="truncate text-base">{item[cfg.primary]}</CardTitle><CardDescription className="truncate">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</CardDescription></CardHeader><CardContent>{item.tags?.slice(0, 3).map((tag) => <Badge key={tag} variant="outline" className="mr-1">{tag}</Badge>)}</CardContent></Card></button>
       : <button ref={itemRef} type="button" className={`flex w-full items-center gap-3 border-b px-3 py-3 text-left last:border-b-0 hover:bg-muted/40 ${selected ? "bg-muted/60" : ""}`} onClick={() => openResource(item)} aria-current={selected ? "page" : undefined}><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><Icon className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{item[cfg.primary]}</p><p className="mt-1 flex items-center truncate text-xs text-muted-foreground">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 shrink-0 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</p></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></button>;
   };
-  const headerActions = type === "programs" ? <Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "program-types"))}><ListMusic />管理节目类型</Button> : type === "venues" ? <Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "venue-types"))}><ListMusic />管理场地类型</Button> : null;
+  const headerActions = type === "programs" ? <Button ref={typePanelTriggerRef} variant="outline" onClick={() => navigate(resourceTypePanelPath(workspace.id, type))}><ListMusic />管理节目类型</Button> : type === "venues" ? <Button ref={typePanelTriggerRef} variant="outline" onClick={() => navigate(resourceTypePanelPath(workspace.id, type))}><MapPin />管理场地类型</Button> : null;
 
   return <>
     <ResourcePage title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} headerActions={headerActions} onCreate={canManage(workspace) ? () => setOpen(true) : undefined} loading={loading} empty={empty}>

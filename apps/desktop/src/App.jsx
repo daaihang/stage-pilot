@@ -23,8 +23,6 @@ import { ProductionSettingsPage } from "@/components/production-settings-page";
 import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
 import { ProductionInvitePage } from "@/components/production-invite-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
-import { ProgramTypeManagementPage } from "@/components/program-type-management-page";
-import { VenueTypeManagementPage } from "@/components/venue-type-management-page";
 import { FileTypeManagementPage } from "@/components/file-type-management-page";
 import { WorkspaceResourcePage } from "@/components/workspace-resource-pages";
 import { FilesPage } from "@/components/files-page";
@@ -44,7 +42,7 @@ import { AuthDialog } from "@/components/auth-dialog";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { login as loginAccount, register as registerAccount, onSessionInvalidated, restoreSession, logout as logoutAccount } from "@/lib/auth";
 import { appStore, getRecentContexts, isTauriRuntime, saveRecentContext } from "@/lib/app-store";
-import { accountPath, buildBreadcrumbItems, directProductionPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
+import { accountPath, buildBreadcrumbItems, directProductionPath, matchStagePilotRoute, productionPath, resourceTypePanelPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
 import { TitlebarBreadcrumbs } from "@/components/titlebar-breadcrumbs";
 import { createProduction, getAccessibleProduction, toProductionSummary, updateAccessibleProduction, updateProduction } from "@/lib/production-api";
 
@@ -67,6 +65,14 @@ const contextMenuItems = [
   { label: "关于 StagePilot", action: "about", icon: Info },
   { label: "退出", action: "quit", icon: Power },
 ];
+
+function LegacyResourceTypeRedirect({ workspace, resourceType }) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    navigate(resourceTypePanelPath(workspace.id, resourceType), { replace: true });
+  }, [navigate, resourceType, workspace.id]);
+  return <AppLoading />;
+}
 
 function TitlebarMenu({ menu, onAction }) {
   const renderItem = (item, index) => {
@@ -499,11 +505,11 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "productions") content = <ProductionsPage route={route} workspace={workspace} productions={productions} loading={!productionsLoaded} onCreate={createCreation} />;
   else if (route.mode === "workspace" && route.page === "members") content = <WorkspaceMembersPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "roles") content = <WorkspaceRolesPage route={route} workspace={workspace} />;
-  else if (route.mode === "workspace" && route.page === "program-types") content = <ProgramTypeManagementPage workspace={workspace} key={workspace.id} />;
-  else if (route.mode === "workspace" && route.page === "venue-types") content = <VenueTypeManagementPage workspace={workspace} key={workspace.id} />;
+  else if (route.mode === "workspace" && route.page === "program-types") content = <LegacyResourceTypeRedirect workspace={workspace} resourceType="programs" />;
+  else if (route.mode === "workspace" && route.page === "venue-types") content = <LegacyResourceTypeRedirect workspace={workspace} resourceType="venues" />;
   else if (route.mode === "workspace" && route.page === "file-types") content = <FileTypeManagementPage workspace={workspace} key={workspace.id} />;
-  else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} selectedResourceId={route.resourceId} />;
-  else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} selectedResourceId={route.resourceId} />;
+  else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} selectedResourceId={route.resourceId} panel={route.panel} />;
+  else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} selectedResourceId={route.resourceId} panel={route.panel} />;
   else if (route.mode === "workspace" && route.page === "settings") content = <WorkspaceSettingsPage workspaceId={workspace.id} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} />;
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;

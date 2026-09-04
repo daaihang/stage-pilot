@@ -6,6 +6,7 @@ const WindowDetailContext = createContext(null);
 
 export function WindowDetailProvider({ children, contentWidth = "standard", onModalActiveChange }) {
   const [registration, setRegistration] = useState(null);
+  const registrationRef = useRef(null);
   const [detailOpen, setDetailOpenState] = useState(false);
   const detailOpenRef = useRef(false);
   const [detailPresentation, setDetailPresentation] = useState("overlay");
@@ -13,9 +14,13 @@ export function WindowDetailProvider({ children, contentWidth = "standard", onMo
   const [detailModalActive, setDetailModalActive] = useState(false);
 
   const registerDetail = useCallback((request) => {
+    registrationRef.current = request;
     setRegistration(request);
     return () => {
-      setRegistration((current) => current?.key === request.key ? null : current);
+      if (registrationRef.current?.key === request.key) {
+        registrationRef.current = null;
+        setRegistration(null);
+      }
       detailOpenRef.current = false;
       setDetailOpenState(false);
       setDetailPresentation("overlay");
@@ -30,6 +35,7 @@ export function WindowDetailProvider({ children, contentWidth = "standard", onMo
     detailOpenRef.current = next;
     setDetailOpenState(next);
     if (!next) {
+      registrationRef.current?.onClose?.();
       setDetailPresentation("overlay");
       setDetailModalActive(false);
       onModalActiveChange?.(false);

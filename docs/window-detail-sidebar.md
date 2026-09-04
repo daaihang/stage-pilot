@@ -36,6 +36,7 @@ PageChromeProvider
 
 ```jsx
 const detailTriggerRef = useRef(null);
+const navigate = useNavigate();
 const { detailOpen, registerDetail, setDetailOpen } = useWindowDetail();
 
 useEffect(() => registerDetail({
@@ -44,6 +45,8 @@ useEffect(() => registerDetail({
   getDetail: () => <LayoutInspector />,
   triggerRef: detailTriggerRef,
   storageKey: "detailPane:window:v1",
+  // 可选：标题栏、Escape 或覆盖模式关闭时同步页面 URL。
+  onClose: () => navigate("/current-page"),
 }), [registerDetail]);
 
 <Button
@@ -54,6 +57,8 @@ useEffect(() => registerDetail({
   {detailOpen ? "关闭详情" : "打开详情"}
 </Button>
 ```
+
+`registerDetail` 的 `onClose` 是可选回调。需要由路由驱动详情状态的页面应在这里移除详情相关的路径段或查询参数；普通详情页可以省略它。关闭回调只负责同步页面状态，不应重复触发打开/关闭 Toast。
 
 页面不得再自行维护以下状态：`open`、详情宽度、嵌入/覆盖/独占模式。页面只读取 `detailOpen` 或 `detailPresentation` 来更新入口文案、详情说明等页面特有文本。
 
@@ -70,6 +75,8 @@ useEffect(() => registerDetail({
 - 场地空间、机构联系人属于详情面板内的子资源，继续通过父资源 API 操作并显示共享 Toast。
 
 新增或修改资源库页面时，优先复用 `ResourceDetailPanel` 和现有资源配置；不要重新引入 `ResourceDetailPage`、页面私有抽屉或第二套详情布局。
+
+资源库类型管理也使用同一个窗口详情 surface：节目库和场地库的“管理类型”操作导航到当前资源列表的 `?panel=types`，并注册 `ResourceTypeManagementPanel`。类型管理与资源详情互斥，关闭类型面板只移除 `panel` 参数并保留列表的搜索、筛选和视图状态。旧的 `/library/program-types` 与 `/library/venue-types` 地址仅作为兼容入口，跳转到对应资源库的类型面板；它们不再作为左侧侧栏项目。
 
 `DetailSplitPane` 只保留一个 `[data-detail-surface]` 详情节点。嵌入、独占和覆盖是同一节点的三种几何状态；页面详情内容不得为了不同宽度再渲染第二份。
 

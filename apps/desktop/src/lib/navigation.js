@@ -68,6 +68,10 @@ export function resourcePath(workspaceId, resourceType, resourceId) {
   return `/w/${workspaceId}/${paths[resourceType]}/${resourceId}`;
 }
 
+export function resourceTypePanelPath(workspaceId, resourceType) {
+  return `${workspacePath(workspaceId, resourceType)}?panel=types`;
+}
+
 export function productionPath(workspaceId, productionId, page = "overview") {
   return `/w/${workspaceId}/p/${productionId}/${productionPages[page] ? page : "overview"}`;
 }
@@ -146,13 +150,16 @@ export function matchStagePilotRoute(pathname, search = "") {
   const resourceMatch = pathname.match(/^\/w\/([^/]+)\/library\/(programs|people|organizations|venues|equipment)\/([^/]+)\/?$/);
   if (resourceMatch) {
     const [, workspaceId, page, resourceId] = resourceMatch;
-    return { mode: "workspace", workspaceId, productionId: null, page, resourceId, meta: workspacePages[page] };
+    const panelValue = new URLSearchParams(search).get("panel");
+    const panel = !resourceId && panelValue === "types" ? panelValue : null;
+    return { mode: "workspace", workspaceId, productionId: null, page, resourceId, panel: panel === "types" ? panel : null, meta: workspacePages[page] };
   }
   const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|program-types|file-types|venue-types|people|organizations|venues|equipment))\/?$/);
   if (!workspaceMatch) return null;
   const [, workspaceId, routePage, libraryPage] = workspaceMatch;
   const page = libraryPage || routePage;
-  return { mode: "workspace", workspaceId, productionId: null, page, meta: workspacePages[page] };
+  const panel = new URLSearchParams(search).get("panel");
+  return { mode: "workspace", workspaceId, productionId: null, page, panel: panel === "types" ? panel : null, meta: workspacePages[page] };
 }
 
 export function formatProductionDate(production) {
