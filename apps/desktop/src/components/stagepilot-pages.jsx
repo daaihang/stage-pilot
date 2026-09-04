@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { CalendarDays, Clock3, RefreshCw, ServerOff, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +13,10 @@ export function PageBreadcrumbs({ route, workspace, production }) {
   const items = buildBreadcrumbItems({ route, workspace, production });
   if (!items.length) return null;
   return <Breadcrumb><BreadcrumbList>
-    {items.map((item, index) => <BreadcrumbItem key={`${item.label}-${index}`}>
+    {items.map((item, index) => <Fragment key={`${item.label}-${index}`}>
       {index > 0 && <BreadcrumbSeparator />}
-      {item.current || !item.to ? <BreadcrumbPage>{item.label}</BreadcrumbPage> : <BreadcrumbLink render={<Link to={item.to} />}>{item.label}</BreadcrumbLink>}
-    </BreadcrumbItem>)}
+      <BreadcrumbItem>{item.current || !item.to ? <BreadcrumbPage>{item.label}</BreadcrumbPage> : <BreadcrumbLink render={<Link to={item.to} />}>{item.label}</BreadcrumbLink>}</BreadcrumbItem>
+    </Fragment>)}
   </BreadcrumbList></Breadcrumb>;
 }
 
