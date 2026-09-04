@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Breadcrumb,
@@ -76,35 +76,37 @@ export function TitlebarBreadcrumbs({ items = [], title, showTitle = true }) {
         <div
           className={cn(
             "pointer-events-none absolute left-1/2 top-1/2 flex h-6 max-w-full -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden whitespace-nowrap",
-            swapClassName(false),
           )}
           aria-hidden={swap.value || !collapsedLabel}
         >
-          <span className="max-w-[min(40vw,320px)] truncate px-1 text-xs font-medium">{collapsedLabel}</span>
+          <span className={cn("max-w-[min(40vw,320px)] truncate px-1 text-xs font-medium", swapClassName(false))}>{collapsedLabel}</span>
         </div>
         <div
           className={cn(
             "pointer-events-auto flex h-6 max-w-full items-center justify-center overflow-hidden whitespace-nowrap",
-            swapClassName(true),
           )}
           aria-hidden={!swap.value}
         >
-          <Breadcrumb>
-            <BreadcrumbList className="flex-nowrap whitespace-nowrap">
+          <div className={cn(swapClassName(true), swap.value !== true && "pointer-events-none")}>
+            <Breadcrumb>
+              <BreadcrumbList className="flex-nowrap whitespace-nowrap">
               {items.map((item, index) => (
-                <BreadcrumbItem key={`${item.label}-${index}`}>
+                <Fragment key={`${item.label}-${index}`}>
                   {index > 0 && <BreadcrumbSeparator />}
-                  {item.current || !item.to ? (
-                    <BreadcrumbPage className="max-w-[min(20vw,220px)] truncate">{item.label}</BreadcrumbPage>
-                  ) : (
-                    <BreadcrumbLink render={<Link to={item.to} />} className="max-w-[min(20vw,220px)] truncate">
-                      {item.label}
-                    </BreadcrumbLink>
-                  )}
-                </BreadcrumbItem>
+                  <BreadcrumbItem>
+                    {item.current || !item.to ? (
+                      <BreadcrumbPage className="max-w-[min(20vw,220px)] truncate">{item.label}</BreadcrumbPage>
+                    ) : (
+                      <BreadcrumbLink render={<Link to={item.to} />} className="max-w-[min(20vw,220px)] truncate">
+                        {item.label}
+                      </BreadcrumbLink>
+                    )}
+                  </BreadcrumbItem>
+                </Fragment>
               ))}
-            </BreadcrumbList>
-          </Breadcrumb>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
         </div>
       </div>
     </div>
