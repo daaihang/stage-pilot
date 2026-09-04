@@ -394,10 +394,10 @@
 
 /* One project-wide Sonner: a flush, full-width bottom notification bar. */
 .app-sonner[data-x-position="center"][data-y-position="bottom"] {
-  left: 0;
+  left: var(--app-sonner-left, 0px);
   right: 0;
   bottom: 0;
-  width: 100%;
+  width: var(--width);
   transform: none;
   gap: 0;
 }
@@ -420,7 +420,7 @@
   gap: 0.5rem;
   padding: 0.375rem 0.5rem;
   color: var(--popover-foreground);
-  background: var(--background);
+  background: var(--popover);
   border-top: 1px solid var(--border);
   border-radius: 0;
   box-shadow: none;

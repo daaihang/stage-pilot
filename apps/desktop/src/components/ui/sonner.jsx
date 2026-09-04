@@ -14,6 +14,7 @@ import {
 } from "@remixicon/react"
 
 import { cn } from "@/lib/utils"
+import { useSidebar } from "@/components/ui/sidebar"
 
 const notificationIcons = {
   success: RiCheckboxCircleLine,
@@ -112,7 +113,7 @@ function createNotification(type, message, options = {}) {
     ),
     {
       id,
-      duration: duration ?? (type === "error" ? 6000 : type === "loading" ? Infinity : 4000),
+      duration: duration ?? (type === "error" ? 4500 : type === "warning" ? 3500 : type === "loading" ? Infinity : 2800),
     }
   )
 }
@@ -142,6 +143,8 @@ const notify = {
 
 function AppSonner() {
   const { theme = "system" } = useTheme()
+  const { open, isMobile } = useSidebar()
+  const sidebarOffset = !isMobile && (open ? "var(--sidebar-width)" : "var(--sidebar-width-icon)")
 
   return (
     <Sonner
@@ -150,8 +153,11 @@ function AppSonner() {
       offset={0}
       visibleToasts={1}
       closeButton={false}
-      className="app-sonner"
-      style={{ "--width": "100%" }}
+      className="app-sonner font-sans"
+      style={{
+        "--width": sidebarOffset ? `calc(100% - ${sidebarOffset})` : "100%",
+        "--app-sonner-left": sidebarOffset || "0px",
+      }}
     />
   )
 }
