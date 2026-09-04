@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { CalendarRange, ClipboardList, ListTree, Pencil, Play, Square, XCircle } from "lucide-react";
-import { PageBreadcrumbs } from "@/components/stagepilot-pages";
 import { ProductionPageHeader } from "@/components/production-page-shell";
 import { PlanningToolbar } from "@/components/planning/planning-toolbar";
 import { PlanningEmptyState } from "@/components/planning/planning-empty-state";
@@ -13,6 +12,9 @@ import { Badge } from "@/components/ui/badge";
 import { appStore } from "@/lib/app-store";
 import { formatProductionInstant, listProductionOccurrences, listRehearsalSessions, updateProductionOccurrence, updateRehearsalSession } from "@/lib/production-api";
 import { notify } from "@/components/ui/sonner";
+
+// Page hierarchy is rendered by the global title bar.
+const PageBreadcrumbs = () => null;
 
 const configs = { occurrences: { title: "场次", description: "管理正式演出、预演和加演场。", icon: ListTree, views: [{ id: "list", label: "列表" }, { id: "grid", label: "网格" }, { id: "calendar", label: "日历" }], defaultView: "list", emptyTitle: "暂无场次安排", emptyDescription: "场次数据接入后，正式演出、预演和加演场会显示在这里。", type: "occurrence" }, rehearsals: { title: "彩排", description: "管理普通彩排、技术彩排和带妆彩排。", icon: ClipboardList, views: [{ id: "calendar", label: "日历" }, { id: "agenda", label: "议程" }], defaultView: "calendar", emptyTitle: "暂无彩排安排", emptyDescription: "彩排、技术彩排和带妆彩排接入后，会显示在这里。", type: "rehearsal" }, schedule: { title: "总日程", description: "查看装台、彩排、演出和撤台等制作时间安排。", icon: CalendarRange, views: [{ id: "list", label: "列表" }, { id: "calendar", label: "日历" }, { id: "timeline", label: "时间轴" }], defaultView: "calendar", emptyTitle: "暂无排程安排", emptyDescription: "后续可以在这里管理装台、彩排、演出和撤台等时间。", type: "schedule" } };
 const kindLabels = { preview: "预演", performance: "正式演出", encore: "加演", rehearsal: "普通彩排", technical: "技术彩排", dress: "带妆彩排", cue_to_cue: "Cue-to-cue", other: "其他" };

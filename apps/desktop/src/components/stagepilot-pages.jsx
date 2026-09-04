@@ -1,27 +1,15 @@
-import { Fragment, useMemo } from "react";
+import { useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { CalendarDays, Clock3, RefreshCw, ServerOff, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { buildBreadcrumbItems, formatProductionDate, productionPath, workspacePath } from "@/lib/navigation";
+import { formatProductionDate, productionPath, workspacePath } from "@/lib/navigation";
 import { productionStatusLabel } from "@/lib/production-api";
 import { ProductionsViewSwitcher } from "@/components/productions/productions-view";
 
-export function PageBreadcrumbs({ route, workspace, production }) {
-  const items = buildBreadcrumbItems({ route, workspace, production });
-  if (!items.length) return null;
-  return <Breadcrumb><BreadcrumbList>
-    {items.map((item, index) => <Fragment key={`${item.label}-${index}`}>
-      {index > 0 && <BreadcrumbSeparator />}
-      <BreadcrumbItem>{item.current || !item.to ? <BreadcrumbPage>{item.label}</BreadcrumbPage> : <BreadcrumbLink render={<Link to={item.to} />}>{item.label}</BreadcrumbLink>}</BreadcrumbItem>
-    </Fragment>)}
-  </BreadcrumbList></Breadcrumb>;
-}
-
-function PageIntro({ route, workspace, production, action }) {
-  return <div className="space-y-4"><PageBreadcrumbs route={route} workspace={workspace} production={production} /><div className="flex items-start justify-between gap-4"><div className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{route.meta.title}</h1><p className="text-sm text-muted-foreground">{route.meta.description}</p></div>{action}</div></div>;
+function PageIntro({ route, action }) {
+  return <div className="space-y-4"><div className="flex items-start justify-between gap-4"><div className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{route.meta.title}</h1><p className="text-sm text-muted-foreground">{route.meta.description}</p></div>{action}</div></div>;
 }
 
 export function WorkspaceHome({ route, workspace, productions, onCreate, onViewProductions, onOpenCalendar }) {
