@@ -14,30 +14,54 @@ const TEXT_SWAP_DURATION = 150;
 
 function useTextSwap(target) {
   const [state, setState] = useState({ value: target, phase: "idle" });
+  const stateRef = useRef(state);
   const timerRef = useRef(null);
+  const frameRefs = useRef([]);
+
+  const cancelPending = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    timerRef.current = null;
+    frameRefs.current.forEach((frame) => window.cancelAnimationFrame(frame));
+    frameRefs.current = [];
+  };
+
+  const commit = (next) => {
+    stateRef.current = next;
+    setState(next);
+  };
 
   useEffect(() => {
-    if (target === state.value) return undefined;
-
-    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (reducedMotion) {
-      setState({ value: target, phase: "idle" });
+    cancelPending();
+    const current = stateRef.current;
+    if (target === current.value) {
+      if (current.phase !== "idle") commit({ value: target, phase: "idle" });
       return undefined;
     }
 
-    setState((current) => ({ ...current, phase: "exit" }));
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reducedMotion) {
+      commit({ value: target, phase: "idle" });
+      return undefined;
+    }
+
+    commit({ value: current.value, phase: "exit" });
     timerRef.current = window.setTimeout(() => {
-      setState({ value: target, phase: "enter-start" });
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setState({ value: target, phase: "idle" }));
+      timerRef.current = null;
+      commit({ value: target, phase: "enter-start" });
+      const firstFrame = requestAnimationFrame(() => {
+        const secondFrame = requestAnimationFrame(() => {
+          frameRefs.current = [];
+          commit({ value: target, phase: "idle" });
+        });
+        frameRefs.current = [secondFrame];
       });
+      frameRefs.current = [firstFrame];
     }, TEXT_SWAP_DURATION);
 
     return () => {
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-      timerRef.current = null;
+      cancelPending();
     };
-  }, [state.value, target]);
+  }, [target]);
 
   return state;
 }
