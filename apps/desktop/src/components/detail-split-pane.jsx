@@ -118,7 +118,7 @@ export function DetailSplitPane({ children, detail, open, onOpenChange, storageK
       <div role="separator" aria-orientation="vertical" aria-label="向右拖动以退出独占详情" tabIndex={0} className="absolute inset-y-0 left-0 z-10 w-px cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20" onKeyDown={handleExclusiveKeyDown} />
       <div className="min-h-full p-4 md:p-6"><div className={cn("mx-auto w-full", contentWidthClassName[contentWidth] || contentWidthClassName.standard)}>{detail}</div></div>
     </section>}
-    {!exclusive && <StageResizableGroup orientation="horizontal" className={cn("min-h-0", !isInline && "hidden")} onLayout={handleLayout}>
+    {!exclusive && <StageResizableGroup direction="horizontal" className={cn("min-h-0", !isInline && "hidden")} onLayout={handleLayout}>
       <StageResizablePanel defaultSize={100 - defaultDetailPercentage} minSize={(MIN_MAIN_WIDTH / Math.max(containerWidth, INLINE_MIN_WIDTH)) * 100}>{children}</StageResizablePanel>
       <StageResizableHandle withHandle onKeyDown={handleHandleKeyDown} aria-label="调整详情面板宽度" />
       <StageResizablePanel defaultSize={defaultDetailPercentage} minSize={(MIN_DETAIL_WIDTH / Math.max(containerWidth, INLINE_MIN_WIDTH)) * 100} maxSize={(maxDetailWidth(containerWidth || INLINE_MIN_WIDTH) / Math.max(containerWidth, INLINE_MIN_WIDTH)) * 100}>{detail}</StageResizablePanel>
