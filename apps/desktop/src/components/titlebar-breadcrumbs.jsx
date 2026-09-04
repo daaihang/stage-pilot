@@ -69,7 +69,7 @@ function useTextSwap(target) {
 }
 
 function useTitlebarSafeArea(rootRef) {
-  const [safeArea, setSafeArea] = useState({ left: TITLEBAR_SAFE_GAP, right: TITLEBAR_SAFE_GAP, width: 0 });
+  const [safeArea, setSafeArea] = useState({ width: 0, availableWidth: 0 });
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -80,10 +80,13 @@ function useTitlebarSafeArea(rootRef) {
       const headerRect = header.getBoundingClientRect();
       const leftRect = root.previousElementSibling?.getBoundingClientRect();
       const spacerRect = root.nextElementSibling?.getBoundingClientRect();
-      const left = Math.max(TITLEBAR_SAFE_GAP, (leftRect?.right || headerRect.left) - headerRect.left + TITLEBAR_SAFE_GAP);
-      const right = Math.max(TITLEBAR_SAFE_GAP, headerRect.right - (spacerRect?.right || headerRect.right) + TITLEBAR_SAFE_GAP);
-      const width = Math.max(0, headerRect.width - left - right);
-      setSafeArea((current) => current.left === left && current.right === right && current.width === width ? current : { left, right, width });
+      const center = (headerRect.left + headerRect.right) / 2;
+      const leftBoundary = (leftRect?.right || headerRect.left) + TITLEBAR_SAFE_GAP;
+      const rightBoundary = (spacerRect?.right || headerRect.right) - TITLEBAR_SAFE_GAP;
+      const availableWidth = Math.max(0, rightBoundary - leftBoundary);
+      const halfWidth = Math.max(0, Math.min(center - leftBoundary, rightBoundary - center));
+      const width = Math.min(headerRect.width, halfWidth * 2);
+      setSafeArea((current) => current.width === width && current.availableWidth === availableWidth ? current : { width, availableWidth });
     };
 
     update();
@@ -122,8 +125,8 @@ export function TitlebarBreadcrumbs({ items = [], title, showTitle = true }) {
   return (
     <div
       ref={rootRef}
-      className="titlebar-breadcrumbs pointer-events-none absolute inset-y-0 z-10 flex h-full min-w-0 items-center justify-center"
-      style={{ "--titlebar-breadcrumb-max": `${labelMaxWidth}px`, "--titlebar-safe-left": `${safeArea.left}px`, "--titlebar-safe-right": `${safeArea.right}px` }}
+      className="titlebar-breadcrumbs pointer-events-none absolute left-1/2 inset-y-0 z-10 flex h-full min-w-0 -translate-x-1/2 items-center justify-center"
+      style={{ "--titlebar-breadcrumb-max": `${labelMaxWidth}px`, "--titlebar-safe-width": `${safeArea.width}px` }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onClickCapture={() => {

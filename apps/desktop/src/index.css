@@ -144,8 +144,7 @@
 }
 
 .titlebar-breadcrumbs {
-    left: var(--titlebar-safe-left, 12px);
-    right: var(--titlebar-safe-right, 12px);
+    width: var(--titlebar-safe-width, 0px);
 }
 
 .titlebar-breadcrumb-list {
