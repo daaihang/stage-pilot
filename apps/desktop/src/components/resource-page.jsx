@@ -6,9 +6,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // 卡片型页面根据网格容器的实际宽度决定列数，而不是绑定窗口 viewport 断点。
-// 260px 是卡片保持可读性的最小宽度；卡片最大 400px，避免少量项目铺成横幅。
+// 260px 只作为卡片保持可读性的最小宽度；卡片填满自己的网格轨道，不再设置最大宽度。
 // 活动页、资源库和场次网格共用该规则，因此右侧详情收窄主区时会自然重排。
-export const resourceGridClassName = "grid justify-items-start gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))] [&>*]:w-full [&>*]:max-w-[400px]";
+export const resourceGridClassName = "grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))] [&>*]:w-full [&>*]:min-w-0";
 
 export function ResourcePage({
   title,
@@ -28,15 +28,15 @@ export function ResourcePage({
   summary,
   children,
 }) {
-  return <div className="space-y-5">
+  return <div className="@container/resource-page min-w-0 space-y-5">
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="text-sm text-muted-foreground">{description}</p></div>
       <div className="flex shrink-0 items-center gap-2">{headerActions}{onCreate && <Button onClick={onCreate}><Plus />{createLabel}</Button>}</div>
     </div>
-    <div className="flex flex-col gap-2 border-y py-3 xl:flex-row xl:items-center">
+    <div className="flex flex-col gap-2 border-y py-3 @min-[64rem]/resource-page:flex-row @min-[64rem]/resource-page:items-center">
       <div className="relative min-w-56 flex-1"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={search.value} onChange={(event) => search.onChange(event.target.value)} placeholder={search.placeholder || `搜索${title}…`} className="pl-8" aria-label={`搜索${title}`} /></div>
       <div className="flex min-w-0 flex-wrap items-center gap-2"><SlidersHorizontal className="size-3.5 text-muted-foreground" />{filters}</div>
-      {showViewToggle && <Tabs value={view} onValueChange={onViewChange} className="xl:ml-auto"><TabsList>{[["list", "列表", LayoutList], ["grid", "网格", LayoutGrid]].map(([id, label, Icon]) => <TabsTrigger key={id} value={id} aria-label={`${label}视图`}><Icon />{label}</TabsTrigger>)}</TabsList></Tabs>}
+      {showViewToggle && <Tabs value={view} onValueChange={onViewChange} className="@min-[64rem]/resource-page:ml-auto"><TabsList>{[["list", "列表", LayoutList], ["grid", "网格", LayoutGrid]].map(([id, label, Icon]) => <TabsTrigger key={id} value={id} aria-label={`${label}视图`}><Icon />{label}</TabsTrigger>)}</TabsList></Tabs>}
     </div>
     <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>共 {count} 项</span>{summary}{search.value && <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => search.onChange("")}>清除搜索<X className="size-3" /></button>}</div>
     {loading ? (loadingContent || <ResourceSkeleton />) : empty ? <ResourceEmpty {...empty} /> : children}
