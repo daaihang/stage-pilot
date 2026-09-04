@@ -9,6 +9,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { appStore } from "@/lib/app-store";
 import { formatProductionDate, productionPath, productionStatus } from "@/lib/navigation";
 import { ProductionGantt } from "@/components/productions/production-gantt";
+import { resourceGridClassName } from "@/components/resource-page";
 
 const views = [["list", "列表", LayoutList], ["grid", "网格", LayoutGrid], ["gantt", "甘特图", GanttChartSquare]];
 const viewStoreKey = (workspaceId) => `productionsView:${workspaceId}`;
@@ -23,6 +24,11 @@ function ProductionMeta({ production }) {
   </>;
 }
 
+function ProductionStatusBadge({ production }) {
+  const status = productionStatus[production.status] ?? productionStatus.active;
+  return <Badge className={status.className} variant="secondary">{status.label}</Badge>;
+}
+
 function ProductionRow({ workspace, production }) {
   return <Link to={productionPath(workspace.id, production.id)} className="group flex items-center gap-4 border p-3 transition-colors hover:bg-muted/40">
     <div className="flex size-9 shrink-0 items-center justify-center bg-primary/10 text-primary"><FolderKanban className="size-4" /></div>
@@ -33,9 +39,9 @@ function ProductionRow({ workspace, production }) {
 
 function ProductionCard({ workspace, production }) {
   return <Link to={productionPath(workspace.id, production.id)} className="group"><Card className="h-full transition-colors group-hover:border-primary/50"><CardHeader>
-    <div className="flex items-start justify-between gap-3"><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><FolderKanban className="size-4" /></div><ProductionMeta production={production} /></div>
-    <CardTitle className="pt-2 text-base">{production.name}</CardTitle>
-    <CardDescription className="space-y-1"><span className="flex items-center gap-1"><CalendarDays className="size-3" />{formatProductionDate(production)}</span><span className="flex items-center gap-1"><MapPin className="size-3" />{production.venue || "地点待定"}</span></CardDescription>
+    <div className="flex items-start justify-between gap-3"><div className="flex size-9 shrink-0 items-center justify-center bg-primary/10 text-primary"><FolderKanban className="size-4" /></div><ProductionStatusBadge production={production} /></div>
+    <CardTitle className="line-clamp-2 pt-2 text-base">{production.name}</CardTitle>
+    <CardDescription className="space-y-1"><span className="flex min-w-0 items-center gap-1"><CalendarDays className="size-3 shrink-0" />{formatProductionDate(production)}</span><span className="flex min-w-0 items-center gap-1"><MapPin className="size-3 shrink-0" /><span className="truncate">{production.venue || "地点待定"}</span></span></CardDescription>
   </CardHeader><CardContent className="flex items-center gap-1 text-sm text-primary">打开活动<ArrowRight className="size-3 transition-transform group-hover:translate-x-0.5" /></CardContent></Card></Link>;
 }
 
@@ -70,7 +76,7 @@ export function ProductionsViewSwitcher({ workspace, productions, loading = fals
   return <div className="space-y-4">
     <Tabs value={view} onValueChange={changeView}><TabsList>{views.map(([id, label, Icon]) => <TabsTrigger key={id} value={id}><Icon className="size-3.5" />{label}</TabsTrigger>)}</TabsList></Tabs>
     {view === "list" && <div className="space-y-2">{productions.map((production) => <ProductionRow key={production.id} workspace={workspace} production={production} />)}</div>}
-    {view === "grid" && <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{productions.map((production) => <ProductionCard key={production.id} workspace={workspace} production={production} />)}</div>}
+    {view === "grid" && <div className={resourceGridClassName}>{productions.map((production) => <ProductionCard key={production.id} workspace={workspace} production={production} />)}</div>}
     {view === "gantt" && <ProductionGantt productions={productions} onOpenProduction={(productionId) => navigate(productionPath(workspace.id, productionId))} />}
   </div>;
 }
