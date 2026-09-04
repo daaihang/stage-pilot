@@ -11,7 +11,7 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const triggerRef = useRef(null);
-  const canWrite = ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
+  const canWrite = !production.isCreationSession && (["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit"));
   const { open } = useProductionLocationDetail({ workspace, production, triggerRef, onChanged });
 
   useEffect(() => {

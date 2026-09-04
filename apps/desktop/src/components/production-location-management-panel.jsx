@@ -76,6 +76,7 @@ export function ProductionLocationManagementPanel({ workspace, production, onCha
     setLoading(true);
     try {
       setLocations(await listProductionLocations(production.id));
+      setError("");
     } catch (nextError) {
       setLocations([]);
       setError(nextError?.message || String(nextError));
