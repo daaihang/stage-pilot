@@ -158,6 +158,39 @@ func (app *application) updateProductionLocation(w http.ResponseWriter, r *http.
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var currentVenueID string
+	if err = tx.QueryRow(r.Context(), `SELECT venue_id FROM production_locations WHERE id=$1 AND workspace_id=$2 AND production_id=$3 FOR UPDATE`, id, a.WorkspaceID, a.ProductionID).Scan(&currentVenueID); err == pgx.ErrNoRows {
+		resourceNotFound(w, "活动地点")
+		return
+	} else if err != nil {
+		serverError(w, err)
+		return
+	}
+	targetVenueID := currentVenueID
+	if in.VenueID != nil && strings.TrimSpace(*in.VenueID) != "" {
+		targetVenueID = strings.TrimSpace(*in.VenueID)
+	}
+	if in.VenueID != nil || in.VenueSpaceID != nil {
+		var active bool
+		if err = tx.QueryRow(r.Context(), `SELECT status='active' FROM venues WHERE workspace_id=$1 AND id=$2 AND deleted_at IS NULL`, a.WorkspaceID, targetVenueID).Scan(&active); err == pgx.ErrNoRows || !active {
+			errorJSON(w, 400, "invalid_input", "场地不存在或已归档")
+			return
+		} else if err != nil {
+			serverError(w, err)
+			return
+		}
+		if in.VenueSpaceID != nil && strings.TrimSpace(*in.VenueSpaceID) != "" {
+			var ok bool
+			if err = tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM venue_spaces WHERE workspace_id=$1 AND venue_id=$2 AND id=$3 AND deleted_at IS NULL)`, a.WorkspaceID, targetVenueID, *in.VenueSpaceID).Scan(&ok); err != nil {
+				serverError(w, err)
+				return
+			}
+			if !ok {
+				errorJSON(w, 400, "invalid_input", "场地空间不属于该场地")
+				return
+			}
+		}
+	}
 	if in.IsPrimary != nil && *in.IsPrimary {
 		if _, err = tx.Exec(r.Context(), `UPDATE production_locations SET is_primary=FALSE,updated_at=NOW() WHERE workspace_id=$1 AND production_id=$2`, a.WorkspaceID, a.ProductionID); err != nil {
 			serverError(w, err)
