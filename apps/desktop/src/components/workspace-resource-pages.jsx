@@ -101,7 +101,7 @@ export function WorkspaceResourcePage({ workspace, resourceType }) {
     (type === "venues" ? listVenueTypes(workspace.id) : listProgramTypes(workspace.id)).then((result) => {
       if (active) setTypes(result.items);
     }).catch((nextError) => {
-      if (active) notify.error("无法加载节目类型", { description: nextError?.message || String(nextError) });
+      if (active) notify.error(type === "venues" ? "无法加载场地类型" : "无法加载节目类型", { description: nextError?.message || String(nextError) });
     });
     return () => { active = false; };
   }, [type, workspace.id]);
@@ -260,7 +260,7 @@ export function ResourceDetailPage({ workspace, resourceType, resourceId }) {
     (type === "venues" ? listVenueTypes(workspace.id) : listProgramTypes(workspace.id))
       .then((result) => { if (active) setTypes(result.items); })
       .catch((error) => {
-        if (active) notify.error("无法加载节目类型", { description: error?.message || String(error) });
+        if (active) notify.error(type === "venues" ? "无法加载场地类型" : "无法加载节目类型", { description: error?.message || String(error) });
       });
     return () => { active = false; };
   }, [workspace.id, type, resourceId]);

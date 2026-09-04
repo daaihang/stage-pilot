@@ -4,6 +4,7 @@ export const workspacePages = {
   calendar: { title: "日历", description: "从时间维度查看活动、彩排和执行计划。" },
   programs: { title: "节目库", description: "沉淀可在不同活动中复用的长期节目资产。" },
   "program-types": { title: "节目类型", description: "管理当前工作空间的节目类型、排序和使用情况。" },
+  "venue-types": { title: "场地类型", description: "管理当前工作空间的场地类型、排序和使用情况。" },
   "file-types": { title: "文件类型", description: "管理当前工作空间各类资产的文件分类。" },
   people: { title: "人员", description: "管理艺人、工作人员和其他长期联系人。" },
   organizations: { title: "机构", description: "管理品牌、学校、合作方和供应商资料。" },
