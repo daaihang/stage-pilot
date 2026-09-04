@@ -43,15 +43,44 @@ func TestCreateProductionRecordsWorkspaceAndCreator(t *testing.T) {
 	if created["created_by"] != uid {
 		t.Fatalf("created_by = %v, want %v", created["created_by"], uid)
 	}
-	if created["status"] != productionStatusDraft {
-		t.Fatalf("status = %v, want draft", created["status"])
+	if created["status"] != productionStatusActive {
+		t.Fatalf("status = %v, want active", created["status"])
 	}
 	if created["timezone"] != "Asia/Shanghai" {
 		t.Fatalf("default timezone = %v, want Asia/Shanghai", created["timezone"])
 	}
+	var creatorRole string
+	if err := app.db.QueryRow(t.Context(), `SELECT role_key FROM production_memberships WHERE production_id=$1 AND user_id=$2 AND status='active'`, created["id"].(string), uid).Scan(&creatorRole); err != nil {
+		t.Fatalf("creator membership missing: %v", err)
+	}
+	if creatorRole != "producer" {
+		t.Fatalf("creator role = %s, want producer", creatorRole)
+	}
 	// start_at 正确保存并返回（AC-P11）。
 	if _, err := time.Parse(time.RFC3339Nano, created["start_at"].(string)); err != nil {
 		t.Fatalf("start_at not RFC3339: %v", created["start_at"])
+	}
+}
+
+func TestProductionRejectsDraftStatus(t *testing.T) {
+	app := newIntegrationApp(t)
+	uid := createTestUser(t, app, "prod-no-draft-create-"+newID()+"@example.test")
+	token := issueTestToken(t, app, uid)
+	workspace := createWorkspaceFor(t, app, token, "拒绝草稿状态工作空间")
+	workspaceID := workspace["id"].(string)
+
+	if recorder := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/productions", map[string]any{
+		"name": "不应创建的草稿活动", "status": "draft",
+	}); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("draft create status = %d body = %s, want 400", recorder.Code, recorder.Body.String())
+	}
+
+	created := createProductionFor(t, app, token, workspaceID, "正式活动", "", "")
+	productionID := created["id"].(string)
+	if recorder := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/productions/"+productionID, map[string]any{
+		"status": "draft",
+	}); recorder.Code != http.StatusBadRequest {
+		t.Fatalf("draft patch status = %d body = %s, want 400", recorder.Code, recorder.Body.String())
 	}
 }
 

@@ -237,6 +237,11 @@ func (app *application) createProduction(w http.ResponseWriter, r *http.Request)
 		serverError(w, err)
 		return
 	}
+	if _, err := app.db.Exec(r.Context(), `INSERT INTO production_memberships (id,production_id,user_id,role_key,status,invited_by)
+		VALUES ($1,$2,$3,'producer','active',$3)`, newID(), productionID, access.UserID); err != nil {
+		serverError(w, err)
+		return
+	}
 	created, err := app.findProduction(r.Context(), access.WorkspaceID, productionID)
 	if err != nil {
 		serverError(w, err)
@@ -308,6 +313,10 @@ func (app *application) updateProduction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	access := currentProductionAccess(r)
+	if in.Status != nil && *in.Status == productionStatusArchived && !access.Permissions[productionArchive] {
+		errorJSON(w, http.StatusForbidden, "production_forbidden", "只有 Producer 或工作空间管理者可以归档活动")
+		return
+	}
 	if in.Name != nil || in.Description != nil || in.Timezone != nil || in.StartAt != nil || in.EndAt != nil || in.Status != nil {
 		name, description, timezone, startAt, endAt, status, ok := func() (string, string, string, *time.Time, *time.Time, string, bool) {
 			current, err := app.findProduction(r.Context(), access.WorkspaceID, access.ProductionID)

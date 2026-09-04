@@ -1,0 +1,2 @@
+-- The backfill is intentionally not reversible: removing these rows would
+-- revoke access that may have been explicitly relied upon after migration.
