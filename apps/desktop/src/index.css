@@ -143,6 +143,33 @@
         opacity var(--modal-close-dur) var(--modal-ease);
 }
 
+.titlebar-breadcrumbs {
+    left: var(--titlebar-safe-left, 12px);
+    right: var(--titlebar-safe-right, 12px);
+}
+
+.titlebar-breadcrumb-list {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: nowrap;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.titlebar-breadcrumb-list > li {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.titlebar-breadcrumb-label {
+    display: block;
+    min-width: 0;
+    max-width: var(--titlebar-breadcrumb-max, 220px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .t-text-swap,
     .t-resize,
