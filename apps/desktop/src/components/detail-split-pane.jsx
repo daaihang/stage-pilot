@@ -64,12 +64,11 @@ export function DetailSplitPane({ children, detail, open, onOpenChange, storageK
       label: "关闭详情",
       exclusive,
       onClose: () => { setExclusive(false); onOpenChange(false); },
-      onToggleExclusive: canInline ? () => setExclusive((current) => {
-        const next = !current;
-        if (next) notify.info("详情已独占工作区");
-        else notify.info("已退出独占详情");
-        return next;
-      }) : undefined,
+      onToggleExclusive: canInline ? () => {
+        const next = !exclusive;
+        setExclusive(next);
+        notify.info(next ? "详情已独占工作区" : "已退出独占详情");
+      } : undefined,
     });
     return () => setDetailAction(null);
   }, [canInline, exclusive, onOpenChange, open, setDetailAction]);
@@ -91,7 +90,7 @@ export function DetailSplitPane({ children, detail, open, onOpenChange, storageK
     persistWidth(next);
     onDetailWidthChange?.(next);
   };
-  const closeDetail = () => { setExclusive(false); onOpenChange(false); notify.info("右侧详情已关闭"); };
+  const closeDetail = () => { setExclusive(false); onOpenChange(false); };
   const handleLayout = (layout) => {
     if (!isInline || !Array.isArray(layout) || layout.length < 2 || !containerWidth) return;
     const nextWidth = (layout[1] / 100) * containerWidth;
