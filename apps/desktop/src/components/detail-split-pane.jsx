@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
+import { usePageChrome } from "@/components/page-chrome";
 
 const MIN_DETAIL_WIDTH = 320;
 const DEFAULT_DETAIL_WIDTH = 420;
@@ -33,9 +34,13 @@ export function DetailSplitPane({
   const containerRef = useRef(null);
   const splitterRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const inlineCloseTimerRef = useRef(null);
   const wasOpenRef = useRef(open);
   const [containerWidth, setContainerWidth] = useState(0);
   const [detailWidth, setDetailWidth] = useState(DEFAULT_DETAIL_WIDTH);
+  const [inlineMounted, setInlineMounted] = useState(false);
+  const [inlineVisible, setInlineVisible] = useState(false);
+  const { setDetailAction } = usePageChrome();
 
   const isInline = open && containerWidth >= INLINE_MIN_WIDTH;
   const constrainedWidth = clampDetailWidth(detailWidth, containerWidth || INLINE_MIN_WIDTH);
@@ -74,12 +79,34 @@ export function DetailSplitPane({
   }, [isInline, onPresentationChange, open]);
 
   useEffect(() => {
+    if (isInline) {
+      if (inlineCloseTimerRef.current) clearTimeout(inlineCloseTimerRef.current);
+      setInlineMounted(true);
+      requestAnimationFrame(() => setInlineVisible(true));
+      return undefined;
+    }
+    setInlineVisible(false);
+    if (inlineMounted) inlineCloseTimerRef.current = setTimeout(() => setInlineMounted(false), 180);
+    return undefined;
+  }, [inlineMounted, isInline]);
+
+  useEffect(() => {
+    if (!open) {
+      setDetailAction(null);
+      return undefined;
+    }
+    setDetailAction({ label: "关闭详情", onClose: () => onOpenChange(false) });
+    return () => setDetailAction(null);
+  }, [onOpenChange, open, setDetailAction]);
+
+  useEffect(() => {
     if (wasOpenRef.current && !open) requestAnimationFrame(() => triggerRef?.current?.focus?.());
     wasOpenRef.current = open;
   }, [open, triggerRef]);
 
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (inlineCloseTimerRef.current) clearTimeout(inlineCloseTimerRef.current);
   }, []);
 
   const setWidth = (nextWidth, { persist = true } = {}) => {
@@ -120,7 +147,7 @@ export function DetailSplitPane({
 
   return <div ref={containerRef} className={cn("relative flex h-full min-h-0 min-w-0", className)}>
     <div className="min-h-0 min-w-0 flex-1">{children}</div>
-    {isInline && <>
+    {inlineMounted && <div className="flex min-h-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none" style={{ width: inlineVisible ? constrainedWidth + 1 : 0 }}>
       <div
         ref={splitterRef}
         role="separator"
@@ -130,17 +157,17 @@ export function DetailSplitPane({
         aria-valuemax={Math.min(MAX_DETAIL_WIDTH, Math.floor(containerWidth * 0.45), containerWidth - MIN_MAIN_WIDTH)}
         aria-valuenow={constrainedWidth}
         tabIndex={0}
-        className="relative z-10 w-px shrink-0 cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20"
+        className={cn("relative z-10 w-px shrink-0 cursor-col-resize bg-border opacity-100 outline-none transition-opacity duration-150 before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20 motion-reduce:transition-none", !inlineVisible && "pointer-events-none opacity-0")}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onKeyDown={onKeyDown}
       />
-      <aside className="min-h-0 shrink-0 overflow-y-auto bg-background" style={{ width: constrainedWidth }}>
+      <aside className={cn("min-h-0 shrink-0 overflow-y-auto bg-background opacity-100 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", !inlineVisible && "pointer-events-none translate-x-2 opacity-0")} style={{ width: constrainedWidth }}>
         {detail}
       </aside>
-    </>}
+    </div>}
     {open && !isInline && <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full max-w-none border-l shadow-none sm:w-[min(30rem,100vw)] sm:max-w-none" showCloseButton={false}>
+      <SheetContent side="right" overlayClassName="top-[var(--app-titlebar-height)] bottom-0" className="top-[var(--app-titlebar-height)] bottom-0 h-auto w-full max-w-none border-l shadow-none sm:w-[min(30rem,100vw)] sm:max-w-none" showCloseButton={false}>
         <SheetHeader className="sr-only"><SheetTitle>详情面板</SheetTitle><SheetDescription>当前选中内容的详情。</SheetDescription></SheetHeader>
         {detail}
       </SheetContent>
