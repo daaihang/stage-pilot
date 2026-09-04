@@ -56,7 +56,7 @@ func (app *application) resolveVenueType(ctx context.Context, workspaceID string
 	return resolved, key, nil
 }
 
-func (app *application) listVenueTypes(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyListVenueTypes(w http.ResponseWriter, r *http.Request) {
 	a := resourceAccess(r)
 	where := []string{"v.workspace_id=$1", "v.deleted_at IS NULL"}
 	args := []any{a.WorkspaceID}
@@ -89,7 +89,7 @@ func (app *application) listVenueTypes(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, resourceList[venueType]{Items: out, Total: len(out)})
 }
-func (app *application) createVenueType(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyCreateVenueType(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name, Color string
 		IsActive    *bool `json:"is_active"`
@@ -118,7 +118,7 @@ func (app *application) createVenueType(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, 201, x)
 }
-func (app *application) updateVenueType(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyUpdateVenueType(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name, Color *string
 		IsActive    *bool `json:"is_active"`
@@ -139,9 +139,9 @@ func (app *application) updateVenueType(w http.ResponseWriter, r *http.Request) 
 		serverError(w, err)
 		return
 	}
-	app.listVenueTypes(w, r)
+	app.legacyListVenueTypes(w, r)
 }
-func (app *application) reorderVenueTypes(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyReorderVenueTypes(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Items []struct {
 			ID        string `json:"id"`
@@ -207,9 +207,9 @@ func (app *application) reorderVenueTypes(w http.ResponseWriter, r *http.Request
 		serverError(w, err)
 		return
 	}
-	app.listVenueTypes(w, r)
+	app.legacyListVenueTypes(w, r)
 }
-func (app *application) deleteVenueType(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyDeleteVenueType(w http.ResponseWriter, r *http.Request) {
 	a := resourceAccess(r)
 	id := r.PathValue("venueTypeId")
 	var sys bool

@@ -42,7 +42,7 @@ import { AuthDialog } from "@/components/auth-dialog";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
 import { login as loginAccount, register as registerAccount, onSessionInvalidated, restoreSession, logout as logoutAccount } from "@/lib/auth";
 import { appStore, getRecentContexts, isTauriRuntime, saveRecentContext } from "@/lib/app-store";
-import { accountPath, buildBreadcrumbItems, directProductionPath, matchStagePilotRoute, productionPath, resourceTypePanelPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
+import { accountPath, buildBreadcrumbItems, directProductionPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
 import { TitlebarBreadcrumbs } from "@/components/titlebar-breadcrumbs";
 import { createProduction, getAccessibleProduction, toProductionSummary, updateAccessibleProduction, updateProduction } from "@/lib/production-api";
 
@@ -65,14 +65,6 @@ const contextMenuItems = [
   { label: "关于 StagePilot", action: "about", icon: Info },
   { label: "退出", action: "quit", icon: Power },
 ];
-
-function LegacyResourceTypeRedirect({ workspace, resourceType }) {
-  const navigate = useNavigate();
-  useEffect(() => {
-    navigate(resourceTypePanelPath(workspace.id, resourceType), { replace: true });
-  }, [navigate, resourceType, workspace.id]);
-  return <AppLoading />;
-}
 
 function TitlebarMenu({ menu, onAction }) {
   const renderItem = (item, index) => {
@@ -348,7 +340,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     const next = { ...production, ...patch };
     if (next.plannedStartAt && next.plannedEndAt && new Date(next.plannedEndAt) < new Date(next.plannedStartAt)) {
       notify.error("无法保存活动信息", { description: "结束时间不能早于开始时间。" });
-      return false;
+      return { ok: false, message: "结束时间不能早于开始时间。" };
     }
     const hasMeaningfulInfo = Boolean(
       (next.name?.trim() && next.name.trim() !== (next.defaultName || "活动-0")) ||
@@ -384,7 +376,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
             return true;
           } catch (nextError) {
             notify.error("无法创建活动", { description: nextError instanceof Error ? nextError.message : String(nextError) });
-            return false;
+            return { ok: false, error: nextError };
           } finally {
             creationRequestRef.current = null;
             setCreationRequestPending(false);
@@ -414,7 +406,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
       return true;
     } catch (nextError) {
       notify.error("无法保存活动信息", { description: nextError instanceof Error ? nextError.message : String(nextError) });
-      return false;
+      return { ok: false, error: nextError };
     }
   };
   const updateProductionSettings = async (patch) => {
@@ -505,8 +497,6 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "productions") content = <ProductionsPage route={route} workspace={workspace} productions={productions} loading={!productionsLoaded} onCreate={createCreation} />;
   else if (route.mode === "workspace" && route.page === "members") content = <WorkspaceMembersPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "roles") content = <WorkspaceRolesPage route={route} workspace={workspace} />;
-  else if (route.mode === "workspace" && route.page === "program-types") content = <LegacyResourceTypeRedirect workspace={workspace} resourceType="programs" />;
-  else if (route.mode === "workspace" && route.page === "venue-types") content = <LegacyResourceTypeRedirect workspace={workspace} resourceType="venues" />;
   else if (route.mode === "workspace" && route.page === "file-types") content = <FileTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} selectedResourceId={route.resourceId} panel={route.panel} />;
   else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} selectedResourceId={route.resourceId} panel={route.panel} />;
@@ -523,7 +513,8 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
 
   const resourceDetailLayout = route?.mode === "workspace" && ["programs", "people", "organizations", "venues", "equipment"].includes(route?.page);
   const planningDetailLayout = route?.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route?.page);
-  const contentLayout = resourceDetailLayout || planningDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
+  const productionLocationDetailLayout = route?.mode === "production" && ["overview", "settings"].includes(route?.page);
+  const contentLayout = resourceDetailLayout || planningDetailLayout || productionLocationDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
 
   const handleWorkspaceCreated = async (created) => {
     await adoptCreatedWorkspace(created);

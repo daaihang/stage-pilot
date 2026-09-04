@@ -3,8 +3,6 @@ export const workspacePages = {
   productions: { title: "活动", description: "创建并管理工作空间中的演出与制作活动。" },
   calendar: { title: "日历", description: "从时间维度查看活动、彩排和执行计划。" },
   programs: { title: "节目库", description: "沉淀可在不同活动中复用的长期节目资产。" },
-  "program-types": { title: "节目类型", description: "管理当前工作空间的节目类型、排序和使用情况。" },
-  "venue-types": { title: "场地类型", description: "管理当前工作空间的场地类型、排序和使用情况。" },
   "file-types": { title: "文件类型", description: "管理当前工作空间各类资产的文件分类。" },
   people: { title: "人员", description: "管理艺人、工作人员和其他长期联系人。" },
   organizations: { title: "机构", description: "管理品牌、学校、合作方和供应商资料。" },
@@ -58,7 +56,7 @@ export function workspacePath(workspaceId, page = "home") {
   const paths = {
     home: "home", productions: "productions", calendar: "calendar",
     programs: "library/programs", people: "library/people", organizations: "library/organizations",
-    "program-types": "library/program-types", "file-types": "library/file-types", "venue-types": "library/venue-types", venues: "library/venues", equipment: "library/equipment", files: "files", members: "members", roles: "roles", templates: "templates", settings: "settings",
+    "file-types": "library/file-types", venues: "library/venues", equipment: "library/equipment", files: "files", members: "members", roles: "roles", templates: "templates", settings: "settings",
   };
   return `/w/${workspaceId}/${paths[page] ?? paths.home}`;
 }
@@ -154,7 +152,7 @@ export function matchStagePilotRoute(pathname, search = "") {
     const panel = !resourceId && panelValue === "types" ? panelValue : null;
     return { mode: "workspace", workspaceId, productionId: null, page, resourceId, panel: panel === "types" ? panel : null, meta: workspacePages[page] };
   }
-  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|program-types|file-types|venue-types|people|organizations|venues|equipment))\/?$/);
+  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|file-types|people|organizations|venues|equipment))\/?$/);
   if (!workspaceMatch) return null;
   const [, workspaceId, routePage, libraryPage] = workspaceMatch;
   const page = libraryPage || routePage;

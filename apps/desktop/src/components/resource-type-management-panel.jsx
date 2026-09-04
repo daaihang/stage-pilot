@@ -14,24 +14,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
-import {
-  createProgramType,
-  createVenueType,
-  deleteProgramType,
-  deleteVenueType,
-  listProgramTypes,
-  listVenueTypes,
-  reorderProgramTypes,
-  reorderVenueTypes,
-  updateProgramType,
-  updateVenueType,
-} from "@/lib/resource-api";
+import { createResourceType, deleteResourceType, listResourceTypes, reorderResourceTypes, updateResourceType } from "@/lib/resource-api";
 import { roleAtLeast } from "@/lib/workspace-api";
 import { useUserPreferences } from "@/components/user-preferences-provider";
 import { formatInstantInTimeZone } from "@/lib/timezone";
 
-const DEFINITIONS = {
+export const ResourceTypeDefinition = Object.freeze({
   programs: {
+    resourceType: "programs",
     title: "节目类型",
     description: "管理当前工作空间的节目类型、排序和使用情况。",
     resourceLabel: "节目",
@@ -41,10 +31,11 @@ const DEFINITIONS = {
     usageCountField: "program_count",
     usageQuery: (usage) => (usage === "all" ? {} : { has_programs: usage === "used" ? "true" : "false" }),
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["program_count", "节目数量"], ["updated_at", "更新时间"]],
-    api: { list: listProgramTypes, create: createProgramType, update: updateProgramType, reorder: reorderProgramTypes, remove: deleteProgramType },
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "programs", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "programs", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "programs", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "programs", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "programs", id, options) },
     deletePolicy: "program",
   },
   venues: {
+    resourceType: "venues",
     title: "场地类型",
     description: "管理当前工作空间的场地类型、排序和使用情况。",
     resourceLabel: "场地",
@@ -54,10 +45,10 @@ const DEFINITIONS = {
     usageCountField: "venue_count",
     usageQuery: () => ({}),
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["venue_count", "场地数量"], ["updated_at", "更新时间"]],
-    api: { list: listVenueTypes, create: createVenueType, update: updateVenueType, reorder: reorderVenueTypes, remove: deleteVenueType },
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "venues", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "venues", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "venues", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "venues", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "venues", id, options) },
     deletePolicy: "venue",
   },
-};
+});
 
 const statusFilter = {
   id: "status",
@@ -99,7 +90,7 @@ function gridClassName(canWrite) {
   return `grid min-w-0 items-center gap-2 px-3 sm:gap-3 sm:px-4 ${columns}`;
 }
 
-function TypeDialog({ definition, workspaceId, open, onOpenChange, item, onSaved }) {
+export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange, item, onSaved }) {
   const [form, setForm] = useState({ name: "", color: definition.initialColor, is_active: true, sort_order: 1 });
   const [busy, setBusy] = useState(false);
   const editing = Boolean(item);
@@ -159,7 +150,7 @@ function TypeDialog({ definition, workspaceId, open, onOpenChange, item, onSaved
   );
 }
 
-function DeleteTypeDialog({ definition, workspace, item, types, open, onOpenChange, onDeleted }) {
+export function ResourceTypeDeleteDialog({ definition, workspace, item, types, open, onOpenChange, onDeleted }) {
   const [strategy, setStrategy] = useState("delete");
   const [replacementTypeId, setReplacementTypeId] = useState("");
   const [availableTypes, setAvailableTypes] = useState([]);
@@ -202,7 +193,7 @@ function DeleteTypeDialog({ definition, workspace, item, types, open, onOpenChan
     setBusy(true);
     try {
       if (isDeactivate) await definition.api.update(workspace.id, item.id, { is_active: false });
-      else if (isProgram) await definition.api.remove(workspace.id, item.id, strategy, replacementTypeId);
+      else if (isProgram) await definition.api.remove(workspace.id, item.id, { strategy, replacement_type_id: replacementTypeId });
       else await definition.api.remove(workspace.id, item.id);
       notify.success(isDeactivate ? "节目类型已停用" : `${definition.title}已删除`, { id: toast });
       onOpenChange(false);
@@ -234,7 +225,7 @@ function ManagementSkeleton() {
   return <Card variant="flush"><CardContent className="divide-y p-0">{Array.from({ length: 5 }, (_, index) => <div key={index} className="flex min-h-28 items-center gap-4 px-4 py-4"><Skeleton className="size-8 shrink-0" /><div className="min-w-0 flex-1 space-y-2"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-64 max-w-full" /></div><Skeleton className="hidden h-8 w-20 sm:block" /></div>)}</CardContent></Card>;
 }
 
-function TypeRow({ definition, item, timezone, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
+export function ResourceTypeRow({ definition, item, timezone, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
   const Icon = definition.icon;
   return <SortableItem value={item.id} disabled={!reorderable} className="border-b last:border-b-0"><div className={`${gridClassName(canWrite)} py-3 transition-colors hover:bg-muted/40`}>
     <SortableItemHandle className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={reorderable ? `拖动${item.name}调整排序` : "排序仅在默认排序视图可用"} title={reorderable ? "拖动调整排序" : "清除筛选后可调整排序"}><GripVertical className="size-4" /></SortableItemHandle>
@@ -250,7 +241,7 @@ function TypeRow({ definition, item, timezone, canWrite, reorderable, pendingTog
 }
 
 export function ResourceTypeManagementPanel({ workspace, resourceType, onChanged }) {
-  const definition = DEFINITIONS[resourceType];
+  const definition = ResourceTypeDefinition[resourceType];
   const { timezone } = useUserPreferences();
   const workspaceId = workspace.id;
   const canWrite = roleAtLeast(workspace.role, "admin");
@@ -341,11 +332,11 @@ export function ResourceTypeManagementPanel({ workspace, resourceType, onChanged
 
   return <>
     <ResourcePage title={definition.title} description={definition.description} count={visibleTypes.length} search={{ value: search, onChange: setSearch, placeholder: `搜索${definition.title}…` }} filters={<><ResourceFilters fields={filterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />{sortControls}</>} showViewToggle={false} onCreate={canWrite ? () => setDialog({ type: "create" }) : undefined} createLabel={`新建${definition.title}`} loading={loading} loadingContent={<ManagementSkeleton />} empty={empty} summary={reorderable ? <span className="inline-flex items-center gap-1"><GripVertical className="size-3" />可拖动调整排序</span> : null}>
-      <Card variant="flush"><CardContent className="p-0"><div className={`${gridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}><span aria-hidden="true" /><span className="text-center">位置</span><span aria-hidden="true" /><span aria-hidden="true" /><span>{definition.title}</span><span className="text-right">{definition.resourceLabel}数量</span><span className="hidden text-right lg:block">更新时间</span><span className="whitespace-nowrap text-center">启用状态</span>{canWrite && <span aria-hidden="true" />}</div><Sortable value={visibleTypes} onValueChange={(next) => { if (reorderable) setTypes(next); }} onValueCommit={handleValueCommit} getItemValue={(item) => item.id} strategy="vertical" className="divide-y-0">{visibleTypes.map((item) => <TypeRow key={item.id} definition={definition} item={item} timezone={timezone} canWrite={canWrite} reorderable={reorderable} pendingToggleId={pendingToggleId} onToggle={handleToggle} onEdit={(selected) => setDialog({ type: "edit", item: selected })} onDelete={(selected) => setDialog({ type: "delete", item: selected })} />)}</Sortable></CardContent></Card>
+      <Card variant="flush"><CardContent className="p-0"><div className={`${gridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}><span aria-hidden="true" /><span className="text-center">位置</span><span aria-hidden="true" /><span aria-hidden="true" /><span>{definition.title}</span><span className="text-right">{definition.resourceLabel}数量</span><span className="hidden text-right lg:block">更新时间</span><span className="whitespace-nowrap text-center">启用状态</span>{canWrite && <span aria-hidden="true" />}</div><Sortable value={visibleTypes} onValueChange={(next) => { if (reorderable) setTypes(next); }} onValueCommit={handleValueCommit} getItemValue={(item) => item.id} strategy="vertical" className="divide-y-0">{visibleTypes.map((item) => <ResourceTypeRow key={item.id} definition={definition} item={item} timezone={timezone} canWrite={canWrite} reorderable={reorderable} pendingToggleId={pendingToggleId} onToggle={handleToggle} onEdit={(selected) => setDialog({ type: "edit", item: selected })} onDelete={(selected) => setDialog({ type: "delete", item: selected })} />)}</Sortable></CardContent></Card>
     </ResourcePage>
-    {dialog?.type !== "delete" && <TypeDialog definition={definition} workspaceId={workspaceId} open={dialog?.type === "create" || dialog?.type === "edit"} onOpenChange={(open) => { if (!open) setDialog(null); }} item={dialog?.type === "edit" ? dialog.item : null} onSaved={handleSaved} />}
-    {dialog?.type === "delete" && <DeleteTypeDialog definition={definition} workspace={workspace} item={dialog.item} types={types} open onOpenChange={(open) => { if (!open) setDialog(null); }} onDeleted={handleDeleted} />}
+    {dialog?.type !== "delete" && <ResourceTypeDialog definition={definition} workspaceId={workspaceId} open={dialog?.type === "create" || dialog?.type === "edit"} onOpenChange={(open) => { if (!open) setDialog(null); }} item={dialog?.type === "edit" ? dialog.item : null} onSaved={handleSaved} />}
+    {dialog?.type === "delete" && <ResourceTypeDeleteDialog definition={definition} workspace={workspace} item={dialog.item} types={types} open onOpenChange={(open) => { if (!open) setDialog(null); }} onDeleted={handleDeleted} />}
   </>;
 }
 
-export { DEFINITIONS as resourceTypeManagementDefinitions };
+export const resourceTypeManagementDefinitions = ResourceTypeDefinition;

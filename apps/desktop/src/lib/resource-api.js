@@ -33,22 +33,37 @@ export function getResource(workspaceId, type, id) { return request(`${base(work
 export function createResource(workspaceId, type, payload) { return request(base(workspaceId, resourceDefinitions[type].path), { method: "POST", body: JSON.stringify(payload) }); }
 export function updateResource(workspaceId, type, id, payload) { return request(base(workspaceId, `${resourceDefinitions[type].path}/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
 export function deleteResource(workspaceId, type, id) { return request(base(workspaceId, `${resourceDefinitions[type].path}/${id}`), { method: "DELETE" }); }
-export async function listProgramTypes(workspaceId, filters) {
-  return normalizeResourceList(await request(`${base(workspaceId, "program-types")}${queryString(filters)}`));
+const resourceTypePaths = Object.freeze({ programs: "program-types", venues: "venue-types" });
+function resourceTypePath(resourceType) {
+  const path = resourceTypePaths[resourceType];
+  if (!path) throw new Error(`Unsupported resource type: ${resourceType}`);
+  return path;
 }
-export function createProgramType(workspaceId, payload) { return request(base(workspaceId, "program-types"), { method: "POST", body: JSON.stringify(payload) }); }
-export function updateProgramType(workspaceId, id, payload) { return request(base(workspaceId, `program-types/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
-export function reorderProgramTypes(workspaceId, items) { return request(base(workspaceId, "program-types/order"), { method: "PATCH", body: JSON.stringify({ items }) }); }
+export async function listResourceTypes(workspaceId, resourceType, filters) {
+  return normalizeResourceList(await request(`${base(workspaceId, resourceTypePath(resourceType))}${queryString(filters)}`));
+}
+export function createResourceType(workspaceId, resourceType, payload) { return request(base(workspaceId, resourceTypePath(resourceType)), { method: "POST", body: JSON.stringify(payload) }); }
+export function updateResourceType(workspaceId, resourceType, id, payload) { return request(base(workspaceId, `${resourceTypePath(resourceType)}/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
+export function reorderResourceTypes(workspaceId, resourceType, items) { return request(base(workspaceId, `${resourceTypePath(resourceType)}/order`), { method: "PATCH", body: JSON.stringify({ items }) }); }
+export function deleteResourceType(workspaceId, resourceType, id, options = {}) {
+  return request(base(workspaceId, `${resourceTypePath(resourceType)}/${id}/delete`), { method: "POST", body: JSON.stringify(resourceType === "programs" ? options : {}) });
+}
+
+// Compatibility aliases for callers that still use resource-specific names.
+export function listProgramTypes(workspaceId, filters) { return listResourceTypes(workspaceId, "programs", filters); }
+export function createProgramType(workspaceId, payload) { return createResourceType(workspaceId, "programs", payload); }
+export function updateProgramType(workspaceId, id, payload) { return updateResourceType(workspaceId, "programs", id, payload); }
+export function reorderProgramTypes(workspaceId, items) { return reorderResourceTypes(workspaceId, "programs", items); }
 export function deleteProgramType(workspaceId, id, strategy = "delete", replacementTypeId) {
-  const payload = { strategy };
-  if (replacementTypeId) payload.replacement_type_id = replacementTypeId;
-  return request(base(workspaceId, `program-types/${id}/delete`), { method: "POST", body: JSON.stringify(payload) });
+  const options = { strategy };
+  if (replacementTypeId) options.replacement_type_id = replacementTypeId;
+  return deleteResourceType(workspaceId, "programs", id, options);
 }
-export async function listVenueTypes(workspaceId, filters) { return normalizeResourceList(await request(`${base(workspaceId, "venue-types")}${queryString(filters)}`)); }
-export function createVenueType(workspaceId, payload) { return request(base(workspaceId, "venue-types"), { method: "POST", body: JSON.stringify(payload) }); }
-export function updateVenueType(workspaceId, id, payload) { return request(base(workspaceId, `venue-types/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
-export function reorderVenueTypes(workspaceId, items) { return request(base(workspaceId, "venue-types/order"), { method: "PATCH", body: JSON.stringify({ items }) }); }
-export function deleteVenueType(workspaceId, id) { return request(base(workspaceId, `venue-types/${id}/delete`), { method: "POST", body: JSON.stringify({}) }); }
+export function listVenueTypes(workspaceId, filters) { return listResourceTypes(workspaceId, "venues", filters); }
+export function createVenueType(workspaceId, payload) { return createResourceType(workspaceId, "venues", payload); }
+export function updateVenueType(workspaceId, id, payload) { return updateResourceType(workspaceId, "venues", id, payload); }
+export function reorderVenueTypes(workspaceId, items) { return reorderResourceTypes(workspaceId, "venues", items); }
+export function deleteVenueType(workspaceId, id) { return deleteResourceType(workspaceId, "venues", id); }
 export async function listFileTypes(workspaceId, filters) {
   return normalizeResourceList(await request(`${base(workspaceId, "file-types")}${queryString(filters)}`));
 }

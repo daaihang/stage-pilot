@@ -156,21 +156,13 @@ func (app *application) createWorkspace(w http.ResponseWriter, r *http.Request) 
 // seedWorkspaceDefaults is intentionally idempotent so migrations, retries and
 // workspace creation all use the same initialization semantics.
 func seedWorkspaceDefaults(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
-	if err := seedProgramTypes(ctx, tx, workspaceID, createdBy); err != nil {
+	if err := seedResourceTypes(ctx, tx, workspaceID, createdBy); err != nil {
 		return err
 	}
 	if err := seedFileTypes(ctx, tx, workspaceID, createdBy); err != nil {
 		return err
 	}
-	return seedVenueTypes(ctx, tx, workspaceID, createdBy)
-}
-
-func seedProgramTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
-	_, err := tx.Exec(ctx, `INSERT INTO program_types (id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_by)
-		SELECT md5($1 || ':' || t.key), $1, t.key, t.name, t.color, t.sort_order, TRUE, t.is_active, $2
-		FROM program_type_templates t
-		WHERE NOT EXISTS (SELECT 1 FROM program_types p WHERE p.workspace_id=$1 AND p.system_key=t.key AND p.deleted_at IS NULL)`, workspaceID, createdBy)
-	return err
+	return nil
 }
 
 func seedFileTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
@@ -179,14 +171,6 @@ func seedFileTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string
 		FROM file_type_templates t
 		WHERE NOT EXISTS (SELECT 1 FROM file_types f WHERE f.workspace_id=$1 AND f.scope=t.scope AND f.template_key=t.key AND f.deleted_at IS NULL)
 		ON CONFLICT (id) DO UPDATE SET deleted_at=NULL,is_system_default=TRUE,template_key=EXCLUDED.template_key`, workspaceID, createdBy)
-	return err
-}
-
-func seedVenueTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string) error {
-	_, err := tx.Exec(ctx, `INSERT INTO venue_types (id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_by)
-		SELECT md5($1 || ':' || t.key), $1, t.key, t.name, t.color, t.sort_order, TRUE, t.is_active, $2
-		FROM venue_type_templates t
-		WHERE NOT EXISTS (SELECT 1 FROM venue_types v WHERE v.workspace_id=$1 AND v.system_key=t.key AND v.deleted_at IS NULL)`, workspaceID, createdBy)
 	return err
 }
 

@@ -227,17 +227,11 @@ func validProgramTypeColor(value string) bool {
 }
 
 func programTypeExists(ctx context.Context, query resourceQueryRower, workspaceID, typeID string, activeOnly bool) (bool, error) {
-	condition := "deleted_at IS NULL"
-	if activeOnly {
-		condition += " AND is_active=TRUE"
-	}
-	var exists bool
-	err := query.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM program_types WHERE id=$1 AND workspace_id=$2 AND "+condition+")", typeID, workspaceID).Scan(&exists)
-	return exists, err
+	return resourceTypeExists(ctx, query, programResourceTypeDefinition, workspaceID, typeID, activeOnly)
 }
 
 // Program types
-func (app *application) listProgramTypes(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyListProgramTypes(w http.ResponseWriter, r *http.Request) {
 	access := resourceAccess(r)
 	where := []string{"t.workspace_id=$1", "t.deleted_at IS NULL"}
 	args := []any{access.WorkspaceID}
@@ -303,7 +297,7 @@ func (app *application) listProgramTypes(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
 }
-func (app *application) createProgramType(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyCreateProgramType(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name      string `json:"name"`
 		Color     string `json:"color"`
@@ -339,7 +333,7 @@ func (app *application) createProgramType(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, 201, item)
 }
-func (app *application) updateProgramType(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyUpdateProgramType(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name      *string `json:"name"`
 		Color     *string `json:"color"`
@@ -398,7 +392,7 @@ func (app *application) updateProgramType(w http.ResponseWriter, r *http.Request
 	writeJSON(w, 200, item)
 }
 
-func (app *application) reorderProgramTypes(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyReorderProgramTypes(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Items []struct {
 			ID        string `json:"id"`
@@ -464,10 +458,10 @@ func (app *application) reorderProgramTypes(w http.ResponseWriter, r *http.Reque
 		serverError(w, err)
 		return
 	}
-	app.listProgramTypes(w, r)
+	app.legacyListProgramTypes(w, r)
 }
 
-func (app *application) deleteProgramType(w http.ResponseWriter, r *http.Request) {
+func (app *application) legacyDeleteProgramType(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Strategy          string `json:"strategy"`
 		ReplacementTypeID string `json:"replacement_type_id"`

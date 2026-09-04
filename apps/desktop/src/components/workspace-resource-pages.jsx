@@ -14,7 +14,7 @@ import { ResourceFilters, getResourceFilterConditions } from "@/components/resou
 import { useWindowDetail } from "@/components/window-detail-context";
 import { appStore } from "@/lib/app-store";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
-import { createOrganizationContact, createResource, createVenueSpace, deleteOrganizationContact, deleteResource, deleteVenueSpace, getResource, listOrganizationContacts, listProgramTypes, listVenueTypes, listResource, listVenueSpaces, updateResource, resourceDefinitions } from "@/lib/resource-api";
+import { createOrganizationContact, createResource, createVenueSpace, deleteOrganizationContact, deleteResource, getResource, listOrganizationContacts, listResource, listResourceTypes, listVenueSpaces, updateResource, resourceDefinitions } from "@/lib/resource-api";
 import { ResourceTypeManagementPanel } from "@/components/resource-type-management-panel";
 import { resourcePath, resourceTypePanelPath, workspacePath } from "@/lib/navigation";
 
@@ -130,7 +130,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   useEffect(() => {
     if (!["programs", "venues"].includes(type)) return undefined;
     let active = true;
-    (type === "venues" ? listVenueTypes(workspace.id) : listProgramTypes(workspace.id)).then((result) => {
+    listResourceTypes(workspace.id, type === "venues" ? "venues" : "programs").then((result) => {
       if (active) setTypes(result.items);
     }).catch((nextError) => {
       if (active) notify.error(type === "venues" ? "无法加载场地类型" : "无法加载节目类型", { description: nextError?.message || String(nextError) });
@@ -300,7 +300,7 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
       })
       .finally(() => { if (active) setLoading(false); });
     if (!["programs", "venues"].includes(type)) return () => { active = false; };
-    (type === "venues" ? listVenueTypes(workspace.id) : listProgramTypes(workspace.id))
+    listResourceTypes(workspace.id, type === "venues" ? "venues" : "programs")
       .then((result) => { if (active) setTypes(result.items); })
       .catch((error) => {
         if (active) notify.error(type === "venues" ? "无法加载场地类型" : "无法加载节目类型", { description: error?.message || String(error) });
