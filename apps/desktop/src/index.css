@@ -5,6 +5,22 @@
 
 @custom-variant dark (&:is(.dark *));
 
+:root {
+    --selection-background: color-mix(in oklab, var(--primary) 24%, transparent);
+    --selection-foreground: var(--foreground);
+}
+
+.dark {
+    --selection-background: color-mix(in oklab, var(--primary) 40%, transparent);
+    --selection-foreground: var(--foreground);
+}
+
+::selection,
+::-moz-selection {
+    background: var(--selection-background);
+    color: var(--selection-foreground);
+}
+
 .scrollbar-none {
     scrollbar-width: none;
     -ms-overflow-style: none;
