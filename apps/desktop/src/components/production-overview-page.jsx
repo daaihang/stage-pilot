@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import {
   CheckCircle2,
@@ -8,6 +8,7 @@ import {
   Copy,
   FileText,
   MoreHorizontal,
+  Pencil,
   Sparkles,
   UsersRound,
   Workflow,
@@ -24,6 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { formatProductionInstant, productionStatusLabel } from "@/lib/production-api";
 import { getSupportedTimeZones, timeZoneCityLabel } from "@/lib/timezone";
@@ -76,7 +78,41 @@ function validateTimezone(value, timezones) {
   return timezones.includes(value) ? null : "请选择有效的项目时区。";
 }
 
-function ProductionSummary({ production, onSave, disabled = false }) {
+function ProductionTimezoneField({ timezone, timezones, onSave, disabled = false }) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const selectTimezone = async (nextTimezone) => {
+    if (!nextTimezone || nextTimezone === timezone || saving) {
+      setOpen(false);
+      return;
+    }
+    if (validateTimezone(nextTimezone, timezones)) return;
+    setSaving(true);
+    try {
+      const result = await onSave(nextTimezone);
+      if (result !== false) setOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <div className="flex min-w-0 items-start gap-2">
+    <Clock3 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+    <div className="min-w-0 flex-1">
+      <p className="text-xs text-muted-foreground">项目时区</p>
+      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-lg">
+        <span className="min-w-0 truncate">{timeZoneCityLabel(timezone)} · {timezone}</span>
+        <Popover open={open} onOpenChange={(next) => !saving && setOpen(next)}>
+          <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-xs" aria-label="编辑项目时区" title="编辑项目时区" disabled={disabled || saving}><Pencil /></Button>} />
+          <PopoverContent align="start" className="w-80 p-2">
+            <TimezoneCombobox value={timezone} onValueChange={selectTimezone} disabled={disabled || saving} autoFocus className="w-full" />
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  </div>;
+}
+
+function ProductionSummary({ workspace, production, onSave, onLocationChanged, locationRefreshKey, disabled = false }) {
   const timezones = useMemo(() => getSupportedTimeZones(), []);
   const timezone = production.timezone || "Asia/Shanghai";
 
@@ -84,9 +120,9 @@ function ProductionSummary({ production, onSave, disabled = false }) {
     <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
       <Card>
         <CardHeader>
-          <CardDescription>主地点</CardDescription>
+          <CardDescription>地点</CardDescription>
           <CardTitle>
-            <ProductionLocationPopover production={production} disabled={disabled} />
+            <ProductionLocationPopover workspace={workspace} production={production} onChanged={onLocationChanged} refreshKey={locationRefreshKey} disabled={disabled} />
           </CardTitle>
         </CardHeader>
       </Card>
@@ -117,20 +153,7 @@ function ProductionSummary({ production, onSave, disabled = false }) {
 
       <Card>
         <CardHeader>
-          <ProductionOverviewField
-            label="项目时区"
-            value={timezone}
-            displayValue={`${timeZoneCityLabel(timezone)} · ${timezone}`}
-            icon={Clock3}
-            disabled={disabled}
-            description="项目周期时间使用此时区解释和展示；场次和彩排可以使用自己的时区。"
-            contentClassName="w-80"
-            validate={(value) => validateTimezone(value, timezones)}
-            onSave={(value) => onSave("timezone", value)}
-            renderEditor={({ draft, setDraft, disabled: editorDisabled, id }) => (
-                 <TimezoneCombobox value={draft || timezone} onValueChange={setDraft} disabled={editorDisabled} autoFocus className="w-full" />
-            )}
-          />
+          <ProductionTimezoneField timezone={timezone} timezones={timezones} onSave={(value) => onSave("timezone", value)} disabled={disabled} />
         </CardHeader>
       </Card>
 
@@ -152,6 +175,7 @@ function ProductionSummary({ production, onSave, disabled = false }) {
 export function ProductionOverviewPage({ workspace, production, onUpdateProduction, onLeaveCreation, creationBusy = false }) {
   const isCreationSession = Boolean(production.isCreationSession);
   const status = productionStatusLabel(production.status);
+  const [locationRefreshKey, setLocationRefreshKey] = useState(0);
 
   const saveField = async (key, explicitValue) => {
     let value = explicitValue ?? "";
@@ -213,7 +237,7 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
         }
       />
 
-      <ProductionSummary production={production} onSave={saveField} disabled={creationBusy} />
+      <ProductionSummary workspace={workspace} production={production} onSave={saveField} onLocationChanged={() => setLocationRefreshKey((value) => value + 1)} locationRefreshKey={locationRefreshKey} disabled={creationBusy} />
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card>
@@ -240,7 +264,7 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
               )}
               contentClassName="w-96"
               className="items-start"
-              valueClassName="text-sm text-muted-foreground"
+              valueClassName="line-clamp-4 text-sm text-muted-foreground"
             />
           </CardContent>
         </Card>
