@@ -83,6 +83,50 @@ function useHorizontalScrollIndicators(enabled) {
   return [scrollRef, scrollState];
 }
 
+function useVerticalScrollIndicators(enabled) {
+  const scrollRef = useRef(null);
+  const [scrollState, setScrollState] = useState({ canScrollTop: false, canScrollBottom: false });
+
+  const updateScrollState = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+
+    const threshold = 1;
+    const nextState = {
+      canScrollTop: element.scrollTop > threshold,
+      canScrollBottom: element.scrollHeight - element.clientHeight - element.scrollTop > threshold,
+    };
+    setScrollState((current) => (
+      current.canScrollTop === nextState.canScrollTop && current.canScrollBottom === nextState.canScrollBottom
+        ? current
+        : nextState
+    ));
+  }, []);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element || !enabled) {
+      setScrollState({ canScrollTop: false, canScrollBottom: false });
+      return undefined;
+    }
+
+    updateScrollState();
+    element.addEventListener("scroll", updateScrollState, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateScrollState);
+    observer?.observe(element);
+    const mutationObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(updateScrollState);
+    mutationObserver?.observe(element, { childList: true, subtree: true, characterData: true });
+
+    return () => {
+      element.removeEventListener("scroll", updateScrollState);
+      observer?.disconnect();
+      mutationObserver?.disconnect();
+    };
+  }, [enabled, updateScrollState]);
+
+  return [scrollRef, scrollState];
+}
+
 export function useCategoryTabsPreference() {
   const [pinned, setPinnedState] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -132,9 +176,18 @@ export function SectionTabsLayout({
   pinned,
 }) {
   const orientation = useSettingsTabsOrientation();
-  const [tabsListRef, scrollState] = useHorizontalScrollIndicators(orientation === "horizontal");
   const preference = useCategoryTabsPreference();
   const shouldPin = pinned ?? sticky ?? preference.pinned;
+  const [tabsListRef, horizontalScrollState] = useHorizontalScrollIndicators(orientation === "horizontal");
+  const [verticalTabsListRef, verticalScrollState] = useVerticalScrollIndicators(orientation === "vertical" && shouldPin);
+  const activeTabsListRef = orientation === "horizontal" ? tabsListRef : verticalTabsListRef;
+
+  useEffect(() => {
+    if (orientation !== "vertical" || !shouldPin) return;
+    const activeTab = Array.from(verticalTabsListRef.current?.querySelectorAll("[data-category-tab]") || [])
+      .find((element) => element.dataset.categoryTab === activeGroup);
+    activeTab?.scrollIntoView({ block: "nearest" });
+  }, [activeGroup, orientation, shouldPin, verticalTabsListRef]);
 
   return (
     <Tabs
@@ -153,24 +206,35 @@ export function SectionTabsLayout({
       <div className={cn(
         "relative w-full min-w-0 lg:h-fit",
         shouldPin && "sticky top-0 z-20 self-start bg-background/95 py-1 backdrop-blur-sm",
+        shouldPin && orientation === "horizontal" && "after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-3 after:h-3 after:bg-gradient-to-b after:from-background/95 after:to-transparent",
       )}>
         <TabsList
-          ref={tabsListRef}
+          ref={activeTabsListRef}
           aria-label={ariaLabel}
-          className="w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none lg:h-fit lg:w-full lg:flex-col lg:items-stretch lg:overflow-visible"
+          className={cn(
+            "w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none lg:h-fit lg:w-full lg:flex-col lg:items-stretch",
+            shouldPin && orientation === "vertical" && "max-h-[calc(100dvh-var(--app-titlebar-height)-2rem)] overflow-y-auto overflow-x-hidden scrollbar-thin",
+            orientation === "vertical" && !shouldPin && "lg:overflow-visible",
+          )}
         >
           {groups.map(([id, label, Icon]) => (
-            <TabsTrigger key={id} value={id} disabled={disabled} className="max-lg:min-w-28">
+            <TabsTrigger key={id} value={id} data-category-tab={id} disabled={disabled} className="max-lg:min-w-28">
               <Icon className="size-4" />
               {label}
             </TabsTrigger>
           ))}
         </TabsList>
-        {orientation === "horizontal" && scrollState.canScrollLeft && (
+        {orientation === "horizontal" && horizontalScrollState.canScrollLeft && (
           <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-muted via-muted/80 to-transparent" />
         )}
-        {orientation === "horizontal" && scrollState.canScrollRight && (
+        {orientation === "horizontal" && horizontalScrollState.canScrollRight && (
           <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-muted via-muted/80 to-transparent" />
+        )}
+        {orientation === "vertical" && shouldPin && verticalScrollState.canScrollTop && (
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-1 z-10 h-5 bg-gradient-to-b from-background via-background/80 to-transparent" />
+        )}
+        {orientation === "vertical" && shouldPin && verticalScrollState.canScrollBottom && (
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-1 z-10 h-5 bg-gradient-to-t from-background via-background/80 to-transparent" />
         )}
       </div>
       <TabsContent value={activeGroup} className="w-full min-w-0">
