@@ -16,9 +16,27 @@ const browserStore = {
   async set(key, value) {
     try { window.localStorage.setItem(`stagepilot:${key}`, JSON.stringify(value)); } catch {}
   },
+  async delete(key) {
+    try { window.localStorage.removeItem(`stagepilot:${key}`); } catch {}
+  },
 };
 
 export const appStore = isTauriRuntime ? new LazyStore("stagepilot.json", { autoSave: 150 }) : browserStore;
+
+// Deletion is intentionally exposed through a small helper so legacy
+// migrations can retire a key without making feature pages depend on the
+// storage implementation.
+export async function removeAppStoreValue(key) {
+  if (typeof appStore.delete === "function") {
+    await appStore.delete(key);
+    return;
+  }
+  // Older store implementations do not expose delete; keeping this fallback
+  // isolated avoids reintroducing a page-level persistence dependency.
+  if (typeof window !== "undefined") {
+    try { window.localStorage.removeItem(`stagepilot:${key}`); } catch {}
+  }
+}
 
 export const RECENT_CONTEXTS_STORE_VERSION = 1;
 export function recentContextsStoreKey(accountKey) {

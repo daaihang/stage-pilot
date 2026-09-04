@@ -49,6 +49,15 @@ export function createVenueType(workspaceId, payload) { return request(base(work
 export function updateVenueType(workspaceId, id, payload) { return request(base(workspaceId, `venue-types/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
 export function reorderVenueTypes(workspaceId, items) { return request(base(workspaceId, "venue-types/order"), { method: "PATCH", body: JSON.stringify({ items }) }); }
 export function deleteVenueType(workspaceId, id) { return request(base(workspaceId, `venue-types/${id}/delete`), { method: "POST", body: JSON.stringify({}) }); }
+export async function listFileTypes(workspaceId, filters) {
+  return normalizeResourceList(await request(`${base(workspaceId, "file-types")}${queryString(filters)}`));
+}
+export function createFileType(workspaceId, payload) { return request(base(workspaceId, "file-types"), { method: "POST", body: JSON.stringify(payload) }); }
+export function updateFileType(workspaceId, id, payload) { return request(base(workspaceId, `file-types/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
+export function reorderFileTypes(workspaceId, scope, items) { return request(base(workspaceId, "file-types/order"), { method: "PATCH", body: JSON.stringify({ scope, items }) }); }
+export function deleteFileType(workspaceId, id) { return request(base(workspaceId, `file-types/${id}/delete`), { method: "POST", body: JSON.stringify({}) }); }
+export function restoreFileTypes(workspaceId, scope) { return request(base(workspaceId, "file-types/restore"), { method: "POST", body: JSON.stringify({ scope }) }); }
+export function migrateFileTypes(workspaceId, scopes) { return request(base(workspaceId, "file-types/migrate"), { method: "POST", body: JSON.stringify({ scopes }) }); }
 export function listVenueSpaces(workspaceId, venueId) { return request(base(workspaceId, `venues/${venueId}/spaces`)); }
 export function createVenueSpace(workspaceId, venueId, payload) { return request(base(workspaceId, `venues/${venueId}/spaces`), { method: "POST", body: JSON.stringify(payload) }); }
 export function updateVenueSpace(workspaceId, venueId, id, payload) { return request(base(workspaceId, `venues/${venueId}/spaces/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }

@@ -177,7 +177,8 @@ func seedFileTypes(ctx context.Context, tx pgx.Tx, workspaceID, createdBy string
 	_, err := tx.Exec(ctx, `INSERT INTO file_types (id,workspace_id,scope,template_key,name,description,sort_order,is_system_default,is_active,created_by)
 		SELECT md5($1 || ':' || t.key), $1, t.scope, t.key, t.name, t.description, t.sort_order, TRUE, t.is_active, $2
 		FROM file_type_templates t
-		WHERE NOT EXISTS (SELECT 1 FROM file_types f WHERE f.workspace_id=$1 AND f.scope=t.scope AND f.template_key=t.key AND f.deleted_at IS NULL)`, workspaceID, createdBy)
+		WHERE NOT EXISTS (SELECT 1 FROM file_types f WHERE f.workspace_id=$1 AND f.scope=t.scope AND f.template_key=t.key AND f.deleted_at IS NULL)
+		ON CONFLICT (id) DO UPDATE SET deleted_at=NULL,is_system_default=TRUE,template_key=EXCLUDED.template_key`, workspaceID, createdBy)
 	return err
 }
 

@@ -1,22 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  Building2,
-  CalendarDays,
   FileText,
-  FolderOpen,
   GripVertical,
-  IdCard,
-  ListMusic,
-  LayoutPanelTop,
-  MapPin,
-  Package,
   Pencil,
   Plus,
   RefreshCw,
   Trash2,
-  UserRound,
 } from "@/components/ui/icons";
 import { Sortable, SortableItem, SortableItemHandle } from "@/components/reui/sortable";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
@@ -33,27 +24,10 @@ import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { WorkspacePageHeader } from "@/components/workspace-page-shell";
-import {
-  defaultScopeItems,
-  FILE_TYPE_SCOPE_META,
-  FILE_TYPE_SCOPES,
-  loadWorkspaceFileTypes,
-  saveWorkspaceFileTypes,
-} from "@/lib/file-type-store";
+import { migrateLegacyFileTypes } from "@/lib/file-type-migration";
+import { FILE_TYPE_SCOPE_META, FILE_TYPE_SCOPES } from "@/lib/file-type-config";
+import { createFileType, deleteFileType, listFileTypes, reorderFileTypes, restoreFileTypes, updateFileType } from "@/lib/resource-api";
 import { roleAtLeast } from "@/lib/workspace-api";
-
-const scopeIcons = {
-  workspace: FileText,
-  membership: IdCard,
-  person: UserRound,
-  organization: Building2,
-  venue: MapPin,
-  venue_space: LayoutPanelTop,
-  equipment: Package,
-  program: ListMusic,
-  production: CalendarDays,
-  file_library: FolderOpen,
-};
 
 const filterFields = [
   {
@@ -93,15 +67,8 @@ function fileTypeGridClassName(canWrite) {
 
 const initialForm = { name: "", description: "", isActive: true };
 
-const isUncategorized = (item) => item?.templateKey?.endsWith(".uncategorized");
-const isProtected = (item) => Boolean(item?.isSystemDefault) || isUncategorized(item);
-
-function createLocalId(scope) {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return `${scope}:local:${crypto.randomUUID()}`;
-  }
-  return `${scope}:local:${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
+const isUncategorized = (item) => item?.template_key?.endsWith(".uncategorized");
+const isProtected = (item) => Boolean(item?.is_system_default || item?.template_key) || isUncategorized(item);
 
 function errorDescription(error) {
   return error?.message || String(error || "请求失败");
@@ -115,22 +82,8 @@ function filterStatus(query) {
   return values.length === 1 ? values[0] : "all";
 }
 
-function compareItems(left, right, sort, direction) {
-  let result = 0;
-  if (sort === "name") {
-    result = left.name.localeCompare(right.name, "zh-CN");
-  } else if (sort === "updated_at") {
-    result = String(left.updatedAt || "").localeCompare(String(right.updatedAt || ""));
-  } else {
-    result = Number(left.sortOrder) - Number(right.sortOrder);
-  }
-  if (result === 0) result = Number(left.sortOrder) - Number(right.sortOrder);
-  if (result === 0) result = left.id.localeCompare(right.id);
-  return direction === "desc" ? -result : result;
-}
-
 function displayPosition(item, index) {
-  const position = Number(item?.sortOrder);
+  const position = Number(item?.sort_order);
   return Number.isInteger(position) && position >= 0 ? position + 1 : index + 1;
 }
 
@@ -143,7 +96,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
   useEffect(() => {
     if (!open) return;
     setForm(item
-      ? { name: item.name, description: item.description || "", isActive: Boolean(item.isActive) }
+      ? { name: item.name, description: item.description || "", isActive: Boolean(item.is_active) }
       : initialForm);
     setBusy(false);
   }, [item, open]);
@@ -264,7 +217,7 @@ function ManagementSkeleton() {
 }
 
 function FileTypeRow({ item, index, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
-  const Icon = scopeIcons[item.scope] || FileText;
+  const Icon = FILE_TYPE_SCOPE_META[item.scope]?.icon || FileText;
   const uncategorized = isUncategorized(item);
   const itemReorderable = reorderable && !uncategorized;
   return (
@@ -284,20 +237,20 @@ function FileTypeRow({ item, index, canWrite, reorderable, pendingToggleId, onTo
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <p className="truncate text-sm font-medium">{item.name}</p>
-            {item.isSystemDefault && <Badge variant="secondary">系统默认</Badge>}
+            {item.is_system_default && <Badge variant="secondary">系统默认</Badge>}
             {uncategorized && <Badge variant="outline">兜底类型</Badge>}
           </div>
           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{item.description || "暂无描述"}</p>
         </div>
         <div className="hidden min-w-24 text-right text-xs text-muted-foreground md:block">
-          {item.isSystemDefault ? "系统模板" : "自定义"}
+          {item.is_system_default ? "系统模板" : "自定义"}
         </div>
         <div className="flex w-full items-center justify-center">
           <Switch
-            checked={Boolean(item.isActive)}
+            checked={Boolean(item.is_active)}
             disabled={!canWrite || uncategorized || pendingToggleId === item.id}
             onCheckedChange={canWrite && !uncategorized ? (checked) => onToggle(item, checked) : undefined}
-            aria-label={`${item.isActive ? "停用" : "启用"}${item.name}`}
+            aria-label={`${item.is_active ? "停用" : "启用"}${item.name}`}
           />
         </div>
         {canWrite && (
@@ -320,7 +273,8 @@ function FileTypeRow({ item, index, canWrite, reorderable, pendingToggleId, onTo
 export function FileTypeManagementPage({ workspace }) {
   const workspaceId = workspace.id;
   const canWrite = roleAtLeast(workspace.role, "admin");
-  const [value, setValue] = useState(null);
+  const [types, setTypes] = useState([]);
+  const [total, setTotal] = useState(0);
   const [activeScope, setActiveScope] = useState("workspace");
   const [search, setSearch] = useState("");
   const [filterQuery, setFilterQuery] = useState(() => createFilterQuery());
@@ -331,40 +285,20 @@ export function FileTypeManagementPage({ workspace }) {
   const [saving, setSaving] = useState(false);
   const [pendingToggleId, setPendingToggleId] = useState(null);
   const [dialog, setDialog] = useState(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setValue(await loadWorkspaceFileTypes(workspaceId));
-    } catch (nextError) {
-      setError(nextError);
-      throw nextError;
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceId]);
-
-  useEffect(() => {
-    setValue(null);
-    setActiveScope("workspace");
-    setSearch("");
-    setFilterQuery(createFilterQuery());
-    setSort("sort_order");
-    setDirection("asc");
-    setError(null);
-    load().catch(() => {});
-  }, [load, workspaceId]);
+  const requestSequence = useRef(0);
+  const mutationSequence = useRef(0);
+  const viewGeneration = useRef(0);
+  const activeWorkspaceRef = useRef(workspaceId);
+  const migrationCheckedRef = useRef(false);
 
   const status = useMemo(() => filterStatus(filterQuery), [filterQuery]);
-  const scopeItems = value?.scopes?.[activeScope] || [];
-  const visibleItems = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    return scopeItems
-      .filter((item) => !query || `${item.name} ${item.description}`.toLocaleLowerCase().includes(query))
-      .filter((item) => status === "all" || (status === "active" ? item.isActive : !item.isActive))
-      .sort((left, right) => compareItems(left, right, sort, direction));
-  }, [direction, scopeItems, search, sort, status]);
+  const requestFilters = useMemo(() => ({
+    scope: activeScope,
+    q: search.trim(),
+    ...(status !== "all" ? { status } : {}),
+    sort,
+    direction,
+  }), [activeScope, direction, search, sort, status]);
   const reorderable = canWrite
     && !search.trim()
     && status === "all"
@@ -372,119 +306,204 @@ export function FileTypeManagementPage({ workspace }) {
     && sort === "sort_order"
     && direction === "asc";
 
-  const commitScope = useCallback(async (scope, nextItems, loadingMessage, successMessage, previousValue = value) => {
-    if (!value || saving) return false;
-    const nextValue = {
-      ...value,
-      scopes: { ...value.scopes, [scope]: nextItems },
-    };
-    setValue(nextValue);
-    setSaving(true);
-    const toast = notify.loading(loadingMessage);
+  const loadTypes = useCallback(async () => {
+    const requestId = ++requestSequence.current;
+    const requestWorkspaceId = workspaceId;
+    setLoading(true);
     try {
-      await saveWorkspaceFileTypes(workspaceId, nextValue);
-      notify.success(successMessage, { id: toast });
-      return true;
+      if (!migrationCheckedRef.current) {
+        migrationCheckedRef.current = true;
+        if (canWrite) {
+          try {
+            const migration = await migrateLegacyFileTypes(workspaceId, { canWrite });
+            if (migration.status === "migrated" && migration.migrated > 0) {
+              notify.info("本地文件类型已迁移到云端");
+              if (migration.warnings?.length) notify.info(`迁移完成，${migration.warnings.length} 项数据被跳过`);
+            }
+          } catch (migrationError) {
+            migrationCheckedRef.current = false;
+            notify.error("本地文件类型迁移失败", { description: errorDescription(migrationError) });
+          }
+        }
+      }
+      const result = await listFileTypes(requestWorkspaceId, requestFilters);
+      if (requestId !== requestSequence.current || activeWorkspaceRef.current !== requestWorkspaceId) return result;
+      setTypes(result.items);
+      setTotal(result.total);
+      setError(null);
+      return result;
     } catch (nextError) {
-      setValue(previousValue);
-      notify.error("保存文件类型失败", { id: toast, description: errorDescription(nextError) });
-      return false;
+      if (requestId === requestSequence.current && activeWorkspaceRef.current === requestWorkspaceId) setError(nextError);
+      throw nextError;
     } finally {
-      setSaving(false);
+      if (requestId === requestSequence.current && activeWorkspaceRef.current === requestWorkspaceId) setLoading(false);
     }
-  }, [saving, value, workspaceId]);
+  }, [canWrite, requestFilters, workspaceId]);
+
+  useEffect(() => {
+    activeWorkspaceRef.current = workspaceId;
+    migrationCheckedRef.current = false;
+    viewGeneration.current += 1;
+    requestSequence.current += 1;
+    setTypes([]);
+    setTotal(0);
+    setActiveScope("workspace");
+    setSearch("");
+    setFilterQuery(createFilterQuery());
+    setSort("sort_order");
+    setDirection("asc");
+    setError(null);
+    setSaving(false);
+    setPendingToggleId(null);
+  }, [workspaceId]);
+
+  useEffect(() => {
+    viewGeneration.current += 1;
+    requestSequence.current += 1;
+    const timer = setTimeout(() => loadTypes().catch(() => {}), 180);
+    return () => {
+      clearTimeout(timer);
+      requestSequence.current += 1;
+    };
+  }, [loadTypes]);
+
+  const scopeItems = types;
+  const visibleItems = types;
 
   const retry = async () => {
     const toast = notify.loading("正在刷新文件类型…");
     try {
-      await load();
+      await loadTypes();
       notify.success("文件类型已刷新", { id: toast });
     } catch (nextError) {
       notify.error("刷新文件类型失败", { id: toast, description: errorDescription(nextError) });
     }
   };
 
-  const handleToggle = async (item, checked) => {
+  const handleToggle = useCallback(async (item, checked) => {
     if (!canWrite || saving || isUncategorized(item)) return;
-    const nextItems = scopeItems.map((current) => current.id === item.id ? { ...current, isActive: checked } : current);
+    const previousValue = types;
+    const operationSequence = ++mutationSequence.current;
+    const operationViewGeneration = viewGeneration.current;
+    requestSequence.current += 1;
     setPendingToggleId(item.id);
-    const previousValue = value;
-    const saved = await commitScope(
-      activeScope,
-      nextItems,
-      checked ? "正在启用文件类型…" : "正在停用文件类型…",
-      checked ? "文件类型已启用" : "文件类型已停用",
-      previousValue,
-    );
-    if (!saved && previousValue) setValue(previousValue);
-    setPendingToggleId(null);
-  };
+    setTypes((current) => current.map((type) => type.id === item.id ? { ...type, is_active: checked } : type));
+    const toast = notify.loading(checked ? "正在启用文件类型…" : "正在停用文件类型…");
+    try {
+      await updateFileType(workspaceId, item.id, { is_active: checked });
+      notify.success(checked ? "文件类型已启用" : "文件类型已停用", { id: toast });
+      if (activeWorkspaceRef.current === workspaceId && viewGeneration.current === operationViewGeneration && mutationSequence.current === operationSequence) await loadTypes().catch(() => {});
+    } catch (nextError) {
+      if (activeWorkspaceRef.current === workspaceId && viewGeneration.current === operationViewGeneration && mutationSequence.current === operationSequence) setTypes(previousValue);
+      notify.error(checked ? "启用文件类型失败" : "停用文件类型失败", { id: toast, description: errorDescription(nextError) });
+    } finally {
+      if (activeWorkspaceRef.current === workspaceId && viewGeneration.current === operationViewGeneration && mutationSequence.current === operationSequence) setPendingToggleId(null);
+    }
+  }, [canWrite, loadTypes, saving, types, workspaceId]);
 
-  const handleValueCommit = async (next, meta) => {
+  const handleValueCommit = useCallback(async (next, meta) => {
     if (!reorderable || saving) return;
+    const operationWorkspaceId = workspaceId;
+    const operationSequence = ++mutationSequence.current;
+    const operationViewGeneration = viewGeneration.current;
+    requestSequence.current += 1;
     const fallback = next.find((item) => isUncategorized(item));
     const movable = next.filter((item) => !isUncategorized(item));
-    const orderedItems = (fallback ? [...movable, fallback] : movable)
-      .map((item, index) => ({ ...item, sortOrder: index }));
-    await commitScope(activeScope, orderedItems, "正在保存文件类型排序…", "文件类型排序已保存", value);
-  };
+    const orderedItems = fallback ? [...movable, fallback] : movable;
+    const toast = notify.loading("正在保存文件类型排序…");
+    setSaving(true);
+    try {
+      await reorderFileTypes(operationWorkspaceId, activeScope, orderedItems.map((item, index) => ({ id: item.id, sort_order: index })));
+      notify.success("文件类型排序已保存", { id: toast });
+      if (activeWorkspaceRef.current === operationWorkspaceId && viewGeneration.current === operationViewGeneration && mutationSequence.current === operationSequence) await loadTypes().catch(() => {});
+    } catch (nextError) {
+      if (activeWorkspaceRef.current === operationWorkspaceId && viewGeneration.current === operationViewGeneration && mutationSequence.current === operationSequence) {
+        setTypes(meta.previousValue);
+        await loadTypes().catch(() => {});
+      }
+      notify.error("保存文件类型排序失败", { id: toast, description: errorDescription(nextError) });
+    } finally {
+      setSaving(false);
+    }
+  }, [activeScope, loadTypes, reorderable, saving, workspaceId]);
 
   const handleCreate = async ({ name, description, isActive }) => {
-    const normalizedName = name.trim().toLocaleLowerCase();
-    if (scopeItems.some((item) => item.name.trim().toLocaleLowerCase() === normalizedName && !item.deletedAt)) {
-      notify.error("当前范围内已经存在同名文件类型");
+    if (saving) return false;
+    const toast = notify.loading("正在创建文件类型…");
+    setSaving(true);
+    try {
+      await createFileType(workspaceId, { scope: activeScope, name: name.trim(), description: description.trim(), is_active: Boolean(isActive) });
+      notify.success("文件类型已创建", { id: toast });
+      await loadTypes().catch(() => {});
+      return true;
+    } catch (nextError) {
+      notify.error("创建文件类型失败", { id: toast, description: errorDescription(nextError) });
       return false;
+    } finally {
+      setSaving(false);
     }
-    const uncategorized = scopeItems.find((item) => isUncategorized(item));
-    const customItem = {
-      id: createLocalId(activeScope),
-      scope: activeScope,
-      templateKey: null,
-      name: name.trim(),
-      description: description.trim(),
-      sortOrder: Math.max(0, scopeItems.length - (uncategorized ? 1 : 0)),
-      isSystemDefault: false,
-      isActive,
-      deletedAt: null,
-      updatedAt: new Date().toISOString(),
-    };
-    const nextItems = uncategorized
-      ? [...scopeItems.filter((item) => item.id !== uncategorized.id), customItem, { ...uncategorized, sortOrder: scopeItems.length }]
-      : [...scopeItems, customItem];
-    return commitScope(activeScope, nextItems.map((item, index) => ({ ...item, sortOrder: index })), "正在创建文件类型…", "文件类型已创建");
   };
 
   const handleEdit = async (item, { name, description, isActive }) => {
-    const items = value?.scopes?.[item.scope] || [];
-    const normalizedName = name.trim().toLocaleLowerCase();
-    if (items.some((current) => current.id !== item.id && current.name.trim().toLocaleLowerCase() === normalizedName && !current.deletedAt)) {
-      notify.error("当前范围内已经存在同名文件类型");
+    if (saving) return false;
+    const toast = notify.loading("正在保存文件类型…");
+    setSaving(true);
+    try {
+      await updateFileType(workspaceId, item.id, {
+        name: isProtected(item) ? item.name : name.trim(),
+        description: description.trim(),
+        is_active: isUncategorized(item) ? true : Boolean(isActive),
+      });
+      notify.success("文件类型已保存", { id: toast });
+      await loadTypes().catch(() => {});
+      return true;
+    } catch (nextError) {
+      notify.error("保存文件类型失败", { id: toast, description: errorDescription(nextError) });
       return false;
+    } finally {
+      setSaving(false);
     }
-    const nextItems = items.map((current) => current.id === item.id
-      ? { ...current, name: isProtected(current) ? current.name : name.trim(), description: description.trim(), isActive: isUncategorized(current) ? true : isActive, updatedAt: new Date().toISOString() }
-      : current);
-    return commitScope(item.scope, nextItems, "正在保存文件类型…", "文件类型已保存");
   };
 
   const handleDelete = async (item) => {
-    if (isProtected(item)) return false;
-    const items = value?.scopes?.[item.scope] || [];
-    const nextItems = items.filter((current) => current.id !== item.id).map((current, index) => ({ ...current, sortOrder: index }));
-    const saved = await commitScope(item.scope, nextItems, "正在删除文件类型…", "文件类型已删除");
-    if (saved) setDialog(null);
-    return saved;
+    if (isProtected(item) || saving) return false;
+    const toast = notify.loading("正在删除文件类型…");
+    setSaving(true);
+    try {
+      await deleteFileType(workspaceId, item.id);
+      notify.success("文件类型已删除", { id: toast });
+      setDialog(null);
+      await loadTypes().catch(() => {});
+      return true;
+    } catch (nextError) {
+      notify.error("删除文件类型失败", { id: toast, description: errorDescription(nextError) });
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleRestore = async (scope) => {
-    const saved = await commitScope(scope, defaultScopeItems(scope), "正在恢复系统默认…", "当前范围已恢复默认");
-    if (saved) setDialog(null);
-    return saved;
+    if (saving) return false;
+    const toast = notify.loading("正在恢复系统默认…");
+    setSaving(true);
+    try {
+      await restoreFileTypes(workspaceId, scope);
+      notify.success("当前范围已恢复默认", { id: toast });
+      setDialog(null);
+      await loadTypes().catch(() => {});
+      return true;
+    } catch (nextError) {
+      notify.error("恢复文件类型失败", { id: toast, description: errorDescription(nextError) });
+      return false;
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const scopeGroups = FILE_TYPE_SCOPES.map((scope) => [scope, FILE_TYPE_SCOPE_META[scope].label, scopeIcons[scope]]);
+  const scopeGroups = FILE_TYPE_SCOPES.map((scope) => [scope, FILE_TYPE_SCOPE_META[scope].label, FILE_TYPE_SCOPE_META[scope].icon]);
   const currentMeta = FILE_TYPE_SCOPE_META[activeScope];
-  const activeCount = scopeItems.filter((item) => item.isActive).length;
+  const activeCount = scopeItems.filter((item) => item.is_active).length;
   const selectedItem = dialog?.type === "edit" || dialog?.type === "delete" ? dialog.item : null;
   const selectedScope = selectedItem?.scope || activeScope;
 
@@ -567,7 +586,7 @@ export function FileTypeManagementPage({ workspace }) {
                   const fallback = next.find((item) => isUncategorized(item));
                   const movable = next.filter((item) => !isUncategorized(item));
                   const ordered = fallback ? [...movable, fallback] : movable;
-                  setValue((current) => ({ ...current, scopes: { ...current.scopes, [activeScope]: ordered } }));
+                  setTypes(ordered);
                 }}
                 onValueCommit={handleValueCommit}
                 getItemValue={(item) => item.id}

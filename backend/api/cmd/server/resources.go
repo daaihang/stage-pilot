@@ -455,7 +455,7 @@ func (app *application) reorderProgramTypes(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	for _, item := range in.Items {
-		if _, err = tx.Exec(r.Context(), `UPDATE program_types SET sort_order=$1,updated_at=NOW() WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL`, item.SortOrder, item.ID, access.WorkspaceID); err != nil {
+		if _, err = tx.Exec(r.Context(), `UPDATE program_types SET sort_order=$1,updated_at=NOW() WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL AND sort_order IS DISTINCT FROM $1`, item.SortOrder, item.ID, access.WorkspaceID); err != nil {
 			serverError(w, err)
 			return
 		}

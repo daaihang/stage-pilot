@@ -153,18 +153,52 @@ func (app *application) reorderVenueTypes(w http.ResponseWriter, r *http.Request
 		return
 	}
 	a := resourceAccess(r)
+	seen := map[string]bool{}
+	for index, item := range in.Items {
+		if item.ID == "" || seen[item.ID] || item.SortOrder < 0 || item.SortOrder != index {
+			errorJSON(w, http.StatusBadRequest, "invalid_input", "场地类型排序列表无效")
+			return
+		}
+		seen[item.ID] = true
+	}
 	tx, err := app.db.Begin(r.Context())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	defer tx.Rollback(r.Context())
-	for _, item := range in.Items {
-		if item.ID == "" || item.SortOrder < 0 {
-			errorJSON(w, 400, "invalid_input", "排序列表无效")
+	rows, err := tx.Query(r.Context(), `SELECT id FROM venue_types WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE`, a.WorkspaceID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	current := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			serverError(w, err)
 			return
 		}
-		if _, err = tx.Exec(r.Context(), `UPDATE venue_types SET sort_order=$1,updated_at=NOW() WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL`, item.SortOrder, item.ID, a.WorkspaceID); err != nil {
+		current[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		serverError(w, err)
+		return
+	}
+	if len(current) != len(in.Items) {
+		errorJSON(w, http.StatusBadRequest, "invalid_input", "排序列表必须包含当前工作空间的全部场地类型")
+		return
+	}
+	for _, item := range in.Items {
+		if !current[item.ID] {
+			errorJSON(w, http.StatusBadRequest, "invalid_input", "排序列表包含未知场地类型")
+			return
+		}
+	}
+	for _, item := range in.Items {
+		if _, err = tx.Exec(r.Context(), `UPDATE venue_types SET sort_order=$1,updated_at=NOW() WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL AND sort_order IS DISTINCT FROM $1`, item.SortOrder, item.ID, a.WorkspaceID); err != nil {
 			serverError(w, err)
 			return
 		}
