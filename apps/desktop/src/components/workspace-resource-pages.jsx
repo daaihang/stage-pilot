@@ -230,6 +230,8 @@ function ResourceRelations({ workspace, type, resourceId }) {
 
 const detailSelectOptions = (key, cfg, types) => key === "program_type_id"
   ? [["unassigned", "未分配"], ...types.map((x) => [x.id, `${x.name}${x.is_active ? "" : "（已停用）"}`])]
+  : key === "venue_type_id"
+    ? types.map((x) => [x.id, `${x.name}${x.is_active ? "" : "（已停用）"}`])
   : key === "status"
     ? [["active", "可用"], ["maintenance", "维护中"], ["archived", "已归档"]]
     : key === "ownership"
@@ -254,8 +256,8 @@ export function ResourceDetailPage({ workspace, resourceType, resourceId }) {
         if (active) notify.error(`无法加载${resourceDefinitions[type].singular}`, { description: error?.message || String(error) });
       })
       .finally(() => { if (active) setLoading(false); });
-    if (type !== "programs") return () => { active = false; };
-    listProgramTypes(workspace.id)
+    if (!["programs", "venues"].includes(type)) return () => { active = false; };
+    (type === "venues" ? listVenueTypes(workspace.id) : listProgramTypes(workspace.id))
       .then((result) => { if (active) setTypes(result.items); })
       .catch((error) => {
         if (active) notify.error("无法加载节目类型", { description: error?.message || String(error) });
@@ -301,7 +303,7 @@ export function ResourceDetailPage({ workspace, resourceType, resourceId }) {
       <CardContent className="grid gap-4 p-5 sm:grid-cols-2">
         {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 sm:col-span-2" : "space-y-1"}>
           <span className="text-sm font-medium">{fieldLabels[key]}</span>
-          {["kind", "category", "ownership", "status", "program_type_id"].includes(key)
+          {["kind", "category", "ownership", "status", "program_type_id", "venue_type_id"].includes(key)
             ? <Select
               items={detailSelectOptions(key, cfg, types).map(([value, label]) => ({ value, label }))}
               value={key === "program_type_id" ? (item[key] || "unassigned") : (item[key] || "")}
