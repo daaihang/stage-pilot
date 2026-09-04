@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { notify } from "@/components/ui/sonner";
+import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 
 const SETTINGS_TABS_MEDIA_QUERY = "(min-width: 1024px)";
+export const CATEGORY_TABS_STICKY_STORE_KEY = "categoryTabsSticky:v1";
 
 function useSettingsTabsOrientation() {
   const [isWide, setIsWide] = useState(() => (
@@ -80,7 +83,44 @@ function useHorizontalScrollIndicators(enabled) {
   return [scrollRef, scrollState];
 }
 
-export function SettingsTabs({
+export function useCategoryTabsPreference() {
+  const [pinned, setPinnedState] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve(appStore.init?.())
+      .then(() => appStore.get(CATEGORY_TABS_STICKY_STORE_KEY))
+      .then((stored) => {
+        if (active && typeof stored === "boolean") setPinnedState(stored);
+      })
+      .catch((error) => {
+        if (active) notify.error("分类导航偏好加载失败", { description: error?.message || String(error) });
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const setPinned = useCallback(async (nextPinned) => {
+    const next = Boolean(nextPinned);
+    const previous = pinned;
+    setPinnedState(next);
+    try {
+      await appStore.set(CATEGORY_TABS_STICKY_STORE_KEY, next);
+      notify.success(next ? "分类导航已设置为置顶" : "分类导航已取消置顶");
+    } catch (error) {
+      setPinnedState(previous);
+      notify.error("分类导航偏好保存失败", { description: error?.message || String(error) });
+      throw error;
+    }
+  }, [pinned]);
+
+  return { pinned, loading, setPinned };
+}
+
+export function SectionTabsLayout({
   groups,
   activeGroup,
   onGroupChange,
@@ -88,9 +128,13 @@ export function SettingsTabs({
   children,
   ariaLabel = "设置分类",
   className,
+  sticky,
+  pinned,
 }) {
   const orientation = useSettingsTabsOrientation();
   const [tabsListRef, scrollState] = useHorizontalScrollIndicators(orientation === "horizontal");
+  const preference = useCategoryTabsPreference();
+  const shouldPin = pinned ?? sticky ?? preference.pinned;
 
   return (
     <Tabs
@@ -106,7 +150,10 @@ export function SettingsTabs({
       )}
       aria-disabled={disabled}
     >
-      <div className="relative w-full min-w-0 lg:h-fit">
+      <div className={cn(
+        "relative w-full min-w-0 lg:h-fit",
+        shouldPin && "sticky top-0 z-20 self-start bg-background/95 py-1 backdrop-blur-sm",
+      )}>
         <TabsList
           ref={tabsListRef}
           aria-label={ariaLabel}
@@ -132,3 +179,7 @@ export function SettingsTabs({
     </Tabs>
   );
 }
+
+// Compatibility export: existing role, file-type, workspace and production
+// settings pages can migrate independently without changing their layout API.
+export const SettingsTabs = SectionTabsLayout;
