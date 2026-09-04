@@ -34,7 +34,7 @@ User / Account
 - `workspaces`：id / name / slug（唯一）/ description / avatar_url / 时间戳 / 软删除
 - `workspace_memberships`：workspace_id + user_id 唯一，role ∈ owner > admin > member，status ∈ active / invited / suspended
 - `user_preferences.last_workspace_id`：服务端持久化最近工作空间，恢复时重新校验 membership
-- `productions`：workspace_id（强制外键，CASCADE）/ name / status ∈ active|completed|archived / timezone（IANA）/ start_at / end_at / description / created_by / archived_at / 软删除；索引 workspace_id 与 workspace_id+status
+- `productions`：workspace_id（强制外键，CASCADE）/ name / status ∈ active|completed|archived / timezone（IANA）/ planned_start_at / planned_end_at / actual_completed_at / description / created_by / archived_at / 软删除；索引 workspace_id 与 workspace_id+status
 - `production_memberships`：指定活动的直接授权；角色为 producer / editor / stage_manager / contributor / viewer，状态为 active / suspended / revoked，过期时间在每次授权检查时即时生效。
 - `production_invitations`：只存邀请码 hash；支持指定邮箱单次邀请和 1–100 次通用邀请码，不接入邮件投递。
 
@@ -63,14 +63,14 @@ Production 权限由 `requireProductionPermission(permission)` 统一计算：Wo
 | `GET /v1/workspaces/:id/productions` | 当前 workspace 的 production 列表，`?status=` 过滤 | MEMBER |
 | `POST /v1/workspaces/:id/productions` | 创建；workspace_id 来自 URL，created_by 为当前用户；默认 active + Asia/Shanghai | ADMIN |
 | `GET /v1/workspaces/:id/productions/:pid` | 详情（校验父子关系） | MEMBER |
-| `PATCH /v1/workspaces/:id/productions/:pid` | 更新 name/description/timezone/start_at/end_at/status；status=archived 同时写 archived_at | ADMIN |
+| `PATCH /v1/workspaces/:id/productions/:pid` | 更新 name/description/timezone/planned_start_at/planned_end_at/status；status=completed 由服务端写 actual_completed_at，status=archived 同时写 archived_at | ADMIN |
 | `GET /v1/productions` | 当前用户所有可访问活动，附访问来源和可导航 Workspace 标识 | 登录 |
 | `GET/PATCH /v1/productions/:pid` | 规范的活动详情与编辑接口，支持 Production-only 成员 | production.view / production.edit |
 | `GET/POST/PATCH/DELETE /v1/productions/:pid/members` | 查看或管理直接活动成员；DELETE 为 revoked | members.view / members.manage |
 | `GET/POST/DELETE /v1/productions/:pid/invitations` | 列出、创建、撤销邀请码 | members.manage |
 | `POST /v1/production-invitations/accept` | 已登录用户接受邀请码 | 登录 |
 
-时间模型：`end_at < start_at` 与非法 IANA 时区在服务端拒绝（400）。前端展示一律使用 production.timezone，不使用运行机器本地时区。
+时间模型：`planned_end_at < planned_start_at` 与非法 IANA 时区在服务端拒绝（400）。前端展示一律使用 production.timezone，不使用运行机器本地时区；计划结束不会自动完成 Production。
 
 ## 导航层级
 
@@ -139,8 +139,8 @@ ProductionSummary {
   workspaceId: string
   name: string
   status: "active" | "completed" | "archived"
-  startsAt: string // ISO 8601，可为空
-  endsAt: string   // ISO 8601，可为空
+  plannedStartAt: string // ISO 8601，可为空
+  plannedEndAt: string   // ISO 8601，可为空
   venue: string    // Venue 领域暂缓，仅当前窗口展示，不提交 Production API
   timezone: string // IANA，展示与排期一律使用它
   description: string

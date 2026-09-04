@@ -27,7 +27,7 @@ function PageIntro({ route, workspace, production, action }) {
 export function WorkspaceHome({ route, workspace, productions, onCreate, onViewProductions, onOpenCalendar }) {
   const now = Date.now();
   const sorted = useMemo(() => [...productions].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)), [productions]);
-  const upcoming = productions.filter((item) => item.startsAt && new Date(item.startsAt).getTime() >= now && item.status !== "archived").sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt));
+  const upcoming = productions.filter((item) => item.plannedStartAt && new Date(item.plannedStartAt).getTime() >= now && item.status !== "archived").sort((a, b) => new Date(a.plannedStartAt) - new Date(b.plannedStartAt));
   const active = productions.filter((item) => item.status === "active");
   const archived = productions.filter((item) => item.status === "archived");
   const next = upcoming[0] || active[0];

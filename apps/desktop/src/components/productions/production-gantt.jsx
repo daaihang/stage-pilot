@@ -52,17 +52,17 @@ function addDays(date, days) {
 }
 
 /**
- * 活动状态阶段假设：生产数据接入前，按 startsAt/endsAt 推导默认阶段分布。
+ * 活动状态阶段假设：生产数据接入前，按 plannedStartAt/plannedEndAt 推导默认阶段分布。
  * recruiting: 开始前 21~10 天；rehearsal: 前 4~1 天；setup: 前 2~0 天；
  * show: 活动全程；teardown: 结束后 1 天。已完成活动全部前移。
  */
 function buildStages(production, now) {
   // Production Foundation：缺时间的活动没有可排期阶段，只给一条占位条。
-  if (!production.startsAt || !production.endsAt) {
+  if (!production.plannedStartAt || !production.plannedEndAt) {
     return [{ key: "show", start: now, end: addDays(now, 7), progress: 0 }]
   }
-  const start = new Date(production.startsAt)
-  const end = new Date(production.endsAt)
+  const start = new Date(production.plannedStartAt)
+  const end = new Date(production.plannedEndAt)
   const done = production.status === "completed" || production.status === "archived" || end < now
   const base = done ? end : now
   return [

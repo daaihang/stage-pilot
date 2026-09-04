@@ -23,8 +23,8 @@
  * @property {string} workspaceId
  * @property {string} name
  * @property {"active"|"completed"|"archived"} status
- * @property {string} startsAt
- * @property {string} endsAt
+ * @property {string} plannedStartAt
+ * @property {string} plannedEndAt
  * @property {string} venue
  */
 
@@ -79,9 +79,9 @@ const mockWorkspaces = [
 
 /** @type {ProductionSummary[]} */
 const mockProductions = [
-  { id: "prod-youth-festival-2026", workspaceId: "ws-nanning-media", name: "2026 青年音乐节", status: "active", startsAt: "2026-09-18T10:00:00+08:00", endsAt: "2026-09-20T22:00:00+08:00", venue: "东盟盛天地" },
-  { id: "prod-seven-schools", workspaceId: "ws-nanning-media", name: "七高校联合歌会", status: "active", startsAt: "2026-11-07T14:00:00+08:00", endsAt: "2026-11-07T22:00:00+08:00", venue: "广西文化艺术中心" },
-  { id: "prod-new-year-2027", workspaceId: "ws-nanning-media", name: "2027 跨年晚会", status: "completed", startsAt: "2026-12-31T18:00:00+08:00", endsAt: "2027-01-01T00:30:00+08:00", venue: "南宁剧场" },
+  { id: "prod-youth-festival-2026", workspaceId: "ws-nanning-media", name: "2026 青年音乐节", status: "active", plannedStartAt: "2026-09-18T10:00:00+08:00", plannedEndAt: "2026-09-20T22:00:00+08:00", venue: "东盟盛天地" },
+  { id: "prod-seven-schools", workspaceId: "ws-nanning-media", name: "七高校联合歌会", status: "active", plannedStartAt: "2026-11-07T14:00:00+08:00", plannedEndAt: "2026-11-07T22:00:00+08:00", venue: "广西文化艺术中心" },
+  { id: "prod-new-year-2027", workspaceId: "ws-nanning-media", name: "2027 跨年晚会", status: "completed", plannedStartAt: "2026-12-31T18:00:00+08:00", plannedEndAt: "2027-01-01T00:30:00+08:00", venue: "南宁剧场" },
 ];
 
 const pause = () => Promise.resolve();

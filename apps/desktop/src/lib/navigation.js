@@ -159,10 +159,10 @@ export function formatProductionDate(production) {
   if (!production) return "";
   // 日期区间按活动自己的时区展示；缺少时间时返回占位，避免 Invalid Date。
   const timezone = production.timezone || "Asia/Shanghai";
-  if (!production.startsAt || !production.endsAt) return "时间待定";
+  if (!production.plannedStartAt || !production.plannedEndAt) return "时间待定";
   const formatter = new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", timeZone: timezone });
-  const start = new Date(production.startsAt);
-  const end = new Date(production.endsAt);
+  const start = new Date(production.plannedStartAt);
+  const end = new Date(production.plannedEndAt);
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return "时间待定";
   return `${formatter.format(start)}–${formatter.format(end)}`;
 }
@@ -176,12 +176,12 @@ const isArchivedProduction = (item) => Boolean(item?.archivedAt) || item?.status
  * 侧栏二级菜单的活动预览选取规则（纯函数）：
  * active（进行中）→ upcoming（未开始）→ past（已结束）→ undated（时间待定），
  * archived 不进预览，只能通过「查看全部活动」到达；最多返回 limit 条。
- * upcoming 按 startsAt 升序（越临近越靠前）；past 按 endsAt 降序（越刚结束越靠前）。
+ * upcoming 按 plannedStartAt 升序（越临近越靠前）；past 按 plannedEndAt 降序（越刚结束越靠前）。
  */
 export function pickSidebarProductions(productions, { limit = SIDEBAR_PRODUCTION_PREVIEW_LIMIT, now = Date.now() } = {}) {
   if (!Array.isArray(productions)) return [];
-  const startedAt = (item) => (item.startsAt ? new Date(item.startsAt).getTime() : null);
-  const endedAt = (item) => (item.endsAt ? new Date(item.endsAt).getTime() : null);
+  const startedAt = (item) => (item.plannedStartAt ? new Date(item.plannedStartAt).getTime() : null);
+  const endedAt = (item) => (item.plannedEndAt ? new Date(item.plannedEndAt).getTime() : null);
   const valid = (value) => value !== null && !Number.isNaN(value);
   const buckets = { active: [], upcoming: [], past: [], undated: [] };
   for (const item of productions) {

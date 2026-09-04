@@ -14,10 +14,10 @@ func createProductionFor(t *testing.T, app *application, token, workspaceID, nam
 	t.Helper()
 	body := map[string]any{"name": name}
 	if startAt != "" {
-		body["start_at"] = startAt
+		body["planned_start_at"] = startAt
 	}
 	if endAt != "" {
-		body["end_at"] = endAt
+		body["planned_end_at"] = endAt
 	}
 	recorder := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/productions", body)
 	if recorder.Code != http.StatusCreated {
@@ -56,9 +56,12 @@ func TestCreateProductionRecordsWorkspaceAndCreator(t *testing.T) {
 	if creatorRole != "producer" {
 		t.Fatalf("creator role = %s, want producer", creatorRole)
 	}
-	// start_at 正确保存并返回（AC-P11）。
-	if _, err := time.Parse(time.RFC3339Nano, created["start_at"].(string)); err != nil {
-		t.Fatalf("start_at not RFC3339: %v", created["start_at"])
+	// 项目计划开始时间正确保存并返回。
+	if _, err := time.Parse(time.RFC3339Nano, created["planned_start_at"].(string)); err != nil {
+		t.Fatalf("planned_start_at not RFC3339: %v", created["planned_start_at"])
+	}
+	if created["actual_completed_at"] != nil {
+		t.Fatalf("new active production must not have actual_completed_at: %v", created["actual_completed_at"])
 	}
 }
 
@@ -234,6 +237,61 @@ func TestProductionArchiveLifecycle(t *testing.T) {
 	}
 }
 
+func TestProductionCompletionRecordsActualTimeAndRestores(t *testing.T) {
+	app := newIntegrationApp(t)
+	uid := createTestUser(t, app, "complete-"+newID()+"@example.test")
+	token := issueTestToken(t, app, uid)
+	workspace := createWorkspaceFor(t, app, token, "完成时间工作空间")
+	workspaceID := workspace["id"].(string)
+	plannedEnd := "2026-09-20T22:00:00Z"
+	created := createProductionFor(t, app, token, workspaceID, "项目周期活动", "2026-09-18T10:00:00Z", plannedEnd)
+	productionID := created["id"].(string)
+
+	completed := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/productions/"+productionID, map[string]any{"status": productionStatusCompleted})
+	if completed.Code != http.StatusOK {
+		t.Fatalf("complete status = %d body = %s", completed.Code, completed.Body.String())
+	}
+	var completedBody map[string]any
+	if err := json.Unmarshal(completed.Body.Bytes(), &completedBody); err != nil {
+		t.Fatalf("decode completed: %v", err)
+	}
+	if completedBody["status"] != productionStatusCompleted {
+		t.Fatalf("status = %v, want completed", completedBody["status"])
+	}
+	if completedBody["actual_completed_at"] == nil || completedBody["actual_completed_at"] == "" {
+		t.Fatal("completed production must have actual_completed_at")
+	}
+	if _, exists := completedBody["start_at"]; exists { t.Fatal("response must not contain legacy start_at") }
+	if _, exists := completedBody["end_at"]; exists { t.Fatal("response must not contain legacy end_at") }
+	if completedBody["planned_end_at"] != plannedEnd {
+		t.Fatalf("planned_end_at = %v, want %s", completedBody["planned_end_at"], plannedEnd)
+	}
+
+	archived := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/productions/"+productionID, map[string]any{"status": productionStatusArchived})
+	if archived.Code != http.StatusOK {
+		t.Fatalf("archive completed status = %d body = %s", archived.Code, archived.Body.String())
+	}
+	var archivedBody map[string]any
+	if err := json.Unmarshal(archived.Body.Bytes(), &archivedBody); err != nil {
+		t.Fatalf("decode archived completed: %v", err)
+	}
+	if archivedBody["actual_completed_at"] == nil {
+		t.Fatal("archiving completed production must preserve actual_completed_at")
+	}
+
+	active := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/productions/"+productionID, map[string]any{"status": productionStatusActive})
+	if active.Code != http.StatusOK {
+		t.Fatalf("restore status = %d body = %s", active.Code, active.Body.String())
+	}
+	var activeBody map[string]any
+	if err := json.Unmarshal(active.Body.Bytes(), &activeBody); err != nil {
+		t.Fatalf("decode restored: %v", err)
+	}
+	if activeBody["actual_completed_at"] != nil {
+		t.Fatalf("restored active production must clear actual_completed_at: %v", activeBody["actual_completed_at"])
+	}
+}
+
 func TestProductionRejectsInvalidTimeAndTimezone(t *testing.T) {
 	app := newIntegrationApp(t)
 	uid := createTestUser(t, app, "time-"+newID()+"@example.test")
@@ -243,7 +301,7 @@ func TestProductionRejectsInvalidTimeAndTimezone(t *testing.T) {
 
 	// end < start 必须拒绝（AC-P12）。
 	recorder := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/productions", map[string]any{
-		"name": "倒置时间活动", "start_at": "2026-09-20T22:00:00Z", "end_at": "2026-09-18T10:00:00Z",
+		"name": "倒置时间活动", "planned_start_at": "2026-09-20T22:00:00Z", "planned_end_at": "2026-09-18T10:00:00Z",
 	})
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("end<start create status = %d body = %s, want 400", recorder.Code, recorder.Body.String())

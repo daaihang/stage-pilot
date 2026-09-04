@@ -46,10 +46,10 @@ function InlineField({ value, displayValue, label, multiline = false, type = "te
 }
 
 function ProductionSummary({ workspace, production, editing, form, setField, onSave, disabled = false }) {
-  const fields = [[CalendarClock, "开始时间", "startsAt"], [CalendarClock, "结束时间", "endsAt"], [CalendarClock, "时区", "timezone"]];
+  const fields = [[CalendarClock, "项目开始", "plannedStartAt"], [CalendarClock, "预计完成", "plannedEndAt"], [CalendarClock, "项目时区", "timezone"]];
   return <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"><Card><CardHeader><CardDescription>主地点</CardDescription><CardTitle><ProductionLocations workspace={workspace} production={production} compact /></CardTitle></CardHeader></Card>{fields.map(([Icon, label, key]) => {
     const raw = editing ? form[key] : production[key];
-    const isTime = key === "startsAt" || key === "endsAt";
+    const isTime = key === "plannedStartAt" || key === "plannedEndAt";
     const display = raw ? (key === "venue" || key === "timezone" ? raw : formatProductionInstant(raw, production.timezone)) : (key === "venue" ? "待接入场地库" : "未设置");
     return <Card key={key}><CardHeader><CardDescription>{label}</CardDescription><CardTitle className="flex min-h-8 items-center gap-2 text-lg"><Icon className="size-4 shrink-0 text-muted-foreground" />{editing
       ? isTime
@@ -58,18 +58,18 @@ function ProductionSummary({ workspace, production, editing, form, setField, onS
       : <InlineField value={raw} displayValue={display} label={label} onSave={(value) => onSave(key, value)}>{isTime
         ? <DateTimePicker value={raw || ""} timezone={production.timezone} onChange={(instant) => onSave(key, instant)} placeholder="选择日期与时间" />
         : undefined}</InlineField>}</CardTitle></CardHeader></Card>;
-  })}</section>;
+  })}{production.actualCompletedAt && <Card><CardHeader><CardDescription>实际完成</CardDescription><CardTitle className="flex min-h-8 items-center gap-2 text-lg"><CheckCircle2 className="size-4 shrink-0 text-emerald-600" />{formatProductionInstant(production.actualCompletedAt, production.timezone)}</CardTitle></CardHeader></Card>}</section>;
 }
 
 export function ProductionOverviewPage({ workspace, production, onUpdateProduction, onLeaveCreation, creationBusy = false }) {
   const isCreationSession = Boolean(production.isCreationSession);
   const status = productionStatusLabel(production.status);
   const [editing, setEditing] = useState(isCreationSession);
-  const [form, setForm] = useState({ name: production.name || "", startsAt: production.startsAt || "", endsAt: production.endsAt || "", venue: production.venue || "", timezone: production.timezone || "Asia/Shanghai", description: production.description || "" });
-  useEffect(() => { if (!editing) setForm({ name: production.name || "", startsAt: production.startsAt || "", endsAt: production.endsAt || "", venue: production.venue || "", timezone: production.timezone || "Asia/Shanghai", description: production.description || "" }); }, [production.id, production.name, production.startsAt, production.endsAt, production.venue, production.timezone, production.description, editing]);
+  const [form, setForm] = useState({ name: production.name || "", plannedStartAt: production.plannedStartAt || "", plannedEndAt: production.plannedEndAt || "", venue: production.venue || "", timezone: production.timezone || "Asia/Shanghai", description: production.description || "" });
+  useEffect(() => { if (!editing) setForm({ name: production.name || "", plannedStartAt: production.plannedStartAt || "", plannedEndAt: production.plannedEndAt || "", venue: production.venue || "", timezone: production.timezone || "Asia/Shanghai", description: production.description || "" }); }, [production.id, production.name, production.plannedStartAt, production.plannedEndAt, production.venue, production.timezone, production.description, editing]);
   const setField = (key, value) => setForm((current) => ({ ...current, [key]: value }));
   const saveField = async (key, explicitValue) => onUpdateProduction?.({ [key]: explicitValue ?? form[key] });
-  const complete = Boolean(form.name?.trim() && !defaultActivityNamePattern.test(form.name.trim()) && form.startsAt && form.endsAt);
+  const complete = Boolean(form.name?.trim() && !defaultActivityNamePattern.test(form.name.trim()) && form.plannedStartAt && form.plannedEndAt);
   const checklist = useMemo(() => [[complete, Sparkles, "设置基本信息", "名称、时间、地点与简介"], [false, ClipboardCheck, "添加节目", "节目库和活动节目将在后续阶段接入", true], [false, UsersRound, "邀请工作人员", "人员与岗位模块将在后续阶段接入", true], [false, Workflow, "创建 Rundown", "流程编排将在后续阶段接入", true]], [complete]);
   return <div className="space-y-6"><ProductionPageHeader workspace={workspace} production={production} onLeaveCreation={isCreationSession ? onLeaveCreation : undefined} subtitle={isCreationSession ? "活动工作区 · 填写基础信息后创建正式活动" : `${workspace.name} · 活动工作区`} actions={<ProductionActions />} titleContent={<div className="flex flex-wrap items-center gap-3">{editing ? <Input className="h-9 w-full max-w-xl text-2xl font-semibold" value={form.name} disabled={creationBusy} onChange={(event) => setField("name", event.target.value)} onBlur={() => saveField("name")} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} maxLength={120} /> : <h1 className="flex items-center gap-1 truncate text-2xl font-semibold tracking-tight"><InlineField value={production.name} displayValue={production.name || "未命名活动"} label="活动名称" onSave={(value) => saveField("name", value)} /></h1>}{!isCreationSession && <Badge className={status.className} variant="secondary">{status.label}</Badge>}</div>} />
     <ProductionSummary workspace={workspace} production={production} editing={editing} form={form} setField={setField} onSave={saveField} disabled={creationBusy} />

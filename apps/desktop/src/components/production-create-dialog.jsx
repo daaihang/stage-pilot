@@ -11,8 +11,8 @@ import { DateTimePicker } from "@/components/reui/date-time-picker"
 export function CreateProductionDialog({ workspace, open, onOpenChange, onCreated }) {
   const [form, setForm] = useState({
     name: "",
-    startsAt: "",
-    endsAt: "",
+    plannedStartAt: "",
+    plannedEndAt: "",
     timezone: "Asia/Shanghai",
     description: "",
   })
@@ -32,13 +32,13 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
     }
 
     // 墙钟串按活动时区解释（不再依赖运行机器时区）。
-    const startsAt = wallClockToInstant(form.startsAt, form.timezone)
-    const endsAt = wallClockToInstant(form.endsAt, form.timezone)
-    if ((form.startsAt || form.endsAt) && (!startsAt || !endsAt)) {
+    const plannedStartAt = wallClockToInstant(form.plannedStartAt, form.timezone)
+    const plannedEndAt = wallClockToInstant(form.plannedEndAt, form.timezone)
+    if ((form.plannedStartAt || form.plannedEndAt) && (!plannedStartAt || !plannedEndAt)) {
       notify.error("日期时间格式无效", { description: "请重新选择开始或结束时间。" })
       return
     }
-    if (startsAt && endsAt && new Date(endsAt) < new Date(startsAt)) {
+    if (plannedStartAt && plannedEndAt && new Date(plannedEndAt) < new Date(plannedStartAt)) {
       notify.error("结束时间不能早于开始时间")
       return
     }
@@ -49,8 +49,8 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
         name,
         description: form.description,
         timezone: form.timezone,
-        startAt: startsAt,
-        endAt: endsAt,
+        plannedStartAt,
+        plannedEndAt,
       })
       notify.success(`已创建活动「${created.name}」`, { description: `时区：${created.timezone}` })
       onCreated?.(created)
@@ -75,12 +75,12 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <span className="text-sm font-medium">开始时间</span>
-              <DateTimePicker value={form.startsAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, startsAt: instant }))} placeholder="选择日期与时间" />
+                <span className="text-sm font-medium">项目开始时间</span>
+              <DateTimePicker value={form.plannedStartAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, plannedStartAt: instant }))} placeholder="选择日期与时间" />
             </div>
             <div className="space-y-1.5">
-              <span className="text-sm font-medium">结束时间</span>
-              <DateTimePicker value={form.endsAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, endsAt: instant }))} placeholder="选择日期与时间" />
+                <span className="text-sm font-medium">预计完成时间</span>
+              <DateTimePicker value={form.plannedEndAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, plannedEndAt: instant }))} placeholder="选择日期与时间" />
             </div>
           </div>
           <label className="block space-y-1.5">

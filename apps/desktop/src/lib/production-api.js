@@ -17,10 +17,10 @@ export async function listProductions(workspaceId, { status } = {}) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/productions${query}`);
 }
 
-export async function createProduction(workspaceId, { name, description = "", timezone = "Asia/Shanghai", startAt = null, endAt = null, status }) {
+export async function createProduction(workspaceId, { name, description = "", timezone = "Asia/Shanghai", plannedStartAt = null, plannedEndAt = null, status }) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/productions`, {
     method: "POST",
-    body: JSON.stringify({ name, description, timezone, start_at: startAt, end_at: endAt, ...(status ? { status } : {}) }),
+    body: JSON.stringify({ name, description, timezone, planned_start_at: plannedStartAt, planned_end_at: plannedEndAt, ...(status ? { status } : {}) }),
   });
 }
 
@@ -91,8 +91,9 @@ export function toProductionSummary(production) {
     workspaceId: production.workspace_id,
     name: production.name,
     status: production.status,
-    startsAt: production.start_at || "",
-    endsAt: production.end_at || "",
+    plannedStartAt: production.planned_start_at || "",
+    plannedEndAt: production.planned_end_at || "",
+    actualCompletedAt: production.actual_completed_at || null,
     venue: "",
     timezone: production.timezone,
     description: production.description || "",
