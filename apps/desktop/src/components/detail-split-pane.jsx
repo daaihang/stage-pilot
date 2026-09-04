@@ -424,7 +424,7 @@ export function DetailSplitPane({
         });
       }}
     >
-      <div className={cn("min-h-0 flex-1 overflow-y-auto", surfaceMode === "inline" ? "w-full" : "p-4 md:p-6")}>
+      <div className={cn("app-content-scroll min-h-0 flex-1 overflow-y-auto", surfaceMode === "inline" ? "w-full" : "p-4 md:p-6")}>
         <div className={cn("w-full", surfaceMode === "inline" ? "" : cn("mx-auto", contentWidthClassName[contentWidth] || contentWidthClassName.standard))}>{detail}</div>
       </div>
       {surfaceMode === "inline" && <div
