@@ -4,10 +4,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { notify } from "@/components/ui/sonner";
 import { updateMe, updatePassword } from "@/lib/auth";
 import { DeveloperTools } from "@/components/developer-tools";
 import { CreditCard, LockKeyhole, ShieldCheck } from "@/components/ui/icons";
+import { useUserPreferences } from "@/components/user-preferences-provider";
+import { getSupportedTimeZones, timeZoneCityLabel, timeZoneOffsetLabel } from "@/lib/timezone";
 
 function AccountProfile({ user, onUserUpdate }) {
   const [displayName, setDisplayName] = useState(user?.display_name || user?.name || "");
@@ -28,18 +31,20 @@ function AccountProfile({ user, onUserUpdate }) {
 function SettingRow({ title, description, value }) { return <div className="flex items-center justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{description}</p></div><div className="shrink-0">{value}</div></div>; }
 
 function PreferencesView({ theme, applyTheme, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange, sidebarRailEnabled, onSidebarRailChange, contentWidth, onContentWidthChange }) {
+  const { timezone, loading: timezoneLoading, updateTimezone } = useUserPreferences();
   const [notifications, setNotifications] = useState(true);
   const updateNotifications = (checked) => { setNotifications(checked); notify.success(checked ? "桌面通知已开启" : "桌面通知已关闭"); };
   const widths = [["standard", "标准"], ["wide", "宽"], ["full", "全宽"]];
   const titlebarModes = [["none", "无"], ["page", "当前页面名称"], ["app", "应用名称"]];
-  return <Card><CardHeader><CardTitle>偏好与通知</CardTitle><CardDescription>设置立即应用于当前桌面客户端，暂不写入服务端。</CardDescription></CardHeader><CardContent className="space-y-5">
+  const timezones = getSupportedTimeZones();
+  return <Card><CardHeader><CardTitle>偏好与通知</CardTitle><CardDescription>外观设置保存在当前客户端，时区偏好同步到你的账户。</CardDescription></CardHeader><CardContent className="space-y-5">
     <SettingRow title="主题" description="在浅色、深色和系统外观之间切换" value={<div className="flex gap-1">{[["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]].map(([value, label]) => <Button key={value} size="sm" variant={theme === value ? "secondary" : "outline"} onClick={() => { applyTheme(value); notify.info(`已切换到${label}主题`); }}>{label}</Button>)}</div>} />
     <SettingRow title="页面内容宽度" description="独占详情时控制内容画布；普通分栏始终填满各自栏位。" value={<div className="flex gap-1">{widths.map(([value, label]) => <Button key={value} size="sm" variant={contentWidth === value ? "secondary" : "outline"} onClick={() => onContentWidthChange(value)}>{label}</Button>)}</div>} />
     <SettingRow title="标题栏标题" description="选择窗口标题栏中央的显示内容；选择“无”后，移入标题栏仍可查看完整面包屑" value={<div className="flex gap-1" role="radiogroup" aria-label="标题栏标题">{titlebarModes.map(([value, label]) => <Button key={value} type="button" size="sm" variant={(value === "none" ? !showTitlebarTitle : showTitlebarTitle && titlebarTitleMode === value) ? "secondary" : "outline"} role="radio" aria-checked={value === "none" ? !showTitlebarTitle : showTitlebarTitle && titlebarTitleMode === value} onClick={() => { if (value === "none") onTitlebarVisibilityChange(false); else { if (!showTitlebarTitle) onTitlebarVisibilityChange(true); onTitlebarModeChange(value); } }}>{label}</Button>)}</div>} />
     <SettingRow title="侧栏边缘热区" description="紧贴侧栏的细条点击可展开或收起侧栏；关闭后仍可用 Ctrl+B 或标题栏按钮切换" value={<Switch checked={sidebarRailEnabled} onCheckedChange={onSidebarRailChange} />} />
     <SettingRow title="桌面通知" description="接收活动提醒和系统状态通知" value={<Switch checked={notifications} onCheckedChange={updateNotifications} />} />
     <SettingRow title="语言" description="多语言界面将在偏好服务接入后开放" value={<Badge variant="outline">中文（即将开放）</Badge>} />
-    <SettingRow title="时区" description="活动时间显示时区将在偏好服务接入后开放" value={<Badge variant="outline">Asia/Shanghai</Badge>} />
+    <SettingRow title="时区" description="用于没有业务专属时区的账户和工作空间时间展示" value={<Select value={timezone} onValueChange={(value) => updateTimezone(value).catch(() => {})} disabled={timezoneLoading}><SelectTrigger className="w-64"><SelectValue /></SelectTrigger><SelectContent>{timezones.map((value) => <SelectItem key={value} value={value}>{timeZoneCityLabel(value)} · {value} ({timeZoneOffsetLabel(new Date(), value)})</SelectItem>)}</SelectContent></Select>} />
   </CardContent></Card>;
 }
 

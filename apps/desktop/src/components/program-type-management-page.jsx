@@ -16,6 +16,8 @@ import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
 import { createProgramType, deleteProgramType, listProgramTypes, reorderProgramTypes, updateProgramType } from "@/lib/resource-api";
 import { roleAtLeast } from "@/lib/workspace-api";
+import { useUserPreferences } from "@/components/user-preferences-provider";
+import { formatInstantInTimeZone } from "@/lib/timezone";
 
 const initialForm = { name: "", color: "#2563eb", is_active: true, sort_order: 1 };
 
@@ -73,13 +75,7 @@ function displayPosition(value) {
   return Number.isInteger(sortOrder) && sortOrder >= 0 ? sortOrder + 1 : 1;
 }
 
-const formatDate = (value) => {
-  if (!value) return "-";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "-"
-    : new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(date);
-};
+const formatDate = (value, timezone) => value ? (formatInstantInTimeZone(value, timezone) || "-") : "-";
 
 function errorDescription(error) {
   if (!error) return "请求失败";
@@ -391,7 +387,7 @@ function ManagementSkeleton() {
   );
 }
 
-function ProgramTypeRow({ item, value, className, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
+function ProgramTypeRow({ item, value, className, timezone, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
   return (
     <SortableItem value={value || item.id} disabled={!reorderable} className={`border-b last:border-b-0 ${className || ""}`}>
         <div className={`${programTypeGridClassName(canWrite)} py-3 transition-colors hover:bg-muted/40`}>
@@ -414,7 +410,7 @@ function ProgramTypeRow({ item, value, className, canWrite, reorderable, pending
             <p className="text-sm tabular-nums">{Number(item.program_count ?? 0)}</p>
           </div>
           <div className="hidden min-w-28 text-right lg:block">
-            <p className="text-xs tabular-nums text-muted-foreground">{formatDate(item.updated_at)}</p>
+            <p className="text-xs tabular-nums text-muted-foreground">{formatDate(item.updated_at, timezone)}</p>
           </div>
           <div className="flex w-full items-center justify-center">
             <Switch
@@ -440,6 +436,7 @@ function ProgramTypeRow({ item, value, className, canWrite, reorderable, pending
 }
 
 export function ProgramTypeManagementPage({ workspace }) {
+  const { timezone } = useUserPreferences();
   const workspaceId = workspace.id;
   const canWrite = roleAtLeast(workspace.role, "admin");
   const [types, setTypes] = useState([]);
@@ -666,6 +663,7 @@ export function ProgramTypeManagementPage({ workspace }) {
                   key={item.id}
                   item={item}
                   value={item.id}
+                  timezone={timezone}
                   canWrite={canWrite}
                   reorderable={reorderable}
                   pendingToggleId={pendingToggleId}

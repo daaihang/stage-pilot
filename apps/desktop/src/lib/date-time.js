@@ -8,13 +8,14 @@
  */
 
 import { TZDate } from "@date-fns/tz";
+import { DEFAULT_TIMEZONE } from "@/lib/timezone";
+
+export { DEFAULT_TIMEZONE } from "@/lib/timezone";
 
 export const TIME_SLOT_STEP_MINUTES = 15;
 export const SLOTS_PER_DAY = (24 * 60) / TIME_SLOT_STEP_MINUTES;
 
 /** 非法/缺失时区的统一回退，与 formatProductionInstant 的约定一致。 */
-export const DEFAULT_TIMEZONE = "Asia/Shanghai";
-
 /**
  * 墙钟串（"2026-09-18T19:30" 或含秒）→ UTC instant（ISO 串）。
  * 按 timezone 解释墙钟；输入为空返回 ""；解析失败返回 ""，不抛错。

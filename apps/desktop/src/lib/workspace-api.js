@@ -1,4 +1,5 @@
 import { request } from "@/lib/auth";
+import { normalizeTimeZone } from "@/lib/timezone";
 
 /**
  * Workspace API 客户端。
@@ -140,10 +141,10 @@ export function memberInitials(member) {
   return userId ? [...userId].slice(0, 2).join("").toUpperCase() : "?";
 }
 
-export function formatMemberJoinedAt(member) {
+export function formatMemberJoinedAt(member, timezone) {
   const rawValue = firstMemberValue(member, ["created_at", "createdAt", "joined_at", "joinedAt"]);
   if (!rawValue) return "加入时间未知";
   const date = new Date(rawValue);
   if (Number.isNaN(date.getTime())) return "加入时间未知";
-  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "numeric", day: "numeric" }).format(date);
+  return new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "numeric", day: "numeric", timeZone: normalizeTimeZone(timezone) }).format(date);
 }
