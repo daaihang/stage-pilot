@@ -5,9 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-// 卡片型页面使用统一的响应式列数：窄屏 1 列，sm 2 列，xl 3 列，2xl 4 列。
-// 活动页和长期资源库共用该规则，避免各页在相同宽度下出现不同分栏。
-export const resourceGridClassName = "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+// 卡片型页面根据网格容器的实际宽度决定列数，而不是绑定窗口 viewport 断点。
+// 260px 是卡片保持可读性的最小宽度；卡片最大 400px，避免少量项目铺成横幅。
+// 活动页、资源库和场次网格共用该规则，因此右侧详情收窄主区时会自然重排。
+export const resourceGridClassName = "grid justify-items-start gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))] [&>*]:w-full [&>*]:max-w-[400px]";
 
 export function ResourcePage({
   title,
