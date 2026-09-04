@@ -114,8 +114,15 @@ export function DetailSplitPane({
     onOpenChange(false);
   }, [onOpenChange, setExclusiveMode]);
 
-  const canInline = open && containerWidth >= INLINE_MIN_WIDTH;
-  const desiredMode = open ? (canInline ? (exclusive ? "exclusive" : "inline") : "overlay") : null;
+  // Do not mount a surface until the host has a real size.  Otherwise the
+  // first render can briefly resolve to the narrow overlay geometry and then
+  // switch to the inline geometry once ResizeObserver reports the width,
+  // which makes the panel appear to enter from the wrong edge.
+  const hasMeasuredContainer = containerWidth > 0;
+  const canInline = open && hasMeasuredContainer && containerWidth >= INLINE_MIN_WIDTH;
+  const desiredMode = open && hasMeasuredContainer
+    ? (canInline ? (exclusive ? "exclusive" : "inline") : "overlay")
+    : null;
   const isInline = open && desiredMode === "inline";
   const isOverlay = open && desiredMode === "overlay";
   const constrainedWidth = clampDetailWidth(detailWidth, containerWidth || INLINE_MIN_WIDTH);
@@ -154,24 +161,35 @@ export function DetailSplitPane({
   useEffect(() => { onDetailWidthChange?.(constrainedWidth); }, [constrainedWidth, onDetailWidthChange]);
 
   useEffect(() => {
-    if (open) onPresentationChange?.(desiredMode);
+    if (open && desiredMode) onPresentationChange?.(desiredMode);
   }, [desiredMode, onPresentationChange, open]);
 
   // Keep one surface mounted through mode changes and the close transition.
   useEffect(() => {
     if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
-    if (open) {
+    if (open && desiredMode) {
       setSurfaceMode(desiredMode);
       if (!surfaceMountedRef.current) {
         surfaceMountedRef.current = true;
         setSurfaceMounted(true);
         setSurfacePhase("opening");
-        fallbackFrameRef.current = requestAnimationFrame(() => setSurfacePhase("open"));
+        // A single RAF can run before the browser paints the opening state,
+        // collapsing the transition into an immediate appearance. Two RAFs
+        // guarantee one painted closed frame, while still allowing the
+        // request to be cancelled when the user quickly reverses the action.
+        const openAfterPaint = () => {
+          if (!surfaceMountedRef.current || surfacePhaseRef.current !== "opening") return;
+          setSurfacePhase("open");
+        };
+        fallbackFrameRef.current = requestAnimationFrame(() => {
+          fallbackFrameRef.current = requestAnimationFrame(openAfterPaint);
+        });
       } else {
         setSurfacePhase("open");
       }
       return undefined;
     }
+    if (open) return undefined;
     if (surfaceMountedRef.current) setSurfacePhase("closing");
     return undefined;
   }, [desiredMode, open]);
@@ -372,15 +390,18 @@ export function DetailSplitPane({
         transform: isSurfaceOpen ? "translateX(0)" : "translateX(16px)",
       };
 
+  const effectiveSurfaceMode = surfaceMounted ? surfaceMode : (desiredMode || "overlay");
   return <div ref={containerRef} data-resizing={isResizing || undefined} className={cn("detail-split-pane relative flex h-full min-h-0 min-w-0", className)}>
-    <div className={cn("t-resize min-h-0 min-w-0 shrink-0 overflow-hidden", mainInert && "pointer-events-none")} style={{ width: mainWidth }} inert={mainInert || undefined} aria-hidden={mainInert || undefined}>{children}</div>
+    <div className={cn("t-resize flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden", mainInert && "pointer-events-none")} style={{ width: mainWidth }} inert={mainInert || undefined} aria-hidden={mainInert || undefined}>{children}</div>
     {surfaceMounted && surfaceMode === "exclusive" && <button type="button" aria-hidden="true" tabIndex={-1} className={cn("absolute inset-0 z-10 cursor-default border-0 bg-black/10 p-0 outline-none transition-opacity", isSurfaceOpen ? "opacity-100" : "pointer-events-none opacity-0")} onClick={exitExclusive} />}
     {surfaceMounted && <div
       ref={surfaceRef}
       data-detail-surface
+      data-detail-mode={surfaceMode}
+      data-detail-phase={surfacePhase}
       data-detail-closing={surfacePhase === "closing" ? "true" : undefined}
-      role={surfaceMode === "exclusive" ? "dialog" : "region"}
-      aria-modal={surfaceMode === "exclusive" ? "true" : undefined}
+      role={effectiveSurfaceMode === "exclusive" ? "dialog" : "region"}
+      aria-modal={effectiveSurfaceMode === "exclusive" ? "true" : undefined}
       aria-hidden={!isSurfaceOpen || undefined}
       aria-label={detailLabel}
       tabIndex={-1}
