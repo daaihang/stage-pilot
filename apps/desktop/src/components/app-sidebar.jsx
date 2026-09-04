@@ -69,7 +69,7 @@ function WorkspaceSwitcher({ workspace, production, recentContexts, onOpenRecent
   </DropdownMenuContent></DropdownMenu></SidebarMenuItem></SidebarMenu>;
 }
 
-function NavigationGroups({ groups, route, workspace, production, disabled = false, creationSession = false, account = false, accountReturnPath }) {
+function NavigationGroups({ groups, route, workspace, production, disabled = false, creationSession = false, account = false, accountReturnPath, onOpenAccountCenter }) {
   const canViewProductionMembers = production && (
     (Array.isArray(production.permissionKeys) && production.permissionKeys.includes("production.members.view"))
     || ["owner", "admin"].includes(workspace?.role)
@@ -84,15 +84,16 @@ function NavigationGroups({ groups, route, workspace, production, disabled = fal
       if (itemDisabled) {
         return <SidebarMenuItem key={page}><SidebarMenuButton disabled tooltip={`${label}（当前不可用）`} className="opacity-50 blur-[1px]"><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>;
       }
+      if (account && page === "developer" && onOpenAccountCenter) return <SidebarMenuItem key={page}><SidebarMenuButton isActive={active} tooltip={label} onClick={() => onOpenAccountCenter(page)}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>;
       return <SidebarMenuItem key={page}><SidebarMenuButton isActive={active} tooltip={label} render={<NavLink to={href} aria-current={active ? "page" : undefined} />}><Icon /><span>{label}</span></SidebarMenuButton></SidebarMenuItem>;
     })}</SidebarMenu>
   </SidebarGroup>);
 }
 
-function AccountNavigation({ route, returnPath, returnLabel = "返回工作空间" }) {
+function AccountNavigation({ route, returnPath, returnLabel = "返回工作空间", onOpenAccountCenter }) {
   return <>
     <SidebarGroup className="pb-0"><SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip={returnLabel} render={<NavLink to={returnPath || "/"} />}><ArrowLeft /><span className="truncate">{returnLabel}</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu></SidebarGroup>
-    <NavigationGroups groups={accountGroups} route={route} account accountReturnPath={returnPath} />
+    <NavigationGroups groups={accountGroups} route={route} account accountReturnPath={returnPath} onOpenAccountCenter={onOpenAccountCenter} />
   </>;
 }
 
@@ -100,7 +101,7 @@ export function AppSidebar({ route, workspace, production, recentContexts = [], 
   return <Sidebar collapsible="icon" {...props}>
     <SidebarHeader>{route?.mode === "account" || route?.mode === "work" ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" tooltip={route.mode === "work" ? "我的工作" : "账户中心"} className="group-data-[collapsible=icon]:justify-center"><div className="flex size-8 shrink-0 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">{route.mode === "work" ? <Sparkles className="size-4" /> : <UserRound className="size-4" />}</div><div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden"><span className="truncate text-sm font-medium">{route.mode === "work" ? "我的工作" : "账户中心"}</span><span className="truncate text-xs text-muted-foreground">{route.mode === "work" ? "全局工作上下文" : "个人设置"}</span></div></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : <WorkspaceSwitcher workspace={workspace} production={production} recentContexts={recentContexts} onOpenRecentContext={onOpenRecentContext} onCreateWorkspace={onCreateWorkspace} onManageWorkspaces={onManageWorkspaces} />}</SidebarHeader>
     <SidebarContent>
-      {route?.mode === "account" && <AccountNavigation route={route} returnPath={accountReturnPath} returnLabel={accountReturnLabel} />}
+      {route?.mode === "account" && <AccountNavigation route={route} returnPath={accountReturnPath} returnLabel={accountReturnLabel} onOpenAccountCenter={onOpenAccountCenter} />}
       {route?.mode === "production" && workspace && production && <>
         <SidebarGroup className="pb-0"><SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip={production.workspaceNavigable === false ? "返回我的活动" : `返回 ${workspace.name}`} onClick={(event) => { if (production?.isCreationSession && onLeaveCreation) { event.preventDefault(); onLeaveCreation(); } }} render={<NavLink to={production.workspaceNavigable === false ? "/work?tab=participating" : workspacePath(workspace.id, "home")} />}><ArrowLeft /><span className="truncate">{production.workspaceNavigable === false ? "我的活动" : workspace.name}</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu></SidebarGroup>
         <NavigationGroups groups={productionGroups} route={route} workspace={workspace} production={production} creationSession={Boolean(production?.isCreationSession)} />
