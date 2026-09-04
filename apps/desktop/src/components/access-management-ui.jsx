@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
 import { useTree } from "@headless-tree/react";
-import { AlertTriangle, Ellipsis, KeyRound, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Ellipsis, KeyRound, ShieldAlert, ShieldCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tree, TreeItem, TreeItemLabel } from "@/components/reui/tree";
+import { SettingsTabs } from "@/components/settings-tabs";
 
 export function AccessMembersLoadingState() {
   return <div className="space-y-3 p-4" aria-label="正在加载成员">{["one", "two", "three", "four"].map((key) => <div key={key} className="flex items-center gap-3 border-b pb-3 last:border-0"><Skeleton className="size-8 rounded-full" /><div className="min-w-0 flex-1 space-y-2"><Skeleton className="h-3 w-40" /><Skeleton className="h-3 w-56 max-w-full" /></div><Skeleton className="h-5 w-16" /><Skeleton className="h-5 w-20" /></div>)}</div>;
@@ -28,7 +29,15 @@ export function AccessPermissionTree({ groups, permissions }) {
   return <Tree tree={tree} indent={22} toggleIconType="chevron" aria-label="权限预览" aria-readonly="true" className="min-w-72">{tree.getItems().map((item) => { const itemState = state(item); return <TreeItem key={item.getId()} item={item} aria-checked={itemState === "indeterminate" ? "mixed" : itemState === "checked"}><TreeItemLabel className="min-w-0 not-in-data-[folder=true]:ps-5"><span className="flex min-w-0 items-center gap-2"><Checkbox checked={itemState === "checked"} indeterminate={itemState === "indeterminate"} disabled aria-checked={itemState === "indeterminate" ? "mixed" : itemState === "checked"} className="size-3.5" /><span className={item.isFolder() ? "font-medium" : "text-muted-foreground"}>{item.getItemName()}</span></span></TreeItemLabel></TreeItem>; })}</Tree>;
 }
 
-export function AccessRolePreview({ role, permissions, groups, scope, warning = "权限修改尚未接入。" }) {
+export function AccessRolesLayout({ roles, selectedRole, onRoleChange, permissionsForRole, groups, scopeForRole, header, warningForRole }) {
+  const role = roles.find((item) => item.key === selectedRole) || roles[0];
+  const permissions = permissionsForRole(role.key);
+  const roleGroups = roles.map((item) => [item.key, item.label, ShieldCheck]);
+  return <SettingsTabs groups={roleGroups} activeGroup={role.key} onGroupChange={onRoleChange} ariaLabel="角色"><AccessRolePreview role={role} permissions={permissions} groups={groups} scope={scopeForRole?.(role) || role.scope} warning={warningForRole?.(role) || "权限修改尚未接入。"} /></SettingsTabs>;
+}
+
+export function AccessRolePreview({ role, permissions, groups, scope, warning = "权限修改尚未接入。", warningTone = "warning" }) {
   const total = groups.flatMap((group) => group.permissions).length;
-  return <Card className="min-w-0"><CardHeader className="gap-4 border-b"><div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0 space-y-1"><div className="flex flex-wrap items-center gap-2"><CardTitle>{role.label}</CardTitle><Badge variant="primary-light" size="sm">只读预览</Badge></div><CardDescription>{role.description}</CardDescription></div><div className="flex shrink-0 gap-5 text-xs"><div><p className="text-muted-foreground">已授权权限</p><p className="mt-1 text-base font-semibold">{permissions.size} / {total}</p></div><div><p className="text-muted-foreground">作用范围</p><p className="mt-1 max-w-32 font-medium">{scope || role.scope}</p></div></div></div><div className="flex items-start gap-2 border-l-2 border-warning bg-warning/10 px-3 py-2 text-xs text-warning-foreground"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{warning}</span></div></CardHeader><CardContent className="min-w-0 space-y-3 p-4"><div className="flex items-center gap-2 text-sm font-medium"><KeyRound className="size-4" />权限树</div><div className="min-w-0 overflow-x-auto"><AccessPermissionTree groups={groups} permissions={permissions} /></div><p className="border-t pt-3 text-xs text-muted-foreground">父级复选框表示子权限状态：全部授权、部分授权或未授权。</p></CardContent></Card>;
+  const toneClass = warningTone === "danger" ? "border-destructive bg-destructive/10 text-destructive" : "border-warning bg-warning/10 text-warning-foreground";
+  return <Card className="min-w-0"><CardHeader className="gap-4 border-b"><div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0 space-y-1"><div className="flex flex-wrap items-center gap-2"><CardTitle>{role.label}</CardTitle><Badge variant={role.key === "owner" || role.key === "producer" ? "warning-light" : "primary-light"} size="sm">只读预览</Badge></div><CardDescription>{role.description}</CardDescription></div><div className="flex shrink-0 gap-5 text-xs"><div><p className="text-muted-foreground">已授权权限</p><p className="mt-1 text-base font-semibold">{permissions.size} / {total}</p></div><div><p className="text-muted-foreground">作用范围</p><p className="mt-1 max-w-32 font-medium">{scope || role.scope}</p></div></div></div><div className={`flex items-start gap-2 border-l-2 px-3 py-2 text-xs ${toneClass}`}><AlertTriangle className="mt-0.5 size-4 shrink-0" /><span>{warning}</span></div></CardHeader><CardContent className="min-w-0 space-y-3 p-4"><div className="flex items-center gap-2 text-sm font-medium"><KeyRound className="size-4" />权限树</div><div className="min-w-0 overflow-x-auto"><AccessPermissionTree groups={groups} permissions={permissions} /></div><p className="border-t pt-3 text-xs text-muted-foreground">父级复选框表示子权限状态：全部授权、部分授权或未授权。</p></CardContent></Card>;
 }

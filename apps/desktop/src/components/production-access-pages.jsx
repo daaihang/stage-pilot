@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/sonner";
-import { AccessMemberTable, AccessMembersLoadingState, AccessRolePreview } from "@/components/access-management-ui";
+import { AccessMemberTable, AccessMembersLoadingState, AccessRolesLayout } from "@/components/access-management-ui";
 import { ProductionPageHeader, useProductionActionFeedback } from "@/components/production-page-shell";
 import { ResourcePage } from "@/components/resource-page";
 import { addProductionMember, createProductionInvitation, listProductionMembers, revokeProductionMember, updateProductionMember } from "@/lib/production-api";
@@ -44,4 +44,4 @@ export function ProductionMembersPage({ production, workspace }) {
 }
 
 function DropdownAction({ label, onClick, destructive = false }) { return <div role="menuitem" tabIndex={0} className={`cursor-pointer px-2 py-1.5 text-sm hover:bg-muted ${destructive ? "text-destructive" : ""}`} onClick={onClick}>{label}</div>; }
-export function ProductionRolesPage({ workspace, production }) { const [selectedRole, setSelectedRole] = useState("producer"); const role = { key: selectedRole, label: labels[selectedRole], description: descriptions[selectedRole], scope: "当前活动" }; return <div className="space-y-6"><ProductionPageHeader workspace={workspace} production={production} title="角色与权限" subtitle={`${production.name} · 固定活动角色权限预览`} /><Tabs value={selectedRole} onValueChange={setSelectedRole}><TabsList variant="line" className="w-full justify-start border-b">{roles.map((item) => <TabsTrigger key={item} value={item}><ShieldCheck className="size-4" />{labels[item]}</TabsTrigger>)}</TabsList><TabsContent value={selectedRole} className="pt-4"><AccessRolePreview role={role} permissions={rolePermissions[selectedRole]} groups={productionPermissionGroups} scope="当前活动" warning="活动角色为系统固定角色，权限修改和自定义角色尚未接入。" /></TabsContent></Tabs></div>; }
+export function ProductionRolesPage({ workspace, production }) { const [selectedRole, setSelectedRole] = useState("producer"); const productionRoles = roles.map((key) => ({ key, label: labels[key], description: descriptions[key], scope: "当前活动" })); return <div className="space-y-6"><ProductionPageHeader workspace={workspace} production={production} title="角色与权限" subtitle={`${production.name} · 固定活动角色权限预览`} /><AccessRolesLayout roles={productionRoles} selectedRole={selectedRole} onRoleChange={setSelectedRole} permissionsForRole={(key) => rolePermissions[key]} groups={productionPermissionGroups} scopeForRole={() => "当前活动"} warningForRole={() => "活动角色为系统固定角色，权限修改和自定义角色尚未接入。"} /></div>; }

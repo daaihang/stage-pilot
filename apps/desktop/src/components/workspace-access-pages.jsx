@@ -25,7 +25,7 @@ import { WorkspacePageHeader } from "@/components/workspace-page-shell";
 import { ResourcePage } from "@/components/resource-page";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
-import { AccessMemberTable, AccessPermissionTree } from "@/components/access-management-ui";
+import { AccessMemberTable, AccessPermissionTree, AccessRolesLayout } from "@/components/access-management-ui";
 import {
   formatMemberJoinedAt,
   listWorkspaceMembers,
@@ -58,6 +58,11 @@ function MembersLoadingState() {
       ))}
     </div>
   );
+}
+
+export function WorkspaceRolesPage({ route, workspace }) {
+  const [selectedRole, setSelectedRole] = useState("owner");
+  return <div className="space-y-6"><WorkspacePageHeader workspace={workspace} role={workspace.role} title={route?.meta?.title || "角色与权限"} description={route?.meta?.description || "查看工作空间角色和可用权限范围。"} /><AccessRolesLayout roles={workspaceRoles} selectedRole={selectedRole} onRoleChange={setSelectedRole} permissionsForRole={getWorkspaceRolePermissions} groups={workspacePermissionGroups} scopeForRole={(role) => role.scope} warningForRole={(role) => role.key === "owner" ? "Owner 与成员管理权限会影响工作空间安全。权限树仅用于当前角色预览，权限修改尚未接入。" : "权限树仅用于当前角色预览，权限修改尚未接入。"} /></div>;
 }
 
 const memberFilterFields = [
@@ -343,7 +348,7 @@ function PermissionTree({ permissions }) {
   );*/
 }
 
-export function WorkspaceRolesPage({ route, workspace }) {
+function LegacyWorkspaceRolesPage({ route, workspace }) {
   const [selectedRole, setSelectedRole] = useState("owner");
   const role = workspaceRoles.find((item) => item.key === selectedRole) || workspaceRoles[0];
   const permissions = getWorkspaceRolePermissions(role.key);
