@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { ResourcePage, resourceGridClassName } from "@/components/resource-page";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
+import { useWindowDetail } from "@/components/window-detail-context";
 import { appStore } from "@/lib/app-store";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { createOrganizationContact, createResource, createVenueSpace, deleteOrganizationContact, deleteResource, deleteVenueSpace, getResource, listOrganizationContacts, listProgramTypes, listVenueTypes, listResource, listVenueSpaces, updateResource, resourceDefinitions } from "@/lib/resource-api";
@@ -38,7 +39,7 @@ function subtitle(type, item, types) { const cfg = configs[type]; const kind = t
 
 function CreateResourceDialog({ workspace, type, open, onOpenChange, programTypes, onCreated }) { const cfg = configs[type]; const [name, setName] = useState(""); const [kind, setKind] = useState(""); const [busy, setBusy] = useState(false); useEffect(() => { if (open) { setName(""); setKind(type === "programs" ? "" : selectOptions(type, programTypes)[0]?.[0] || ""); } }, [open, type]); useEffect(() => { if (open && type === "programs" && kind && !programTypes.some((item) => item.id === kind && item.is_active)) setKind(""); }, [kind, open, programTypes, type]); const submit = async (event) => { event.preventDefault(); if (!name.trim()) return notify.error(`请输入${resourceDefinitions[type].singular}名称`); const body = type === "programs" ? { name: name.trim(), program_type_id: kind || null } : type === "equipment" ? { name: name.trim(), category: kind, quantity_total: 1, ownership: "owned" } : { [cfg.primary]: name.trim(), [cfg.kind]: kind }; setBusy(true); const toast = notify.loading(`正在创建${resourceDefinitions[type].singular}…`); try { const item = await createResource(workspace.id, type, body); notify.success(`已创建${resourceDefinitions[type].singular}`, { id: toast }); onOpenChange(false); onCreated(item); } catch (error) { notify.error(`创建${resourceDefinitions[type].singular}失败`, { id: toast, description: error?.message || String(error) }); } finally { setBusy(false); } }; const options = selectOptions(type, programTypes); const selectItems = options.map(([value, label]) => ({ value: value || "unassigned", label })); return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={submit}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={selectItems} value={kind || "unassigned"} onValueChange={(value) => setKind(value === "unassigned" ? "" : value)}><SelectTrigger className="h-9 w-full"><SelectValue placeholder={`选择${cfg.label}`} /></SelectTrigger><SelectContent>{options.map(([value, label]) => <SelectItem key={value || "unassigned"} value={value || "unassigned"}>{label}</SelectItem>)}</SelectContent></Select></div><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "创建中…" : "创建"}</Button></div></form></DialogContent></Dialog>; }
 
-export function WorkspaceResourcePage({ workspace, resourceType }) {
+export function WorkspaceResourcePage({ workspace, resourceType, selectedResourceId }) {
   const type = resourceType;
   const cfg = configs[type];
   const navigate = useNavigate();
@@ -52,6 +53,26 @@ export function WorkspaceResourcePage({ workspace, resourceType }) {
   const [open, setOpen] = useState(false);
   const [types, setTypes] = useState([]);
   const requestSequence = useRef(0);
+  const triggerRefs = useRef(new Map());
+  const { registerDetail, setDetailOpen } = useWindowDetail();
+
+  useEffect(() => {
+    if (!selectedResourceId) {
+      setDetailOpen(false, { announce: false });
+      return undefined;
+    }
+    const triggerRef = triggerRefs.current.get(selectedResourceId) || { current: null };
+    triggerRefs.current.set(selectedResourceId, triggerRef);
+    const unregister = registerDetail({
+      key: `workspace-resource:${workspace.id}:${type}:${selectedResourceId}`,
+      detailLabel: `${resourceDefinitions[type].singular}详情`,
+      getDetail: () => <ResourceDetailPanel workspace={workspace} resourceType={type} resourceId={selectedResourceId} onClose={() => navigate(workspacePath(workspace.id, type))} onDeleted={() => navigate(workspacePath(workspace.id, type))} />,
+      triggerRef,
+      storageKey: "detailPane:workspace-resources:v1",
+    });
+    setDetailOpen(true, { announce: false });
+    return unregister;
+  }, [navigate, registerDetail, selectedResourceId, setDetailOpen, type, workspace]);
 
   const reload = useCallback(async () => {
     const requestId = ++requestSequence.current;
@@ -121,18 +142,27 @@ export function WorkspaceResourcePage({ workspace, resourceType }) {
     : total === 0
       ? { icon: cfg.icon, title: `还没有${resourceDefinitions[type].singular}`, description: "创建第一条资源，供后续活动持续复用。", action: canManage(workspace) ? <Button onClick={() => setOpen(true)}>新建{resourceDefinitions[type].singular}</Button> : null }
       : null;
+  const openResource = (item) => navigate(resourcePath(workspace.id, type, item.id));
   const Item = ({ item }) => {
     const Icon = cfg.icon;
+    const selected = selectedResourceId === item.id;
+    const itemRef = (node) => {
+      const ref = triggerRefs.current.get(item.id) || { current: null };
+      ref.current = node;
+      triggerRefs.current.set(item.id, ref);
+    };
     return view === "grid"
-      ? <Card className="cursor-pointer hover:bg-muted/40" onClick={() => navigate(resourcePath(workspace.id, type, item.id))}><CardHeader><div className="flex justify-between"><div className="flex size-10 items-center justify-center bg-primary/10 text-primary"><Icon className="size-5" /></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></div><CardTitle className="truncate text-base">{item[cfg.primary]}</CardTitle><CardDescription className="truncate">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</CardDescription></CardHeader><CardContent>{item.tags?.slice(0, 3).map((tag) => <Badge key={tag} variant="outline" className="mr-1">{tag}</Badge>)}</CardContent></Card>
-      : <button type="button" className="flex w-full items-center gap-3 border-b px-3 py-3 text-left last:border-b-0 hover:bg-muted/40" onClick={() => navigate(resourcePath(workspace.id, type, item.id))}><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><Icon className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{item[cfg.primary]}</p><p className="mt-1 flex items-center truncate text-xs text-muted-foreground">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 shrink-0 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</p></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></button>;
+      ? <button ref={itemRef} type="button" className={`text-left ${selected ? "ring-2 ring-primary" : ""}`} onClick={() => openResource(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openResource(item); } }} aria-current={selected ? "page" : undefined}><Card className="cursor-pointer hover:bg-muted/40"><CardHeader><div className="flex justify-between"><div className="flex size-10 items-center justify-center bg-primary/10 text-primary"><Icon className="size-5" /></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></div><CardTitle className="truncate text-base">{item[cfg.primary]}</CardTitle><CardDescription className="truncate">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</CardDescription></CardHeader><CardContent>{item.tags?.slice(0, 3).map((tag) => <Badge key={tag} variant="outline" className="mr-1">{tag}</Badge>)}</CardContent></Card></button>
+      : <button ref={itemRef} type="button" className={`flex w-full items-center gap-3 border-b px-3 py-3 text-left last:border-b-0 hover:bg-muted/40 ${selected ? "bg-muted/60" : ""}`} onClick={() => openResource(item)} aria-current={selected ? "page" : undefined}><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><Icon className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{item[cfg.primary]}</p><p className="mt-1 flex items-center truncate text-xs text-muted-foreground">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 shrink-0 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</p></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></button>;
   };
   const headerActions = type === "programs" ? <Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "program-types"))}><ListMusic />管理节目类型</Button> : type === "venues" ? <Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "venue-types"))}><ListMusic />管理场地类型</Button> : null;
 
   return <>
-    <ResourcePage title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} headerActions={headerActions} onCreate={canManage(workspace) ? () => setOpen(true) : undefined} loading={loading} empty={empty}>
+    <div className="app-content-scroll h-full min-h-0 overflow-x-hidden overflow-y-auto p-4 md:p-6">
+      <ResourcePage title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} headerActions={headerActions} onCreate={canManage(workspace) ? () => setOpen(true) : undefined} loading={loading} empty={empty}>
       {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <Card variant="flush"><CardContent className="p-0">{items.map((item) => <Item key={item.id} item={item} />)}</CardContent></Card>}
-    </ResourcePage>
+      </ResourcePage>
+    </div>
     <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} programTypes={types} onCreated={(item) => navigate(resourcePath(workspace.id, type, item.id))} />
   </>;
 }
@@ -239,22 +269,26 @@ const detailSelectOptions = (key, cfg, types) => key === "program_type_id"
       ? [["owned", "自有"], ["rented", "租赁"]]
       : cfg.defaults;
 
-export function ResourceDetailPage({ workspace, resourceType, resourceId }) {
+export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClose, onDeleted }) {
   const type = resourceType;
   const cfg = configs[type];
-  const navigate = useNavigate();
   const [item, setItem] = useState(null);
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let active = true;
     setLoading(true);
     setItem(null);
+    setError(null);
     getResource(workspace.id, type, resourceId)
       .then((result) => { if (active) setItem(result); })
       .catch((error) => {
-        if (active) notify.error(`无法加载${resourceDefinitions[type].singular}`, { description: error?.message || String(error) });
+        if (active) {
+          setError(error);
+          notify.error(`无法加载${resourceDefinitions[type].singular}`, { description: error?.message || String(error) });
+        }
       })
       .finally(() => { if (active) setLoading(false); });
     if (!["programs", "venues"].includes(type)) return () => { active = false; };
@@ -265,6 +299,8 @@ export function ResourceDetailPage({ workspace, resourceType, resourceId }) {
       });
     return () => { active = false; };
   }, [workspace.id, type, resourceId]);
+
+  useEffect(() => load(), [load]);
 
   const save = async (key, value) => {
     const toast = notify.loading("正在保存…");
@@ -282,20 +318,20 @@ export function ResourceDetailPage({ workspace, resourceType, resourceId }) {
     try {
       await deleteResource(workspace.id, type, resourceId);
       notify.success("已删除", { id: toast });
-      navigate(workspacePath(workspace.id, type));
+      onDeleted?.();
     } catch (error) {
       notify.error("删除失败", { id: toast, description: error?.message || String(error) });
     }
   };
 
-  if (loading) return <div className="p-6 text-sm text-muted-foreground">正在加载资源…</div>;
-  if (!item) return <Button onClick={() => navigate(workspacePath(workspace.id, type))}>返回资源库</Button>;
+  if (loading) return <div className="min-h-full p-6 text-sm text-muted-foreground">正在加载资源…</div>;
+  if (error || !item) return <div className="space-y-3 p-6"><p className="text-sm text-destructive">无法加载{resourceDefinitions[type].singular}</p><div className="flex gap-2"><Button variant="outline" onClick={load}>重试</Button><Button variant="ghost" onClick={onClose}>返回资源库</Button></div></div>;
 
-  return <div className="mx-auto max-w-3xl space-y-5">
-    <div className="flex justify-between">
+  return <div className="min-h-full space-y-5 p-5">
+    <div className="flex items-start justify-between gap-3">
       <div>
-        <Button variant="ghost" size="sm" onClick={() => navigate(workspacePath(workspace.id, type))}>返回{resourceDefinitions[type].title}</Button>
-        <h1 className="mt-2 text-2xl font-semibold">{item[cfg.primary]}</h1>
+        <p className="text-xs text-muted-foreground">{resourceDefinitions[type].title}</p>
+        <h1 className="mt-1 text-xl font-semibold">{item[cfg.primary]}</h1>
         <p className="text-sm text-muted-foreground">修改字段后在离开输入框时自动保存。</p>
       </div>
       {canManage(workspace) && <Button variant="destructive" size="sm" onClick={remove}><Trash2 />删除</Button>}

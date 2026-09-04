@@ -204,7 +204,7 @@ function GanttSettingsMenu({ viewConfig, onChange }) {
  * StagePilot 活动甘特图。
  * productions: Production[]（@/lib/navigation 的数据结构）
  */
-export function ProductionGantt({ productions, onOpenProduction }) {
+export function ProductionGantt({ productions, timeZone, onOpenProduction }) {
   const { resources: initialResources, events } = useMemo(
     () => productionsToGantt(productions),
     [productions]
@@ -270,6 +270,7 @@ export function ProductionGantt({ productions, onOpenProduction }) {
       resources={resources}
       apiRef={apiRef}
       locale={zhCN}
+      timeZone={timeZone}
       i18n={zhI18n}
       columns={columns}
       treePanel={{ width: 320, minWidth: 240, maxWidth: 480 }}

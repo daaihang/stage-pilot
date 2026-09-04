@@ -25,7 +25,7 @@ import { ProgramLibraryPage } from "@/components/program-library-page";
 import { ProgramTypeManagementPage } from "@/components/program-type-management-page";
 import { VenueTypeManagementPage } from "@/components/venue-type-management-page";
 import { FileTypeManagementPage } from "@/components/file-type-management-page";
-import { ResourceDetailPage, WorkspaceResourcePage } from "@/components/workspace-resource-pages";
+import { WorkspaceResourcePage } from "@/components/workspace-resource-pages";
 import { FilesPage } from "@/components/files-page";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { NavigationFailure, PlaceholderPage, ProductionsPage, WorkspaceHome } from "@/components/stagepilot-pages";
@@ -501,10 +501,8 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "program-types") content = <ProgramTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "venue-types") content = <VenueTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "file-types") content = <FileTypeManagementPage workspace={workspace} key={workspace.id} />;
-  else if (route.mode === "workspace" && route.page === "programs" && route.resourceId) content = <ResourceDetailPage workspace={workspace} resourceType="programs" resourceId={route.resourceId} />;
-  else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} />;
-  else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page) && route.resourceId) content = <ResourceDetailPage workspace={workspace} resourceType={route.page} resourceId={route.resourceId} />;
-  else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} />;
+  else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} selectedResourceId={route.resourceId} />;
+  else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} selectedResourceId={route.resourceId} />;
   else if (route.mode === "workspace" && route.page === "settings") content = <WorkspaceSettingsPage workspaceId={workspace.id} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} />;
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;
@@ -516,7 +514,9 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
 
-  const contentLayout = isAccountRoute && route?.page === "developer" && import.meta.env.DEV ? "workspace" : "document";
+  const resourceDetailLayout = route?.mode === "workspace" && ["programs", "people", "organizations", "venues", "equipment"].includes(route?.page);
+  const planningDetailLayout = route?.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route?.page);
+  const contentLayout = resourceDetailLayout || planningDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
 
   const handleWorkspaceCreated = async (created) => {
     await adoptCreatedWorkspace(created);
