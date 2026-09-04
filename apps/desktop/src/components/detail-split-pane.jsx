@@ -175,10 +175,7 @@ export function DetailSplitPane({
     if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) return;
     const bounds = containerRef.current?.getBoundingClientRect();
     if (!bounds || event.clientX - bounds.left < EXCLUSIVE_EXIT_WIDTH) return;
-    if (canInline) {
-      setExclusive(false);
-      notify.info("已退出独占详情");
-    } else closeDetail();
+    closeDetail();
   };
 
   const onKeyDown = (event) => {
@@ -196,7 +193,7 @@ export function DetailSplitPane({
   const onExclusiveKeyDown = (event) => {
     if (event.key !== "ArrowRight") return;
     event.preventDefault();
-    if (canInline) { setExclusive(false); notify.info("已退出独占详情"); } else closeDetail();
+    closeDetail();
   };
 
   const mainWidth = isInline ? `calc(100% - ${constrainedWidth + 1}px)` : "100%";
@@ -211,7 +208,7 @@ export function DetailSplitPane({
       <aside className={cn("min-h-0 shrink-0 overflow-y-auto bg-background transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", !inlineVisible && "pointer-events-none translate-x-2 opacity-0")} style={{ width: constrainedWidth }}>{detail}</aside>
     </div>}
     {open && !canInline && <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" overlayClassName="top-[var(--app-titlebar-height)] bottom-0" className="top-[var(--app-titlebar-height)] bottom-0 h-auto w-full max-w-none border-l shadow-none sm:w-[min(30rem,100vw)] sm:max-w-none" showCloseButton={false}>
+      <SheetContent side="right" overlayClassName="top-[var(--app-titlebar-height)] bottom-0" className="top-[var(--app-titlebar-height)] bottom-0 h-auto w-full max-w-none overflow-y-auto border-l shadow-none sm:w-[min(30rem,100vw)] sm:max-w-none" showCloseButton={false}>
         <SheetHeader className="sr-only"><SheetTitle>详情面板</SheetTitle><SheetDescription>当前选中内容的详情。</SheetDescription></SheetHeader>
         {detail}
       </SheetContent>
