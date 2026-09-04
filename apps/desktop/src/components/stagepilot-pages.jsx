@@ -1,18 +1,22 @@
-import { useNavigate } from "react-router-dom";
-import { RefreshCw, ServerOff, Sparkles } from "lucide-react";
-import { Link } from "react-router-dom";
+import { useMemo } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { CalendarDays, Clock3, RefreshCw, ServerOff, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatProductionDate, productionPath, workspacePath } from "@/lib/navigation";
+import { buildBreadcrumbItems, formatProductionDate, productionPath, workspacePath } from "@/lib/navigation";
+import { productionStatusLabel } from "@/lib/production-api";
 import { ProductionsViewSwitcher } from "@/components/productions/productions-view";
 
 export function PageBreadcrumbs({ route, workspace, production }) {
+  const items = buildBreadcrumbItems({ route, workspace, production });
+  if (!items.length) return null;
   return <Breadcrumb><BreadcrumbList>
-    <BreadcrumbItem><BreadcrumbLink render={<Link to={workspacePath(workspace.id, "home")} />}>{workspace.name}</BreadcrumbLink></BreadcrumbItem>
-    {route.mode === "production" && <><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbLink render={<Link to={workspacePath(workspace.id, "productions")} />}>活动</BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbLink render={<Link to={productionPath(workspace.id, production.id, "overview")} />}>{production.name}</BreadcrumbLink></BreadcrumbItem></>}
-    <BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{route.meta.title}</BreadcrumbPage></BreadcrumbItem>
+    {items.map((item, index) => <BreadcrumbItem key={`${item.label}-${index}`}>
+      {index > 0 && <BreadcrumbSeparator />}
+      {item.current || !item.to ? <BreadcrumbPage>{item.label}</BreadcrumbPage> : <BreadcrumbLink render={<Link to={item.to} />}>{item.label}</BreadcrumbLink>}
+    </BreadcrumbItem>)}
   </BreadcrumbList></Breadcrumb>;
 }
 
@@ -20,23 +24,28 @@ function PageIntro({ route, workspace, production, action }) {
   return <div className="space-y-4"><PageBreadcrumbs route={route} workspace={workspace} production={production} /><div className="flex items-start justify-between gap-4"><div className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{route.meta.title}</h1><p className="text-sm text-muted-foreground">{route.meta.description}</p></div>{action}</div></div>;
 }
 
-export function WorkspaceHome({ route, workspace, productions }) {
-  const next = productions[0];
-  return <div className="space-y-6"><PageIntro route={route} workspace={workspace} /><section className="grid gap-4 md:grid-cols-3">
-    <Card><CardHeader><CardDescription>工作空间</CardDescription><CardTitle className="text-lg">{workspace.name}</CardTitle></CardHeader><CardContent><Badge variant="secondary">{workspace.plan}</Badge></CardContent></Card>
-    <Card><CardHeader><CardDescription>活动数量</CardDescription><CardTitle className="text-3xl">{productions.length}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">来自后端的真实统计</CardContent></Card>
-    <Card><CardHeader><CardDescription>下一场活动</CardDescription><CardTitle className="text-lg">{next?.name ?? "暂无活动"}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{next ? `${formatProductionDate(next)} · ${next.venue}` : "创建活动后将在这里展示"}</CardContent></Card>
-  </section><Card className="border-dashed"><CardContent className="flex min-h-48 flex-col items-center justify-center gap-3 text-center"><Sparkles className="size-7 text-primary" /><div><p className="font-medium">StagePilot 工作台骨架已就绪</p><p className="mt-1 text-sm text-muted-foreground">待后续阶段开放待审核、排期冲突和团队动态。</p></div></CardContent></Card></div>;
+export function WorkspaceHome({ route, workspace, productions, onCreate, onViewProductions, onOpenCalendar }) {
+  const now = Date.now();
+  const sorted = useMemo(() => [...productions].sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0)), [productions]);
+  const upcoming = productions.filter((item) => item.startsAt && new Date(item.startsAt).getTime() >= now && item.status !== "archived").sort((a, b) => new Date(a.startsAt) - new Date(b.startsAt));
+  const active = productions.filter((item) => item.status === "active");
+  const archived = productions.filter((item) => item.status === "archived");
+  const next = upcoming[0] || active[0];
+  return <div className="space-y-6"><PageIntro route={route} workspace={workspace} action={<div className="flex flex-wrap gap-2"><Button onClick={onCreate}><Sparkles />新建活动</Button><Button variant="outline" onClick={onViewProductions}>查看全部活动</Button><Button variant="outline" onClick={onOpenCalendar}><CalendarDays />打开日历</Button></div>} /><section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"><Card><CardHeader><CardDescription>活动总数</CardDescription><CardTitle className="text-3xl">{productions.length}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">当前工作空间活动</CardContent></Card><Card><CardHeader><CardDescription>进行中</CardDescription><CardTitle className="text-3xl">{active.length}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">正在执行的活动</CardContent></Card><Card><CardHeader><CardDescription>已归档</CardDescription><CardTitle className="text-3xl">{archived.length}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">已归档活动</CardContent></Card></section><section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]"><Card><CardHeader><CardTitle>下一场活动</CardTitle><CardDescription>按活动时间排序</CardDescription></CardHeader><CardContent>{next ? <Link className="block border p-4 hover:bg-muted/50" to={productionPath(workspace.id, next.id)}><div className="flex items-start justify-between gap-4"><div><p className="font-medium">{next.name}</p><p className="mt-1 text-sm text-muted-foreground">{formatProductionDate(next)}{next.venue ? ` · ${next.venue}` : ""}</p></div><Badge variant="secondary">{productionStatusLabel(next.status).label}</Badge></div></Link> : <EmptyState icon={Clock3} title="暂无下一场活动" description="创建活动后，它会出现在这里。" />}</CardContent></Card><Card><CardHeader><CardTitle>活动概览</CardTitle><CardDescription>按时间和生命周期查看工作空间活动。</CardDescription></CardHeader><CardContent><EmptyState icon={Sparkles} title={productions.length ? "活动已就绪" : "还没有活动"} description={productions.length ? "打开活动列表查看完整信息。" : "从新建活动开始建立工作空间。"} /></CardContent></Card></section><Card><CardHeader><CardTitle>最近活动</CardTitle><CardDescription>根据最近创建或更新时间排列</CardDescription></CardHeader><CardContent>{sorted.length ? <div className="divide-y">{sorted.slice(0, 6).map((item) => <Link key={item.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0 hover:text-primary" to={productionPath(workspace.id, item.id)}><div className="flex size-8 items-center justify-center border"><Sparkles className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{item.name}</p><p className="text-xs text-muted-foreground">{formatProductionDate(item)}</p></div><Badge variant="outline">{productionStatusLabel(item.status).label}</Badge></Link>)}</div> : <EmptyState icon={Sparkles} title="还没有活动" description="从新建活动开始建立工作空间。" />}</CardContent></Card></div>;
 }
 
-export function ProductionsPage({ route, workspace, productions, loading, onCreateDraft }) {
+function EmptyState({ icon: Icon, title, description }) {
+  return <div className="flex min-h-24 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground"><Icon className="size-5" /><p className="font-medium text-foreground">{title}</p><p>{description}</p></div>;
+}
+
+export function ProductionsPage({ route, workspace, productions, loading, onCreate }) {
   const navigate = useNavigate();
-  const createDraft = () => {
-    const draft = onCreateDraft();
-    if (draft) navigate(productionPath(workspace.id, draft.id));
+  const createCreation = () => {
+    const session = onCreate();
+    if (session) navigate(productionPath(workspace.id, session.id));
   };
-  return <div className="space-y-6"><PageIntro route={route} workspace={workspace} action={<Button onClick={createDraft}>＋ 新建活动</Button>} />
-    <ProductionsViewSwitcher workspace={workspace} productions={productions} loading={loading} onCreate={createDraft} />
+  return <div className="space-y-6"><PageIntro route={route} workspace={workspace} action={<Button onClick={createCreation}>＋ 新建活动</Button>} />
+    <ProductionsViewSwitcher workspace={workspace} productions={productions} loading={loading} onCreate={createCreation} />
   </div>;
 }
 
