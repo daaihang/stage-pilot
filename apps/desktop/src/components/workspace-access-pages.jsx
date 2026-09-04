@@ -25,6 +25,7 @@ import { WorkspacePageHeader } from "@/components/workspace-page-shell";
 import { ResourcePage } from "@/components/resource-page";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
+import { AccessMemberTable, AccessPermissionTree } from "@/components/access-management-ui";
 import {
   formatMemberJoinedAt,
   listWorkspaceMembers,
@@ -129,7 +130,22 @@ function MemberActionMenu({ member }) {
 
 function MemberTable({ members }) {
   return (
-    <Table className="min-w-[720px]">
+    <AccessMemberTable
+      members={members}
+      displayName={memberDisplayName}
+      initials={memberInitials}
+      roleLabel={memberRoleLabel}
+      roleVariant={memberRoleBadgeVariant}
+      statusLabel={memberStatusLabel}
+      statusVariant={memberStatusBadgeVariant}
+      joinedAt={formatMemberJoinedAt}
+      onAction={(member) => <>
+        <DropdownMenuItem onClick={() => notify.info("修改角色尚未接入", { description: `${memberDisplayName(member)} 的成员操作当前仅支持查看。` })}>修改角色</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onClick={() => notify.info("移除成员尚未接入", { description: `${memberDisplayName(member)} 的成员操作当前仅支持查看。` })}>移除成员</DropdownMenuItem>
+      </>}
+    />
+    /*
       <TableHeader>
         <TableRow>
           <TableHead className="min-w-56">成员</TableHead>
@@ -160,7 +176,7 @@ function MemberTable({ members }) {
           </TableRow>
         ))}
       </TableBody>
-    </Table>
+    </Table>*/
   );
 }
 
@@ -280,7 +296,8 @@ function getPermissionNodeState(item, permissions) {
 }
 
 function PermissionTree({ permissions }) {
-  const tree = useTree({
+  return <AccessPermissionTree groups={workspacePermissionGroups} permissions={permissions} />;
+  /*const tree = useTree({
     initialState: { expandedItems: ["permissions", ...workspacePermissionGroups.map((group) => group.key)] },
     rootItemId: "permissions",
     getItemName: (item) => item.getItemData().label,
@@ -323,7 +340,7 @@ function PermissionTree({ permissions }) {
         );
       })}
     </Tree>
-  );
+  );*/
 }
 
 export function WorkspaceRolesPage({ route, workspace }) {
