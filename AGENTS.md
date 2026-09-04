@@ -17,3 +17,12 @@
 - Stage only files that belong to the task. Do not commit generated outputs, secrets, local tooling shims, debug artifacts, or unrelated user changes.
 - Do not push, open a pull request, or otherwise change remote Git state unless the user explicitly requests it.
 - If a task cannot be verified or committed because of an external blocker, report the blocker and leave unrelated changes untouched.
+
+## Window-level detail sidebar
+
+- `WindowDetailProvider` and `WindowDetailHost` in `apps/desktop/src/App.jsx` own the detail surface for the whole application window. Do not create a page-local `Sheet`, drawer, fixed detail layer, or duplicate `open` / width / exclusive state for a page that uses this surface.
+- A page that needs details adapts only by calling `useWindowDetail().registerDetail({ key, getDetail, triggerRef, storageKey })` and by wiring its trigger to `setDetailOpen`. Keep `key`, `storageKey`, and `triggerRef` stable; the trigger ref is used to restore focus after close.
+- Add routes with independent main/detail scrolling to the shell's `workspace` content-mode selection. Keep ordinary routes in `document` mode so their existing scroll, padding, and max-width behavior remains unchanged.
+- The titlebar is the single close and exclusive-toggle surface. Detail content must not add a second close button or overlap `var(--app-titlebar-height)`.
+- The host decides `inline`, `overlay`, and `exclusive` from the actual content container width. Preserve the `ResizeObserver`, width persistence, separator keyboard semantics, touch handling, focus restoration, reduced-motion behavior, and shared `notify` feedback when extending it.
+- When adding a new page adapter, read [`docs/window-detail-sidebar.md`](docs/window-detail-sidebar.md) before changing the shell or detail pane. Verify both responsive modes and run the desktop build before committing.
