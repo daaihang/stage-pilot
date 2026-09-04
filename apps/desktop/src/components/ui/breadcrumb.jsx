@@ -3,7 +3,7 @@ import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 
 import { cn } from "@/lib/utils"
-import { RiArrowRightSLine, RiMoreLine } from "@remixicon/react"
+import { RiArrowRightSLine, RiMoreLine } from "@/components/ui/icons"
 
 function Breadcrumb({
   className,

@@ -36,7 +36,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { RiFilter3Line } from "@remixicon/react"
+import { RiFilter3Line } from "@/components/ui/icons"
 
 /**
  * Projects ONLY the field tree: operators or values as nodes would force the

@@ -3,7 +3,7 @@ import {
   ArrowLeft, Building2, CalendarDays, CalendarRange, ClipboardCheck, ClipboardList, ContactRound, FileCog, FileText, FolderKanban,
   Gauge, KeyRound, LayoutTemplate, ListMusic, ListTree, MapPin, Mic2, MonitorCog, Package, Plus,
   Search, Settings, Sparkles, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { NavLink } from "react-router-dom";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,

@@ -18,7 +18,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { RiArrowUpDownLine, RiSparklingLine, RiUserLine, RiSettings3Line, RiLogoutBoxLine, RiVipCrownLine, RiTerminalBoxLine } from "@remixicon/react"
+import { RiArrowUpDownLine, RiSparklingLine, RiUserLine, RiSettings3Line, RiLogoutBoxLine, RiVipCrownLine, RiTerminalBoxLine } from "@/components/ui/icons"
 
 export function NavUser({
   user,

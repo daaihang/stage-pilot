@@ -17,7 +17,7 @@ import {
   RefreshCw,
   Trash2,
   UserRound,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { Sortable, SortableItem, SortableItemHandle } from "@/components/reui/sortable";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { ResourcePage } from "@/components/resource-page";

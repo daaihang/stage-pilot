@@ -39,7 +39,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { RiAddLine } from "@remixicon/react"
+import { RiAddLine } from "@/components/ui/icons"
 
 // Layout-effect on the client (measure before paint, no flash), plain effect on
 // the server (never runs there) to avoid the SSR useLayoutEffect warning.

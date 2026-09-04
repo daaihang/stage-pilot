@@ -13,7 +13,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
-import { RiArrowRightSLine } from "@remixicon/react"
+import { RiArrowRightSLine } from "@/components/ui/icons"
 
 export function NavMain({
   items

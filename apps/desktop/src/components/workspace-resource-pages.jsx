@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Building2, FileMusic, ListMusic, MapPin, Package, Plus, Trash2, UsersRound } from "lucide-react";
+import { Building2, FileMusic, ListMusic, MapPin, Package, Plus, Trash2, UsersRound } from "@/components/ui/icons";
 import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

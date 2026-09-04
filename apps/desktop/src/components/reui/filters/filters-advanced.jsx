@@ -70,7 +70,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { RiRefreshLine, RiErrorWarningLine, RiDraggable, RiArrowDownSLine, RiMoreLine, RiCloseLine, RiAddLine, RiFileCopyLine, RiSplitCellsHorizontal, RiDeleteBinLine, RiFilter3Line, RiFolderAddLine } from "@remixicon/react"
+import { RiRefreshLine, RiErrorWarningLine, RiDraggable, RiArrowDownSLine, RiMoreLine, RiCloseLine, RiAddLine, RiFileCopyLine, RiSplitCellsHorizontal, RiDeleteBinLine, RiFilter3Line, RiFolderAddLine } from "@/components/ui/icons"
 
 /* -------------------------------------------------------------------------- */
 /*                                  Columns                                   */

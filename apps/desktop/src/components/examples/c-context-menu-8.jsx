@@ -6,7 +6,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { RiArchiveLine, RiDeleteBinLine, RiPencilLine, RiUpload2Line } from "@remixicon/react"
+import { RiArchiveLine, RiDeleteBinLine, RiPencilLine, RiUpload2Line } from "@/components/ui/icons"
 
 export function ContextMenuDemo8() {
   return (

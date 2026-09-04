@@ -11,7 +11,7 @@ import {
   RiInformationLine,
   RiLoaderLine,
   RiErrorWarningLine,
-} from "@remixicon/react"
+} from "@/components/ui/icons"
 
 import { cn } from "@/lib/utils"
 import { useSidebar } from "@/components/ui/sidebar"

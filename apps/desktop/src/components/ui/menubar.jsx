@@ -3,7 +3,7 @@ import { Menubar as MenubarPrimitive } from "@base-ui/react/menubar"
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
 
 import { cn } from "@/lib/utils"
-import { RiArrowRightSLine, RiCheckLine } from "@remixicon/react"
+import { RiArrowRightSLine, RiCheckLine } from "@/components/ui/icons"
 
 function Menubar({ className, ...props }) {
   return (

@@ -22,7 +22,7 @@ import { addDays, format } from "date-fns"
 
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { RiCalendarLine } from "@remixicon/react"
+import { RiCalendarLine } from "@/components/ui/icons"
 
 function EventCalendarAgendaView({
   className,

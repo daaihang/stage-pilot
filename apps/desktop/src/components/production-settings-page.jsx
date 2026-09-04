@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Archive, Bell, Boxes, CheckCircle2, Eye, GitBranch, Link2, LockKeyhole, RotateCcw, Settings2, ShieldAlert, Trash2, UsersRound, Workflow, X } from "lucide-react";
+import { Archive, Bell, Boxes, CheckCircle2, Eye, GitBranch, Link2, LockKeyhole, RotateCcw, Settings2, ShieldAlert, Trash2, UsersRound, Workflow, X } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

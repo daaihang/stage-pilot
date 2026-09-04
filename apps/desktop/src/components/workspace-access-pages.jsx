@@ -7,7 +7,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   UsersRound,
-} from "lucide-react";
+} from "@/components/ui/icons";
 import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
 import { useTree } from "@headless-tree/react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";

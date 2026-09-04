@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
 import { updateMe, updatePassword } from "@/lib/auth";
 import { DeveloperTools } from "@/components/developer-tools";
-import { CreditCard, LockKeyhole, ShieldCheck } from "lucide-react";
+import { CreditCard, LockKeyhole, ShieldCheck } from "@/components/ui/icons";
 
 function AccountProfile({ user, onUserUpdate }) {
   const [displayName, setDisplayName] = useState(user?.display_name || user?.name || "");

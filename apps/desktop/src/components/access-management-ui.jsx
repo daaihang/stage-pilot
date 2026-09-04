@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
 import { useTree } from "@headless-tree/react";
-import { AlertTriangle, Ellipsis, KeyRound, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Ellipsis, KeyRound, ShieldAlert, ShieldCheck } from "@/components/ui/icons";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";

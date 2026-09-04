@@ -27,3 +27,12 @@
 - The host decides `inline`, `overlay`, and `exclusive` from the actual content container width. The inline separator only adjusts detail width; it must not switch to exclusive or close the detail at drag thresholds. Preserve the `ResizeObserver`, width persistence, separator keyboard semantics, touch handling, focus restoration, reduced-motion behavior, and shared `notify` feedback when extending it.
 - Exclusive detail is an inset work-area window. Use the current shadcn surface tokens (`bg-popover`, `text-popover-foreground`, `rounded-none`, `ring-1 ring-foreground/10`); a shadow may distinguish the exclusive layer. Narrow overlay detail is a full host-local page surface without a backdrop or blur; neither surface may cover the application titlebar or the persistent left `AppSidebar`.
 - When adding a new page adapter, read [`docs/window-detail-sidebar.md`](docs/window-detail-sidebar.md) before changing the shell or detail pane. Verify both responsive modes and run the desktop build before committing.
+
+## Icon system
+
+- Product UI uses Remix Icon `*Line` as the default icon family, matching `apps/desktop/components.json`. Use `*Fill` only for an approved brand, illustration, or state-specific exception.
+- Application and page code imports icons only from `@/components/ui/icons`. Direct imports from `lucide-react` or `@remixicon/react` are allowed only inside that adapter and documented special exceptions.
+- Prefer the adapter's semantic aliases (`Plus`, `Search`, `Trash2`, `Pencil`, `RefreshCw`, `PanelRightOpen`, etc.) or its `Icon`/`iconMap` registry. Do not introduce a second icon-library entry point.
+- Decorative icons must be `aria-hidden="true"` and `focusable="false"`; icon-only buttons must provide an accessible `aria-label` (or equivalent accessible name). Icons with their own `aria-label`, `role="img"`, `role="status"`, or title must remain exposed to assistive technology.
+- Keep icon sizing on existing shadcn tokens (`size-3`, `size-3.5`, `size-4`, `size-5`, and button/sidebar size variants) rather than hard-coding vendor defaults.
+- After adding or updating shadcn/ReUI components, search for raw icon-library imports and keep the adapter allowlist clean. Record the reason for every special-icon exception in `components/ui/icons.jsx`.

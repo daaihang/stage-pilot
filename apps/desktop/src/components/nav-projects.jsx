@@ -16,7 +16,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { RiMoreLine, RiFolderLine, RiShareForwardLine, RiDeleteBinLine } from "@remixicon/react"
+import { RiMoreLine, RiFolderLine, RiShareForwardLine, RiDeleteBinLine } from "@/components/ui/icons"
 
 export function NavProjects({
   projects

@@ -19,7 +19,7 @@ import { Combobox as ComboboxPrimitive } from "@base-ui/react"
 
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { RiLoader4Line } from "@remixicon/react"
+import { RiLoader4Line } from "@/components/ui/icons"
 
 /**
  * Miller columns: the open trail side by side, one panel per level. Only the

@@ -52,7 +52,7 @@ import { useRender } from "@base-ui/react/use-render"
 
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { RiArrowDownSLine, RiCloseLine } from "@remixicon/react"
+import { RiArrowDownSLine, RiCloseLine } from "@/components/ui/icons"
 
 /** Stable `filteredItems` for a level swap; a fixed identity cannot loop. */
 const EMPTY = []

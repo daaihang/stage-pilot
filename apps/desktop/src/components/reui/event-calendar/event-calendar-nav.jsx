@@ -36,7 +36,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { RiArrowLeftSLine, RiArrowRightSLine, RiArrowDownSLine, RiCalendarLine } from "@remixicon/react"
+import { RiArrowLeftSLine, RiArrowRightSLine, RiArrowDownSLine, RiCalendarLine } from "@/components/ui/icons"
 
 /** Configured nav button variant/size (viewConfig.navButtonVariant/Size)
  *  plus the shared classNames.navButton hook, merged on every nav button. */

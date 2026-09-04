@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Building2, Plus, Search, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, Building2, Plus, Search, SlidersHorizontal } from "@/components/ui/icons";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

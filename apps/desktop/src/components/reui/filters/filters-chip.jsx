@@ -60,7 +60,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { RiArrowRightSLine, RiCornerDownRightLine, RiFileCopyLine, RiArrowLeftRightLine, RiStackLine, RiEqualizer2Line, RiDeleteBinLine, RiCloseLine, RiMoreLine } from "@remixicon/react"
+import { RiArrowRightSLine, RiCornerDownRightLine, RiFileCopyLine, RiArrowLeftRightLine, RiStackLine, RiEqualizer2Line, RiDeleteBinLine, RiCloseLine, RiMoreLine } from "@/components/ui/icons"
 
 /** The ref half of `autoFocusProps`: a CALLBACK ref, the one shape an editor
  *  can spread onto any element without a cast, and a no-op here. */

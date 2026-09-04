@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Copy, Info, Minus, Moon, Power, Sparkles, Square, Terminal, X } from "lucide-react";
+import { Copy, Info, Minus, Moon, Power, Sparkles, Square, Terminal, X } from "@/components/ui/icons";
 import { HashRouter, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/app-sidebar";

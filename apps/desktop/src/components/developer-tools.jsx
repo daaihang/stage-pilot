@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-import { Bell, CheckCircle2, Clipboard, Copy, Eye, FileText, Folder, PanelRightOpen, RefreshCw, Terminal, Trash2, XCircle } from "lucide-react";
+import { Bell, CheckCircle2, Clipboard, Copy, Eye, FileText, Folder, PanelRightOpen, RefreshCw, Terminal, Trash2, XCircle } from "@/components/ui/icons";
 import { ContextMenuDemo1 } from "@/components/examples/c-context-menu-1";
 import { ContextMenuDemo2 } from "@/components/examples/c-context-menu-2";
 import { ContextMenuDemo3 } from "@/components/examples/c-context-menu-3";

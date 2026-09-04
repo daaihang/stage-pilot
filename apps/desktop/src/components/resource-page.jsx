@@ -1,4 +1,4 @@
-import { LayoutGrid, LayoutList, Plus, Search, SlidersHorizontal, X } from "lucide-react";
+import { LayoutGrid, LayoutList, Plus, Search, SlidersHorizontal, X } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";

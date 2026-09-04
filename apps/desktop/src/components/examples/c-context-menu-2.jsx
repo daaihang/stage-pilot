@@ -6,7 +6,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { RiClipboardLine, RiDeleteBinLine, RiFileCopyLine, RiScissorsLine } from "@remixicon/react"
+import { RiClipboardLine, RiDeleteBinLine, RiFileCopyLine, RiScissorsLine } from "@/components/ui/icons"
 
 export function ContextMenuDemo2() {
   return (

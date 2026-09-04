@@ -30,7 +30,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { RiRepeatLine } from "@remixicon/react"
+import { RiRepeatLine } from "@/components/ui/icons"
 
 /** Event color presets; each stays legible on light and dark surfaces. */
 const EVENT_CALENDAR_COLORS = [

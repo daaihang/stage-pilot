@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, GripVertical, ListMusic, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, GripVertical, ListMusic, Pencil, Plus, RefreshCw, Trash2 } from "@/components/ui/icons";
 import { Sortable, SortableItem, SortableItemHandle } from "@/components/reui/sortable";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { ResourcePage } from "@/components/resource-page";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, FileUp, Trash2 } from "lucide-react";
+import { Download, FileUp, Trash2 } from "@/components/ui/icons";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

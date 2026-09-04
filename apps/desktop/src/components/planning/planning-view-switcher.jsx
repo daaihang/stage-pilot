@@ -1,4 +1,4 @@
-import { CalendarDays, GanttChartSquare, LayoutGrid, LayoutList } from "lucide-react";
+import { CalendarDays, GanttChartSquare, LayoutGrid, LayoutList } from "@/components/ui/icons";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const viewIcons = { list: LayoutList, grid: LayoutGrid, calendar: CalendarDays, timeline: GanttChartSquare, agenda: LayoutList };

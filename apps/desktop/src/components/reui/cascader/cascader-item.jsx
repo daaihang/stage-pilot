@@ -22,7 +22,7 @@ import {
   RiCheckLine,
   RiRefreshLine,
   RiArrowRightSLine,
-} from "@remixicon/react";
+} from "@/components/ui/icons";
 
 // Each style's inline inset, as a variable: a row and its absolutely positioned
 // check have to land on the same number, in LOGICAL properties. These eight

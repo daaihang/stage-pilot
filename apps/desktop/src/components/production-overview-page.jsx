@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, CheckCircle2, Circle, ClipboardCheck, Copy, FileText, MapPin, MoreHorizontal, Pencil, Sparkles, UsersRound, Workflow } from "lucide-react";
+import { CalendarClock, CheckCircle2, Circle, ClipboardCheck, Copy, FileText, MapPin, MoreHorizontal, Pencil, Sparkles, UsersRound, Workflow } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

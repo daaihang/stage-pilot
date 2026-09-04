@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bell, Cable, Database, KeyRound, LockKeyhole, Save, Settings2, ShieldAlert } from "lucide-react";
+import { Bell, Cable, Database, KeyRound, LockKeyhole, Save, Settings2, ShieldAlert } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";

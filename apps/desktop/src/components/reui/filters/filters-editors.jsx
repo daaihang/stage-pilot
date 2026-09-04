@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { Input } from "@/components/ui/input"
-import { RiCheckLine, RiCloseLine } from "@remixicon/react"
+import { RiCheckLine, RiCloseLine } from "@/components/ui/icons"
 
 const IDLE = {
   items: [],

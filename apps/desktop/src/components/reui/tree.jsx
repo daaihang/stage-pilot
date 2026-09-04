@@ -5,7 +5,7 @@ import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 
 import { cn } from "@/lib/utils"
-import { RiSubtractLine, RiAddLine, RiArrowDownSLine } from "@remixicon/react"
+import { RiSubtractLine, RiAddLine, RiArrowDownSLine } from "@/components/ui/icons"
 
 const TreeContext = createContext({
   indent: 20,

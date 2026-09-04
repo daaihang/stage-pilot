@@ -1,26 +1,12 @@
 // Title: Icon Placeholder
 // Description: Multi-icon-library router. StagePilot standardizes on remixicon,
 // so this implementation resolves the remixicon prop by name from
-// @remixicon/react; the other library props are accepted for drop-in
-// compatibility with reui blocks. Unknown names render nothing instead of an
-// invalid custom element.
+// Remix icon names are resolved through the shared application icon boundary;
+// the other library props remain accepted for drop-in ReUI compatibility.
+// Unknown names render nothing instead of an invalid custom element.
 
-import {
-  RiAddLine,
-  RiArrowDownSLine,
-  RiArrowLeftSLine,
-  RiArrowRightSLine,
-  RiArrowUpSLine,
-  RiCalendarLine,
-  RiCheckLine,
-  RiCloseLine,
-  RiDraggable,
-  RiRepeatLine,
-  RiSettings3Line,
-  RiSubtractLine,
-  RiTimeLine,
-} from "@remixicon/react"
-import type { ComponentType } from "react"
+import type { ComponentProps, ComponentType } from "react"
+import { remixIconMap } from "@/components/ui/icons"
 
 type IconPlaceholderProps = ComponentProps<"svg"> & {
   lucide?: string
@@ -30,21 +16,7 @@ type IconPlaceholderProps = ComponentProps<"svg"> & {
   remixicon?: string
 }
 
-const remixIcons: Record<string, ComponentType<ComponentProps<"svg">>> = {
-  RiAddLine,
-  RiArrowDownSLine,
-  RiArrowLeftSLine,
-  RiArrowRightSLine,
-  RiArrowUpSLine,
-  RiCalendarLine,
-  RiCheckLine,
-  RiCloseLine,
-  RiDraggable,
-  RiRepeatLine,
-  RiSettings3Line,
-  RiSubtractLine,
-  RiTimeLine,
-}
+const remixIcons: Record<string, ComponentType<ComponentProps<"svg">>> = remixIconMap
 
 export function IconPlaceholder({
   lucide: _lucide,

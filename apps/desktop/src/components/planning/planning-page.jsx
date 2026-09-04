@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarRange, ClipboardList, ListTree, Pencil, Play, Square, XCircle } from "lucide-react";
+import { CalendarRange, ClipboardList, ListTree, Pencil, Play, Square, XCircle } from "@/components/ui/icons";
 import { ProductionPageHeader } from "@/components/production-page-shell";
 import { PlanningToolbar } from "@/components/planning/planning-toolbar";
 import { PlanningEmptyState } from "@/components/planning/planning-empty-state";

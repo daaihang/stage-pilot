@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { CalendarDays, Clock3, RefreshCw, ServerOff, Sparkles } from "lucide-react";
+import { CalendarDays, Clock3, RefreshCw, ServerOff, Sparkles } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
