@@ -7,7 +7,9 @@ import { Copy, Info, Minus, Moon, Power, Sparkles, Square, Terminal, X } from "l
 import { HashRouter, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/app-sidebar";
+import { AppContentLayout } from "@/components/app-content-layout";
 import { AccountCenter } from "@/components/account-center";
+import { DeveloperTools } from "@/components/developer-tools";
 import { NavigationProvider, useNavigationData } from "@/components/navigation-provider";
 import { WorkspaceProvider, useWorkspaceContext } from "@/components/workspace-provider";
 import { WorkspacesPage } from "@/components/workspaces-page";
@@ -469,6 +471,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   let content;
   if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
+  else if (isAccountRoute && route.page === "developer" && import.meta.env.DEV) content = <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} initialAction={new URLSearchParams(location.search).get("action")} />;
   else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} initialAction={new URLSearchParams(location.search).get("action")} />;
   else if (route?.mode === "invite") content = <ProductionInvitePage token={route.token} />;
   else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} />;
@@ -508,6 +511,8 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
 
+  const contentLayout = isAccountRoute && route?.page === "developer" && import.meta.env.DEV ? "workspace" : "document";
+
   const handleWorkspaceCreated = async (created) => {
     await adoptCreatedWorkspace(created);
     navigate(workspacePath(created.id), { replace: true });
@@ -518,7 +523,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const sidebarProduction = production;
   return <SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><div className="flex size-7 shrink-0 items-center justify-center text-primary" aria-label="StagePilot" title="StagePilot"><Sparkles className="size-4" /></div><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div>{showTitlebarTitle && <div className="pointer-events-none absolute left-1/2 max-w-[min(40vw,320px)] -translate-x-1/2 truncate px-2 text-xs font-medium" aria-live="polite">{pageTitle}</div>}<div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
-    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><div className="app-content-scroll min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6"><div className="mx-auto min-h-full min-w-0 max-w-6xl">{content}</div></div></SidebarInset></div>
+    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><AppContentLayout mode={contentLayout}>{content}</AppContentLayout></SidebarInset></div>
   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /></SidebarProvider>;
 }
 
