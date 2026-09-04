@@ -57,6 +57,20 @@ useEffect(() => registerDetail({
 
 页面不得再自行维护以下状态：`open`、详情宽度、嵌入/覆盖/独占模式。页面只读取 `detailOpen` 或 `detailPresentation` 来更新入口文案、详情说明等页面特有文本。
 
+## 工作空间资源库适配
+
+节目、人员、机构、场地和设备资源库使用同一套列表 + 详情适配器：
+
+- 列表页始终保留在主工作区，详情通过现有 `resourceId` 路由段驱动。
+- 资源详情路径分别为 `/w/:workspaceId/library/{resourceType}/:resourceId`；无资源 ID 时详情关闭。
+- `WorkspaceResourcePage` 使用 `useWindowDetail().registerDetail()` 注册 `ResourceDetailPanel`，并使用稳定的资源触发器 ref 恢复关闭后的焦点。
+- 资源库路由必须选择 `AppContentLayout` 的 `workspace` 模式；主列表和右侧详情各自滚动，不能回退到页面级 `Sheet` 或完整详情页替换列表。
+- 打开详情使用 `setDetailOpen(true, { announce: false })`，避免刷新、前进后退和深链产生重复提示。
+- 关闭、删除或返回资源库时只移除 `resourceId`，不得清空列表的搜索、筛选和视图状态。
+- 场地空间、机构联系人属于详情面板内的子资源，继续通过父资源 API 操作并显示共享 Toast。
+
+新增或修改资源库页面时，优先复用 `ResourceDetailPanel` 和现有资源配置；不要重新引入 `ResourceDetailPage`、页面私有抽屉或第二套详情布局。
+
 `DetailSplitPane` 只保留一个 `[data-detail-surface]` 详情节点。嵌入、独占和覆盖是同一节点的三种几何状态；页面详情内容不得为了不同宽度再渲染第二份。
 
 ## 何时使用 workspace 模式

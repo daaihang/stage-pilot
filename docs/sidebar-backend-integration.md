@@ -106,11 +106,11 @@ StagePilot
 | Workspace | `/w/:workspaceId/home` | 骨架 |
 | Workspace | `/w/:workspaceId/productions` | 已接真实 API（列表 / 网格 / 甘特视图 + 新建活动） |
 | Workspace | `/w/:workspaceId/calendar` | placeholder |
-| 资源库 | `/w/:workspaceId/library/programs` | placeholder |
-| 资源库 | `/w/:workspaceId/library/people` | placeholder |
-| 资源库 | `/w/:workspaceId/library/organizations` | placeholder |
-| 资源库 | `/w/:workspaceId/library/venues` | placeholder |
-| 资源库 | `/w/:workspaceId/library/equipment` | placeholder |
+| 资源库 | `/w/:workspaceId/library/programs` | `WorkspaceResourcePage` + `ResourceDetailPanel`，支持 `:resourceId` 右侧详情 |
+| 资源库 | `/w/:workspaceId/library/people` | `WorkspaceResourcePage` + `ResourceDetailPanel`，支持 `:resourceId` 右侧详情 |
+| 资源库 | `/w/:workspaceId/library/organizations` | `WorkspaceResourcePage` + `ResourceDetailPanel`，详情内管理机构联系人 |
+| 资源库 | `/w/:workspaceId/library/venues` | `WorkspaceResourcePage` + `ResourceDetailPanel`，详情内管理场地空间 |
+| 资源库 | `/w/:workspaceId/library/equipment` | `WorkspaceResourcePage` + `ResourceDetailPanel`，支持 `:resourceId` 右侧详情 |
 | Workspace | `/w/:workspaceId/templates` | placeholder |
 | Workspace | `/w/:workspaceId/settings` | 已接真实 API（General + Members） |
 | Production | `/w/:workspaceId/p/:productionId/overview` | 已接真实 API |

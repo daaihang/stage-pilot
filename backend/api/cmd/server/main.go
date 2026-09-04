@@ -485,6 +485,10 @@ func (app *application) updatePreferences(w http.ResponseWriter, r *http.Request
 		errorJSON(w, 400, "invalid_input", "标题栏模式无效")
 		return
 	}
+	if in.Timezone != "" && !validProductionTimezone(in.Timezone) {
+		errorJSON(w, 400, "invalid_input", "时区无效，需要 IANA 时区名称，例如 Asia/Shanghai")
+		return
+	}
 	_, err := app.db.Exec(r.Context(), "UPDATE user_preferences SET theme=COALESCE(NULLIF($1,''),theme),language=COALESCE(NULLIF($2,''),language),timezone=COALESCE(NULLIF($3,''),timezone),notifications_enabled=COALESCE($4,notifications_enabled),titlebar_title_mode=COALESCE(NULLIF($5,''),titlebar_title_mode),updated_at=NOW() WHERE user_id=$6", in.Theme, in.Language, in.Timezone, in.NotificationsEnabled, in.TitlebarTitleMode, claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
