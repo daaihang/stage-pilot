@@ -178,9 +178,12 @@ func (app *application) createPlanning(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if in.Timezone == "" {
-		in.Timezone = "Asia/Shanghai"
+	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
 	}
+	in.Timezone = activityTimezone
 	if in.Kind == "" {
 		if rehearsal {
 			in.Kind = "rehearsal"
@@ -235,6 +238,11 @@ func (app *application) updatePlanning(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	name, kind, tz := current.Name, current.Kind, current.Timezone
 	if in.Name != nil {
 		name = *in.Name
@@ -242,9 +250,7 @@ func (app *application) updatePlanning(w http.ResponseWriter, r *http.Request) {
 	if in.Kind != nil {
 		kind = *in.Kind
 	}
-	if in.Timezone != nil {
-		tz = *in.Timezone
-	}
+	tz = activityTimezone
 	start, end := current.ScheduledStartAt, current.ScheduledEndAt
 	if in.ScheduledStartAt.Present {
 		start = in.ScheduledStartAt.Value

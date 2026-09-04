@@ -360,15 +360,18 @@ func (app *application) createScheduleItem(w http.ResponseWriter, r *http.Reques
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	if in.ContextType == "" {
 		in.ContextType = "production"
 	}
 	if in.ItemType == "" {
 		in.ItemType = "other"
 	}
-	if in.Timezone == "" {
-		in.Timezone = "Asia/Shanghai"
-	}
+	in.Timezone = activityTimezone
 	if !validateScheduleItemInput(w, in.Title, in.ItemType, in.ContextType, in.Timezone, in.Start, in.End) || !app.validateScheduleContext(w, r, a, in.ContextType, in.OccurrenceID, in.RehearsalSessionID) || !app.validateScheduleLocations(w, r, a, in.ProductionLocationIDs) {
 		return
 	}
@@ -451,6 +454,11 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 		serverError(w, err)
 		return
 	}
+	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	title, itemType, ctxType, tz := current.Title, current.ItemType, current.ContextType, current.Timezone
 	if in.Title != nil {
 		title = *in.Title
@@ -461,9 +469,7 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 	if in.ContextType != nil {
 		ctxType = *in.ContextType
 	}
-	if in.Timezone != nil {
-		tz = *in.Timezone
-	}
+	tz = activityTimezone
 	start, end := current.ScheduledStartAt, current.ScheduledEndAt
 	if in.ScheduledStartAt.Present {
 		start = in.ScheduledStartAt.Value

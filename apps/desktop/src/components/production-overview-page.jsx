@@ -26,8 +26,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { formatProductionInstant, productionStatusLabel } from "@/lib/production-api";
-import { getSupportedTimeZones, timeZoneCityLabel } from "@/lib/timezone";
+import { getSupportedTimeZones, resolveWallClockTime, timeZoneCityLabel } from "@/lib/timezone";
+import { formatSlotLabel, instantToParts, toDateKey } from "@/lib/date-time";
+import { notify } from "@/components/ui/sonner";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { ProductionPageHeader } from "@/components/production-page-shell";
 import { ProductionDateTimePopoverField } from "@/components/production-overview/production-datetime-popover-field";
@@ -77,20 +81,68 @@ function validateTimezone(value, timezones) {
   return timezones.includes(value) ? null : "请选择有效的项目时区。";
 }
 
-function ProductionTimezoneField({ timezone, timezones, onSave, disabled = false }) {
+const TIMEZONE_KEEP_WALL_TIME = "keep_wall_time";
+const TIMEZONE_KEEP_INSTANT = "keep_instant";
+
+function ProductionTimezoneChangeDialog({ open, onOpenChange, currentTimezone, nextTimezone, strategy, onStrategyChange, onConfirm, busy }) {
+  return (
+    <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>更改活动时区</DialogTitle>
+          <DialogDescription>
+            {timeZoneCityLabel(currentTimezone)}（{currentTimezone}）→ {timeZoneCityLabel(nextTimezone)}（{nextTimezone}）。请选择如何处理已有的计划时间；实际发生时间不会改变。
+          </DialogDescription>
+        </DialogHeader>
+        <RadioGroup value={strategy} onValueChange={onStrategyChange} className="gap-2">
+          <label className="flex cursor-pointer items-start gap-2 border p-3">
+            <RadioGroupItem value={TIMEZONE_KEEP_WALL_TIME} className="mt-0.5" />
+            <span><span className="block text-sm font-medium">保持本地时间</span><span className="text-xs text-muted-foreground">活动、场次、彩排和安排的计划时间保持原来的墙钟时间，同时重新计算 UTC 时刻。</span></span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 border p-3">
+            <RadioGroupItem value={TIMEZONE_KEEP_INSTANT} className="mt-0.5" />
+            <span><span className="block text-sm font-medium">保持实际时间</span><span className="text-xs text-muted-foreground">保留 UTC 时刻不变，计划时间会按新时区显示为不同的本地时间。</span></span>
+          </label>
+        </RadioGroup>
+        <DialogFooter>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>
+          <Button type="button" disabled={busy} onClick={onConfirm}>{busy ? "保存中…" : "确认更改"}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ProductionTimezoneField({ timezone, timezones, onSave, disabled = false, isCreationSession = false }) {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const selectTimezone = async (nextTimezone) => {
+  const [pendingTimezone, setPendingTimezone] = useState("");
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [strategy, setStrategy] = useState(TIMEZONE_KEEP_WALL_TIME);
+  const selectTimezone = (nextTimezone) => {
     if (!nextTimezone || nextTimezone === timezone || saving) {
       setOpen(false);
       return;
     }
     if (validateTimezone(nextTimezone, timezones)) return;
+    setOpen(false);
+    setPendingTimezone(nextTimezone);
+    setStrategy(TIMEZONE_KEEP_WALL_TIME);
+    setDialogOpen(true);
+  };
+  const confirmTimezone = async () => {
+    if (!pendingTimezone || saving) return;
     setSaving(true);
+    const toast = notify.loading("正在更新活动时区…");
     try {
-      const result = await onSave(nextTimezone);
-      if (result !== false) setOpen(false);
+      const result = await onSave(pendingTimezone, strategy);
+      if (result !== false && result?.ok !== false) {
+        setDialogOpen(false);
+        setPendingTimezone("");
+        if (isCreationSession) notify.success("活动时区已更新");
+      }
     } finally {
+      notify.dismiss(toast);
       setSaving(false);
     }
   };
@@ -110,10 +162,11 @@ function ProductionTimezoneField({ timezone, timezones, onSave, disabled = false
         />
       </div>
     </div>
+    <ProductionTimezoneChangeDialog open={dialogOpen} onOpenChange={setDialogOpen} currentTimezone={timezone} nextTimezone={pendingTimezone} strategy={strategy} onStrategyChange={setStrategy} onConfirm={confirmTimezone} busy={saving} />
   </div>;
 }
 
-function ProductionSummary({ workspace, production, onSave, onLocationChanged, locationRefreshKey, disabled = false }) {
+function ProductionSummary({ workspace, production, onSave, onTimezoneSave, onLocationChanged, locationRefreshKey, disabled = false }) {
   const timezones = useMemo(() => getSupportedTimeZones(), []);
   const timezone = production.timezone || "Asia/Shanghai";
 
@@ -154,7 +207,7 @@ function ProductionSummary({ workspace, production, onSave, onLocationChanged, l
 
       <Card>
         <CardHeader>
-          <ProductionTimezoneField timezone={timezone} timezones={timezones} onSave={(value) => onSave("timezone", value)} disabled={disabled} />
+          <ProductionTimezoneField timezone={timezone} timezones={timezones} onSave={onTimezoneSave || ((value, strategy) => onSave("timezone", value, strategy))} isCreationSession={production.isCreationSession} disabled={disabled} />
         </CardHeader>
       </Card>
 
@@ -173,15 +226,36 @@ function ProductionSummary({ workspace, production, onSave, onLocationChanged, l
   );
 }
 
+function rebaseCreationInstant(instant, sourceTimezone, targetTimezone) {
+  if (!instant) return "";
+  const { date, minutes } = instantToParts(instant, sourceTimezone);
+  if (!date || minutes == null) return "";
+  const result = resolveWallClockTime(`${toDateKey(date)}T${formatSlotLabel(minutes)}`, targetTimezone);
+  return result.status === "valid" ? result.instant : "";
+}
+
 export function ProductionOverviewPage({ workspace, production, onUpdateProduction, onLeaveCreation, creationBusy = false }) {
   const isCreationSession = Boolean(production.isCreationSession);
   const status = productionStatusLabel(production.status);
   const [locationRefreshKey, setLocationRefreshKey] = useState(0);
 
-  const saveField = async (key, explicitValue) => {
+  const saveField = async (key, explicitValue, timezoneChangeStrategy) => {
     let value = explicitValue ?? "";
     if (key === "name" || key === "description") value = String(value).trim();
-    return onUpdateProduction?.({ [key]: value });
+    return onUpdateProduction?.({ [key]: value, ...(timezoneChangeStrategy ? { timezoneChangeStrategy } : {}) });
+  };
+  const saveTimezone = async (nextTimezone, changeStrategy) => {
+    if (!isCreationSession || changeStrategy === TIMEZONE_KEEP_INSTANT) {
+      return saveField("timezone", nextTimezone, changeStrategy);
+    }
+    const sourceTimezone = production.timezone || "Asia/Shanghai";
+    const plannedStartAt = rebaseCreationInstant(production.plannedStartAt, sourceTimezone, nextTimezone);
+    const plannedEndAt = rebaseCreationInstant(production.plannedEndAt, sourceTimezone, nextTimezone);
+    if ((production.plannedStartAt && !plannedStartAt) || (production.plannedEndAt && !plannedEndAt)) {
+      notify.error("无法同步活动时间", { description: "目标时区中的计划时间无效，请改用“保持实际时间”或先调整计划时间。" });
+      return false;
+    }
+    return onUpdateProduction?.({ timezone: nextTimezone, plannedStartAt, plannedEndAt });
   };
 
   const complete = Boolean(
@@ -238,7 +312,7 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
         }
       />
 
-      <ProductionSummary workspace={workspace} production={production} onSave={saveField} onLocationChanged={() => setLocationRefreshKey((value) => value + 1)} locationRefreshKey={locationRefreshKey} disabled={creationBusy} />
+      <ProductionSummary workspace={workspace} production={production} onSave={saveField} onTimezoneSave={saveTimezone} onLocationChanged={() => setLocationRefreshKey((value) => value + 1)} locationRefreshKey={locationRefreshKey} disabled={creationBusy} />
 
       <section className="grid gap-4 @min-[64rem]/production-overview:grid-cols-[minmax(0,1fr)_320px]">
         <Card>

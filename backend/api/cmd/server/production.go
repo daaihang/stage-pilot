@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -323,12 +324,13 @@ func (app *application) getProduction(w http.ResponseWriter, r *http.Request) {
 // updateProduction 支持部分更新；status=archived 时同时写入 archived_at（AC-P10）。
 func (app *application) updateProduction(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name           *string      `json:"name"`
-		Description    *string      `json:"description"`
-		Timezone       *string      `json:"timezone"`
-		PlannedStartAt optionalTime `json:"planned_start_at"`
-		PlannedEndAt   optionalTime `json:"planned_end_at"`
-		Status         *string      `json:"status"`
+		Name                   *string      `json:"name"`
+		Description            *string      `json:"description"`
+		Timezone               *string      `json:"timezone"`
+		TimezoneChangeStrategy *string      `json:"timezone_change_strategy"`
+		PlannedStartAt         optionalTime `json:"planned_start_at"`
+		PlannedEndAt           optionalTime `json:"planned_end_at"`
+		Status                 *string      `json:"status"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -338,45 +340,42 @@ func (app *application) updateProduction(w http.ResponseWriter, r *http.Request)
 		errorJSON(w, http.StatusForbidden, "production_forbidden", "只有 Producer 或工作空间管理者可以归档活动")
 		return
 	}
+	if in.TimezoneChangeStrategy != nil && *in.TimezoneChangeStrategy != keepWallTimeStrategy && *in.TimezoneChangeStrategy != keepInstantStrategy {
+		errorJSON(w, http.StatusBadRequest, "invalid_input", "时区变更策略无效")
+		return
+	}
 	if in.Name != nil || in.Description != nil || in.Timezone != nil || in.PlannedStartAt.Present || in.PlannedEndAt.Present || in.Status != nil {
-		name, description, timezone, plannedStartAt, plannedEndAt, status, ok := func() (string, string, string, *time.Time, *time.Time, string, bool) {
-			current, err := app.findProduction(r.Context(), access.WorkspaceID, access.ProductionID)
-			if err != nil {
-				serverError(w, err)
-				return "", "", "", nil, nil, "", false
-			}
-			mergedName := current.Name
-			if in.Name != nil {
-				mergedName = *in.Name
-			}
-			mergedDescription := current.Description
-			if in.Description != nil {
-				mergedDescription = *in.Description
-			}
-			mergedTimezone := current.Timezone
-			if in.Timezone != nil {
-				mergedTimezone = *in.Timezone
-			}
-			mergedStart := current.PlannedStartAt
-			if in.PlannedStartAt.Present {
-				mergedStart = in.PlannedStartAt.Value
-			}
-			mergedEnd := current.PlannedEndAt
-			if in.PlannedEndAt.Present {
-				mergedEnd = in.PlannedEndAt.Value
-			}
-			mergedStatus := current.Status
-			if in.Status != nil {
-				mergedStatus = *in.Status
-			}
-			return app.productionInput(w, mergedName, mergedDescription, mergedTimezone, mergedStart, mergedEnd, mergedStatus)
-		}()
-		if !ok {
-			return
-		}
 		current, err := app.findProduction(r.Context(), access.WorkspaceID, access.ProductionID)
 		if err != nil {
 			serverError(w, err)
+			return
+		}
+		mergedName := current.Name
+		if in.Name != nil {
+			mergedName = *in.Name
+		}
+		mergedDescription := current.Description
+		if in.Description != nil {
+			mergedDescription = *in.Description
+		}
+		mergedTimezone := current.Timezone
+		if in.Timezone != nil {
+			mergedTimezone = *in.Timezone
+		}
+		mergedStart := current.PlannedStartAt
+		if in.PlannedStartAt.Present {
+			mergedStart = in.PlannedStartAt.Value
+		}
+		mergedEnd := current.PlannedEndAt
+		if in.PlannedEndAt.Present {
+			mergedEnd = in.PlannedEndAt.Value
+		}
+		mergedStatus := current.Status
+		if in.Status != nil {
+			mergedStatus = *in.Status
+		}
+		name, description, timezone, plannedStartAt, plannedEndAt, status, ok := app.productionInput(w, mergedName, mergedDescription, mergedTimezone, mergedStart, mergedEnd, mergedStatus)
+		if !ok {
 			return
 		}
 		actualCompletedAt := current.ActualCompletedAt
@@ -386,7 +385,21 @@ func (app *application) updateProduction(w http.ResponseWriter, r *http.Request)
 		} else if status == productionStatusActive {
 			actualCompletedAt = nil
 		}
-		if _, err := app.db.Exec(r.Context(), `UPDATE productions SET name=$1,description=$2,timezone=$3,planned_start_at=$4,planned_end_at=$5,status=$6,actual_completed_at=$7,
+		strategy := keepInstantStrategy
+		if in.TimezoneChangeStrategy != nil {
+			strategy = *in.TimezoneChangeStrategy
+		}
+		if timezone != current.Timezone {
+			if err := app.updateProductionTimezone(r.Context(), access.WorkspaceID, access.ProductionID, name, description, timezone, plannedStartAt, plannedEndAt, status, actualCompletedAt, strategy); err != nil {
+				var rebaseErr *timezoneRebaseError
+				if errors.As(err, &rebaseErr) {
+					errorJSON(w, http.StatusBadRequest, rebaseErr.Code, rebaseErr.Message)
+				} else {
+					serverError(w, err)
+				}
+				return
+			}
+		} else if _, err := app.db.Exec(r.Context(), `UPDATE productions SET name=$1,description=$2,timezone=$3,planned_start_at=$4,planned_end_at=$5,status=$6,actual_completed_at=$7,
 			archived_at=CASE WHEN $6='archived' THEN COALESCE(archived_at,NOW()) ELSE NULL END,updated_at=NOW()
 			WHERE id=$8 AND workspace_id=$9 AND deleted_at IS NULL`,
 			name, description, timezone, plannedStartAt, plannedEndAt, status, actualCompletedAt, access.ProductionID, access.WorkspaceID); err != nil {

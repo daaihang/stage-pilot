@@ -389,6 +389,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
       if (Object.prototype.hasOwnProperty.call(patch, "name")) body.name = String(patch.name).trim();
       if (Object.prototype.hasOwnProperty.call(patch, "description")) body.description = String(patch.description ?? "").trim();
       if (Object.prototype.hasOwnProperty.call(patch, "timezone")) body.timezone = patch.timezone;
+      if (Object.prototype.hasOwnProperty.call(patch, "timezoneChangeStrategy")) body.timezone_change_strategy = patch.timezoneChangeStrategy;
       if (Object.prototype.hasOwnProperty.call(patch, "plannedStartAt")) body.planned_start_at = patch.plannedStartAt || null;
       if (Object.prototype.hasOwnProperty.call(patch, "plannedEndAt")) body.planned_end_at = patch.plannedEndAt || null;
       const hasVenuePatch = Object.prototype.hasOwnProperty.call(patch, "venue");
@@ -401,7 +402,9 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
         return true;
       }
       const updated = route?.direct ? await updateAccessibleProduction(production.id, body) : await updateProduction(workspace.id, production.id, body);
-      setProductionsByWorkspaceEntry(workspace.id, { ...toProductionSummary(updated), venue: localVenue });
+      const summary = { ...toProductionSummary(updated), venue: localVenue };
+      if (route?.direct) setDirectProductionState({ id: production.id, loading: false, value: summary, failed: false });
+      else setProductionsByWorkspaceEntry(workspace.id, summary);
       notify.success("活动信息已保存");
       return true;
     } catch (nextError) {
