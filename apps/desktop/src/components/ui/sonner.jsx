@@ -70,8 +70,8 @@ function NotificationToast({ id, type = "default", message, description, action,
     <div className="app-sonner-notification" data-type={type} role="status">
       <Icon className={cn("size-4 shrink-0", notificationIconColors[type] ?? notificationIconColors.default, type === "loading" && "animate-spin")} />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">{message}</p>
-        {description && <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted-foreground">{description}</p>}
+        <p className="text-xs font-medium leading-5">{message}</p>
+        {description && <p className="whitespace-pre-wrap text-[11px] leading-4 text-muted-foreground">{description}</p>}
       </div>
       {action && (
         <button
