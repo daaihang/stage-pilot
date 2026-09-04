@@ -82,6 +82,37 @@ export function accountPath(page = "profile", from) {
   return from ? `${path}?from=${encodeURIComponent(from)}` : path;
 }
 
+/**
+ * Shared navigation model for page and titlebar breadcrumbs.
+ * The model intentionally contains routes only; callers decide how to render it.
+ */
+export function buildBreadcrumbItems({ route, workspace, production } = {}) {
+  if (!route) return [];
+  if (route.mode === "account") {
+    return [
+      { label: "账户", to: accountPath("profile") },
+      { label: route.meta?.title || "个人资料", current: true },
+    ];
+  }
+  if (route.mode === "work") return [{ label: "我的工作", current: true }];
+  if (route.mode === "invite") return [{ label: "活动邀请", current: true }];
+  if (route.mode !== "workspace" && route.mode !== "production") return [];
+  if (!workspace) return [];
+
+  const items = [{ label: workspace.name, to: workspacePath(workspace.id, "home") }];
+  if (route.mode === "production") {
+    items.push({ label: "活动", to: workspacePath(workspace.id, "productions") });
+    if (production) {
+      items.push({
+        label: production.isCreationSession ? "新建活动" : production.name,
+        to: production.isCreationSession ? undefined : productionPath(workspace.id, production.id, "overview"),
+      });
+    }
+  }
+  items.push({ label: route.meta?.title || "当前页面", current: true });
+  return items;
+}
+
 export function resolveAccountReturnTarget(search, fallback) {
   const candidate = new URLSearchParams(search || "").get("from");
   if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//") || candidate.startsWith("/account")) return fallback;
