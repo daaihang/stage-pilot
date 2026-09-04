@@ -8,10 +8,10 @@ export function PageDetailTitlebarAction() {
   const { detailAction } = usePageChrome();
   if (!detailAction) return null;
   return <>
-    {detailAction.onToggleExclusive && <Button type="button" data-detail-titlebar-control variant="ghost" size="icon-sm" className="h-full w-[38px]" onClick={detailAction.onToggleExclusive} aria-label={detailAction.exclusive ? "恢复详情侧栏" : "让详情独占工作区"} title={detailAction.exclusive ? "恢复详情侧栏" : "让详情独占工作区"}>
+    {detailAction.onToggleExclusive && <Button type="button" data-detail-titlebar-control variant="ghost" size="icon-sm" className="shrink-0" onClick={detailAction.onToggleExclusive} aria-label={detailAction.exclusive ? "恢复详情侧栏" : "让详情独占工作区"} title={detailAction.exclusive ? "恢复详情侧栏" : "让详情独占工作区"}>
       {detailAction.exclusive ? <PanelRightOpen className="size-4" /> : <Maximize2 className="size-4" />}
     </Button>}
-    <Button type="button" data-detail-titlebar-control variant="ghost" size="icon-sm" className="h-full w-[38px]" onClick={detailAction.onClose} aria-label="关闭详情面板" title="关闭详情面板"><PanelRightClose className="size-4" /></Button>
+    <Button type="button" data-detail-titlebar-control variant="ghost" size="icon-sm" className="shrink-0" onClick={detailAction.onClose} aria-label="关闭详情面板" title="关闭详情面板"><PanelRightClose className="size-4" /></Button>
   </>;
 }
 
