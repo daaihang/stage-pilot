@@ -28,7 +28,7 @@ export function ProductionDateTimePopoverField({
           value={draft}
           timezone={timezone}
           active={open}
-          showFooter={false}
+          showApply={false}
           disabled={editorDisabled}
           onDraftChange={setDraft}
         />

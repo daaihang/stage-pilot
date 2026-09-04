@@ -25,9 +25,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatProductionInstant, productionStatusLabel } from "@/lib/production-api";
-import { getSupportedTimeZones, timeZoneCityLabel, timeZoneOffsetLabel } from "@/lib/timezone";
+import { getSupportedTimeZones, timeZoneCityLabel } from "@/lib/timezone";
+import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { ProductionPageHeader } from "@/components/production-page-shell";
 import { ProductionDateTimePopoverField } from "@/components/production-overview/production-datetime-popover-field";
 import { ProductionLocationPopover } from "@/components/production-overview/production-location-popover";
@@ -128,16 +128,7 @@ function ProductionSummary({ production, onSave, disabled = false }) {
             validate={(value) => validateTimezone(value, timezones)}
             onSave={(value) => onSave("timezone", value)}
             renderEditor={({ draft, setDraft, disabled: editorDisabled, id }) => (
-              <Select value={draft || timezone} onValueChange={setDraft} disabled={editorDisabled}>
-                <SelectTrigger id={id} className="w-full"><SelectValue placeholder="选择项目时区" /></SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {timezones.map((value) => (
-                    <SelectItem key={value} value={value}>
-                      {timeZoneCityLabel(value)} · {value} ({timeZoneOffsetLabel(new Date(), value)})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                 <TimezoneCombobox value={draft || timezone} onValueChange={setDraft} disabled={editorDisabled} autoFocus className="w-full" />
             )}
           />
         </CardHeader>

@@ -26,6 +26,7 @@ export function ProductionFieldPopover({
   validate,
   disabled = false,
   contentClassName = "w-72",
+  triggerRef: restoreFocusRef,
   hideFieldLabel = false,
 }) {
   const [open, setOpen] = useState(false);
@@ -35,7 +36,8 @@ export function ProductionFieldPopover({
   const fieldId = useId();
   const contentRef = useRef(null);
   const editorRef = useRef(null);
-  const triggerRef = useRef(null);
+  const fallbackTriggerRef = useRef(null);
+  const triggerRef = restoreFocusRef || fallbackTriggerRef;
 
   const isDirty = draft !== (value ?? "");
 
@@ -44,7 +46,7 @@ export function ProductionFieldPopover({
       setDraft(value ?? "");
       setError("");
       const frame = requestAnimationFrame(() => {
-        const firstControl = editorRef.current || contentRef.current?.querySelector("input, textarea, [data-slot='select-trigger'], [data-field-control]");
+        const firstControl = editorRef.current || contentRef.current?.querySelector("input, textarea, [data-slot='select-trigger'], [data-slot='combobox-input'], [data-field-control]");
         firstControl?.focus?.();
       });
       return () => cancelAnimationFrame(frame);

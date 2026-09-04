@@ -76,6 +76,7 @@ export function ProductionOverviewField({
               disabled={disabled}
               contentClassName={contentClassName}
               trigger={trigger}
+              triggerRef={triggerRef}
             />
           )}
         </ValueElement>
