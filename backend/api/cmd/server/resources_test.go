@@ -85,16 +85,45 @@ func TestVenueTypesAndLegacyKindCompatibility(t *testing.T) {
 	token := issueTestToken(t, app, owner)
 	workspaceID := createWorkspaceFor(t, app, token, "场地类型测试")["id"].(string)
 	listed := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/venue-types", nil)
-	if listed.Code != http.StatusOK { t.Fatalf("list venue types = %d: %s", listed.Code, listed.Body.String()) }
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list venue types = %d: %s", listed.Code, listed.Body.String())
+	}
 	items, total := decodeResourceList(t, listed.Body.Bytes())
-	if len(items) != 10 || total != 10 { t.Fatalf("venue defaults = %d/%d, want 10/10", len(items), total) }
-	created := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name":"旧客户端场地","kind":"hall"})
-	if created.Code != http.StatusCreated { t.Fatalf("legacy venue create = %d: %s", created.Code, created.Body.String()) }
+	if len(items) != 10 || total != 10 {
+		t.Fatalf("venue defaults = %d/%d, want 10/10", len(items), total)
+	}
+	created := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "旧客户端场地", "kind": "hall"})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("legacy venue create = %d: %s", created.Code, created.Body.String())
+	}
 	var venue map[string]any
-	if err := json.Unmarshal(created.Body.Bytes(), &venue); err != nil { t.Fatal(err) }
-	if venue["venue_type_id"] == nil || venue["kind"] != "hall" { t.Fatalf("legacy venue response = %#v", venue) }
+	if err := json.Unmarshal(created.Body.Bytes(), &venue); err != nil {
+		t.Fatal(err)
+	}
+	if venue["venue_type_id"] == nil || venue["kind"] != "hall" {
+		t.Fatalf("legacy venue response = %#v", venue)
+	}
 	protected := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venue-types/"+items[0]["id"].(string)+"/delete", map[string]any{})
-	if protected.Code != http.StatusConflict { t.Fatalf("delete system venue type = %d: %s", protected.Code, protected.Body.String()) }
+	if protected.Code != http.StatusConflict {
+		t.Fatalf("delete system venue type = %d: %s", protected.Code, protected.Body.String())
+	}
+	other := createTestUser(t, app, "venue-type-other-"+newID()+"@example.test")
+	otherToken := issueTestToken(t, app, other)
+	otherWorkspaceID := createWorkspaceFor(t, app, otherToken, "其他场地类型")["id"].(string)
+	otherListed := authedRequest(t, app, otherToken, http.MethodGet, "/v1/workspaces/"+otherWorkspaceID+"/venue-types", nil)
+	otherItems, _ := decodeResourceList(t, otherListed.Body.Bytes())
+	cross := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "跨空间类型", "venue_type_id": otherItems[0]["id"]})
+	if cross.Code != http.StatusBadRequest {
+		t.Fatalf("cross workspace venue type = %d: %s", cross.Code, cross.Body.String())
+	}
+	deactivate := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/venue-types/"+items[1]["id"].(string), map[string]any{"is_active": false})
+	if deactivate.Code != http.StatusOK {
+		t.Fatalf("deactivate venue type = %d: %s", deactivate.Code, deactivate.Body.String())
+	}
+	blocked := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "停用类型场地", "venue_type_id": items[1]["id"]})
+	if blocked.Code != http.StatusBadRequest {
+		t.Fatalf("inactive venue type = %d: %s", blocked.Code, blocked.Body.String())
+	}
 }
 
 func decodeResourceList(t *testing.T, body []byte) (items []map[string]any, total int) {

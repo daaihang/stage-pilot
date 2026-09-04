@@ -25,6 +25,7 @@ import { ResourceDetailPage, WorkspaceResourcePage } from "@/components/workspac
 import { FilesPage } from "@/components/files-page";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { NavigationFailure, PlaceholderPage, ProductionsPage, WorkspaceHome } from "@/components/stagepilot-pages";
+import { ProductionPlanningPlaceholderPage } from "@/components/production-planning-placeholder-page";
 import { WorkspaceMembersPage, WorkspaceRolesPage } from "@/components/workspace-access-pages";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -500,6 +501,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} />;
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;
   else if (route.mode === "production" && production?.isCreationSession) content = <NavigationFailure title="创建会话仅支持概览" description="提交第一个有效字段后，活动的其他模块会自动开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
+  else if (route.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route.page)) content = <ProductionPlanningPlaceholderPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
   else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "roles") content = <ProductionRolesPage workspace={workspace} production={production} key={production.id} />;

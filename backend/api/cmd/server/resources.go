@@ -1266,16 +1266,18 @@ func (app *application) updateVenue(w http.ResponseWriter, r *http.Request) {
 	}
 	access := resourceAccess(r)
 	var venueTypeID *string
+	var resolvedLegacyKind *string
 	if in.VenueTypeID != nil || in.Kind != nil {
-		resolved, _, resolveErr := app.resolveVenueType(r.Context(), access.WorkspaceID, in.VenueTypeID, valueOrEmpty(in.Kind))
+		resolved, resolvedKind, resolveErr := app.resolveVenueType(r.Context(), access.WorkspaceID, in.VenueTypeID, valueOrEmpty(in.Kind))
 		if resolveErr != nil {
 			errorJSON(w, 400, "invalid_input", "场地类型无效、未启用或不属于当前工作空间")
 			return
 		}
 		venueTypeID = &resolved
+		resolvedLegacyKind = &resolvedKind
 	}
 	var x venue
-	legacyKind := in.Kind
+	legacyKind := resolvedLegacyKind
 	err := app.db.QueryRow(r.Context(), `UPDATE venues SET name=COALESCE($1,name),kind=COALESCE($2,kind),venue_type_id=COALESCE($3,venue_type_id),city=COALESCE($4,city),address=COALESCE($5,address),timezone=COALESCE($6,timezone),description=COALESCE($7,description),tags=COALESCE($8,tags),status=COALESCE($9,status),archived_at=CASE WHEN COALESCE($9,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$10 AND workspace_id=$11 AND deleted_at IS NULL RETURNING id,workspace_id,name,kind,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at`, nullableTrimmed(in.Name), legacyKind, venueTypeID, nullableTrimmed(in.City), nullableTrimmed(in.Address), in.Timezone, nullableTrimmed(in.Description), tags, in.Status, r.PathValue("venueId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "场地")
