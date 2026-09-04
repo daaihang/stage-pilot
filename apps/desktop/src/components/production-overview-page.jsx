@@ -104,7 +104,7 @@ function ProductionTimezoneField({ timezone, timezones, onSave, disabled = false
         <Popover open={open} onOpenChange={(next) => !saving && setOpen(next)}>
           <PopoverTrigger render={<Button type="button" variant="ghost" size="icon-xs" aria-label="编辑项目时区" title="编辑项目时区" disabled={disabled || saving}><Pencil /></Button>} />
           <PopoverContent align="start" className="w-80 p-2">
-            <TimezoneCombobox value={timezone} onValueChange={selectTimezone} disabled={disabled || saving} autoFocus className="w-full" />
+            <TimezoneCombobox value={timezone} open={open} onOpenChange={(next) => !saving && setOpen(next)} onValueChange={selectTimezone} disabled={disabled || saving} autoFocus className="w-full" />
           </PopoverContent>
         </Popover>
       </div>
