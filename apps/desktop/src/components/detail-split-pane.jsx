@@ -178,6 +178,17 @@ export function DetailSplitPane({
     wasOpenRef.current = open;
   }, [open, triggerRef]);
 
+  useEffect(() => {
+    if (!open || (!isOverlay && !exclusive)) return undefined;
+    const handleEscape = (event) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      closeDetail();
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [closeDetail, exclusive, isOverlay, open]);
+
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     if (inlineCloseTimerRef.current) clearTimeout(inlineCloseTimerRef.current);
