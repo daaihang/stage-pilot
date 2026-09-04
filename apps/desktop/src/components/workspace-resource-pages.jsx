@@ -54,6 +54,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   const [types, setTypes] = useState([]);
   const requestSequence = useRef(0);
   const triggerRefs = useRef(new Map());
+  const reloadRef = useRef(null);
   const { registerDetail, setDetailOpen } = useWindowDetail();
 
   useEffect(() => {
@@ -66,7 +67,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
     const unregister = registerDetail({
       key: `workspace-resource:${workspace.id}:${type}:${selectedResourceId}`,
       detailLabel: `${resourceDefinitions[type].singular}详情`,
-      getDetail: () => <ResourceDetailPanel workspace={workspace} resourceType={type} resourceId={selectedResourceId} onClose={() => navigate(workspacePath(workspace.id, type))} onDeleted={() => navigate(workspacePath(workspace.id, type))} />,
+      getDetail: () => <ResourceDetailPanel workspace={workspace} resourceType={type} resourceId={selectedResourceId} onClose={() => navigate(workspacePath(workspace.id, type))} onUpdated={() => reloadRef.current?.().catch(() => {})} onDeleted={async () => { await reloadRef.current?.().catch(() => {}); navigate(workspacePath(workspace.id, type)); }} />,
       triggerRef,
       storageKey: "detailPane:workspace-resources:v1",
     });
@@ -92,6 +93,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
       if (requestId === requestSequence.current) setLoading(false);
     }
   }, [query, search, type, workspace.id]);
+  reloadRef.current = reload;
 
   useEffect(() => {
     setSearch("");
@@ -163,7 +165,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
       {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <Card variant="flush"><CardContent className="p-0">{items.map((item) => <Item key={item.id} item={item} />)}</CardContent></Card>}
       </ResourcePage>
     </div>
-    <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} programTypes={types} onCreated={(item) => navigate(resourcePath(workspace.id, type, item.id))} />
+    <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} programTypes={types} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />
   </>;
 }
 
@@ -269,7 +271,7 @@ const detailSelectOptions = (key, cfg, types) => key === "program_type_id"
       ? [["owned", "自有"], ["rented", "租赁"]]
       : cfg.defaults;
 
-export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClose, onDeleted }) {
+export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClose, onUpdated, onDeleted }) {
   const type = resourceType;
   const cfg = configs[type];
   const [item, setItem] = useState(null);
@@ -306,6 +308,7 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
     const toast = notify.loading("正在保存…");
     try {
       setItem(await updateResource(workspace.id, type, resourceId, { [key]: apiValue(key, value) }));
+      onUpdated?.();
       notify.success("已保存", { id: toast });
     } catch (error) {
       notify.error("保存失败", { id: toast, description: error?.message || String(error) });
