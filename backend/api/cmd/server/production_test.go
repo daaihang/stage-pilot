@@ -270,3 +270,35 @@ func TestProductionRejectsInvalidTimeAndTimezone(t *testing.T) {
 		t.Fatalf("timezone = %v, want Europe/London", created["timezone"])
 	}
 }
+
+func TestProductionLocationsWorkspaceIsolationAndPrimary(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "location-owner-"+newID()+"@example.test")
+	token := issueTestToken(t, app, owner)
+	workspaceID := createWorkspaceFor(t, app, token, "活动地点测试")["id"].(string)
+	productionID := createProductionFor(t, app, token, workspaceID, "地点活动", "", "")["id"].(string)
+	types := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/venue-types", nil)
+	venueTypeItems, _ := decodeResourceList(t, types.Body.Bytes())
+	venue := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "主会场", "venue_type_id": venueTypeItems[0]["id"]})
+	if venue.Code != http.StatusCreated {
+		t.Fatalf("create venue = %d: %s", venue.Code, venue.Body.String())
+	}
+	venueID := resourceID(t, venue.Body.Bytes())
+	created := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+productionID+"/locations", map[string]any{"venue_id": venueID, "is_primary": true})
+	if created.Code != http.StatusOK {
+		t.Fatalf("create production location = %d: %s", created.Code, created.Body.String())
+	}
+	listed := authedRequest(t, app, token, http.MethodGet, "/v1/productions/"+productionID+"/locations", nil)
+	if listed.Code != http.StatusOK {
+		t.Fatalf("list production locations = %d: %s", listed.Code, listed.Body.String())
+	}
+	var locations []map[string]any
+	if err := json.Unmarshal(listed.Body.Bytes(), &locations); err != nil || len(locations) != 1 || locations[0]["is_primary"] != true {
+		t.Fatalf("locations = %#v err=%v", locations, err)
+	}
+	other := createTestUser(t, app, "location-other-"+newID()+"@example.test")
+	otherToken := issueTestToken(t, app, other)
+	if forbidden := authedRequest(t, app, otherToken, http.MethodGet, "/v1/productions/"+productionID+"/locations", nil); forbidden.Code != http.StatusNotFound {
+		t.Fatalf("cross workspace locations = %d: %s", forbidden.Code, forbidden.Body.String())
+	}
+}

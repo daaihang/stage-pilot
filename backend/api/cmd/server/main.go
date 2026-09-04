@@ -201,6 +201,11 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /v1/productions/{productionId}/invitations", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.createProductionInvitation))))
 	mux.Handle("DELETE /v1/productions/{productionId}/invitations/{invitationId}", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.revokeProductionInvitation))))
 	mux.Handle("POST /v1/production-invitations/accept", app.auth(http.HandlerFunc(app.acceptProductionInvitation)))
+	mux.Handle("GET /v1/productions/{productionId}/locations", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listProductionLocations))))
+	mux.Handle("POST /v1/productions/{productionId}/locations", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createProductionLocation))))
+	mux.Handle("PATCH /v1/productions/{productionId}/locations/order", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.reorderProductionLocations))))
+	mux.Handle("PATCH /v1/productions/{productionId}/locations/{locationId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProductionLocation))))
+	mux.Handle("DELETE /v1/productions/{productionId}/locations/{locationId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.deleteProductionLocation))))
 	registerFileRoutes(app, mux)
 	return mux
 }
