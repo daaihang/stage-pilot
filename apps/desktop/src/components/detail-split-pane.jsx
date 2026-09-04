@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { notify } from "@/components/ui/sonner";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { appStore } from "@/lib/app-store";
@@ -11,6 +11,7 @@ const MIN_MAIN_WIDTH = 320;
 const EXCLUSIVE_ENTER_WIDTH = 360;
 const EXCLUSIVE_EXIT_WIDTH = 360;
 const INLINE_MIN_WIDTH = 960;
+const PANE_TRANSITION_MS = 200;
 const contentWidthClassName = { standard: "max-w-6xl", wide: "max-w-7xl", full: "max-w-none" };
 
 function maxDetailWidth(containerWidth) {
@@ -40,13 +41,35 @@ export function DetailSplitPane({
   const containerRef = useRef(null);
   const saveTimerRef = useRef(null);
   const inlineCloseTimerRef = useRef(null);
+  const exclusiveCloseTimerRef = useRef(null);
+  const exclusiveFrameRef = useRef(null);
   const wasOpenRef = useRef(open);
   const [containerWidth, setContainerWidth] = useState(0);
   const [detailWidth, setDetailWidth] = useState(DEFAULT_DETAIL_WIDTH);
   const [inlineMounted, setInlineMounted] = useState(false);
   const [inlineVisible, setInlineVisible] = useState(false);
   const [exclusive, setExclusive] = useState(false);
+  const [exclusiveMounted, setExclusiveMounted] = useState(false);
+  const [exclusiveVisible, setExclusiveVisible] = useState(false);
+  const exclusiveRef = useRef(false);
   const { setDetailAction } = usePageChrome();
+
+  const setExclusiveMode = useCallback((nextMode) => {
+    const next = typeof nextMode === "function" ? nextMode(exclusiveRef.current) : Boolean(nextMode);
+    exclusiveRef.current = next;
+    setExclusive(next);
+    return next;
+  }, []);
+
+  const toggleExclusive = useCallback(() => {
+    const next = setExclusiveMode((current) => !current);
+    notify.info(next ? "详情已独占工作区" : "已退出独占详情");
+  }, [setExclusiveMode]);
+
+  const closeDetail = useCallback(() => {
+    setExclusiveMode(false);
+    onOpenChange(false);
+  }, [onOpenChange, setExclusiveMode]);
 
   const canInline = open && containerWidth >= INLINE_MIN_WIDTH;
   const isInline = canInline && !exclusive;
@@ -79,8 +102,8 @@ export function DetailSplitPane({
   }, [storageKey]);
 
   useEffect(() => {
-    if ((!open || !canInline) && exclusive) setExclusive(false);
-  }, [canInline, exclusive, open]);
+    if ((!open || !canInline) && exclusive) setExclusiveMode(false);
+  }, [canInline, exclusive, open, setExclusiveMode]);
 
   useEffect(() => { onDetailWidthChange?.(constrainedWidth); }, [constrainedWidth, onDetailWidthChange]);
 
@@ -96,9 +119,25 @@ export function DetailSplitPane({
       return undefined;
     }
     setInlineVisible(false);
-    if (inlineMounted) inlineCloseTimerRef.current = setTimeout(() => setInlineMounted(false), 180);
+    if (inlineMounted) inlineCloseTimerRef.current = setTimeout(() => setInlineMounted(false), PANE_TRANSITION_MS);
     return undefined;
   }, [inlineMounted, isInline]);
+
+  useEffect(() => {
+    if (exclusive) {
+      if (exclusiveCloseTimerRef.current) clearTimeout(exclusiveCloseTimerRef.current);
+      setExclusiveMounted(true);
+      exclusiveFrameRef.current = requestAnimationFrame(() => setExclusiveVisible(true));
+      return () => {
+        if (exclusiveFrameRef.current) cancelAnimationFrame(exclusiveFrameRef.current);
+      };
+    }
+    setExclusiveVisible(false);
+    if (exclusiveMounted) {
+      exclusiveCloseTimerRef.current = setTimeout(() => setExclusiveMounted(false), PANE_TRANSITION_MS);
+    }
+    return undefined;
+  }, [exclusive, exclusiveMounted]);
 
   useEffect(() => {
     if (!open) {
@@ -108,15 +147,11 @@ export function DetailSplitPane({
     setDetailAction({
       label: "关闭详情",
       exclusive,
-      onClose: () => { setExclusive(false); onOpenChange(false); },
-      onToggleExclusive: canInline ? () => {
-        const next = !exclusive;
-        setExclusive(next);
-        notify.info(next ? "详情已独占工作区" : "已退出独占详情");
-      } : undefined,
+      onClose: closeDetail,
+      onToggleExclusive: canInline ? toggleExclusive : undefined,
     });
     return () => setDetailAction(null);
-  }, [canInline, exclusive, onOpenChange, open, setDetailAction]);
+  }, [canInline, closeDetail, exclusive, open, setDetailAction, toggleExclusive]);
 
   useEffect(() => {
     if (wasOpenRef.current && !open) requestAnimationFrame(() => triggerRef?.current?.focus?.());
@@ -126,6 +161,8 @@ export function DetailSplitPane({
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     if (inlineCloseTimerRef.current) clearTimeout(inlineCloseTimerRef.current);
+    if (exclusiveCloseTimerRef.current) clearTimeout(exclusiveCloseTimerRef.current);
+    if (exclusiveFrameRef.current) cancelAnimationFrame(exclusiveFrameRef.current);
   }, []);
 
   const commitWidth = (nextWidth) => {
@@ -144,7 +181,7 @@ export function DetailSplitPane({
     if (requestedWidth >= bounds.width - EXCLUSIVE_ENTER_WIDTH) {
       commitWidth(maxDetailWidth(bounds.width));
       if (!exclusive) {
-        setExclusive(true);
+        setExclusiveMode(true);
         notify.info("详情已独占工作区");
       }
       return;
@@ -170,7 +207,6 @@ export function DetailSplitPane({
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
-  const closeDetail = () => { setExclusive(false); onOpenChange(false); };
   const onExclusivePointerMove = (event) => {
     if (!event.currentTarget.hasPointerCapture?.(event.pointerId)) return;
     const bounds = containerRef.current?.getBoundingClientRect();
@@ -198,13 +234,13 @@ export function DetailSplitPane({
 
   const mainWidth = isInline ? `calc(100% - ${constrainedWidth + 1}px)` : "100%";
   return <div ref={containerRef} className={cn("relative flex h-full min-h-0 min-w-0", className)}>
-    <div className={cn("min-h-0 min-w-0 shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none", exclusive && "hidden")} style={{ width: exclusive ? 0 : mainWidth }} aria-hidden={exclusive}>{children}</div>
-    {exclusive && <section className="relative min-h-0 min-w-0 flex-1 overflow-y-auto bg-background motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-right-2 motion-safe:duration-200">
-      <div role="separator" aria-orientation="vertical" aria-label="向右拖动以退出独占详情" tabIndex={0} className="absolute inset-y-0 left-0 z-10 w-px cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20" onPointerDown={onExclusivePointerDown} onPointerMove={onExclusivePointerMove} onKeyDown={onExclusiveKeyDown} />
+    <div className={cn("min-h-0 min-w-0 shrink-0 overflow-hidden transition-[width,opacity] duration-200 ease-out motion-reduce:transition-none", exclusive && "pointer-events-none opacity-0")} style={{ width: exclusive ? 0 : mainWidth }} aria-hidden={exclusive}>{children}</div>
+    {exclusiveMounted && <section aria-hidden={!exclusiveVisible} className={cn("absolute inset-0 z-10 min-h-0 min-w-0 overflow-y-auto bg-background transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", exclusiveVisible ? "translate-x-0 opacity-100" : "pointer-events-none translate-x-2 opacity-0")}>
+      <div role="separator" aria-orientation="vertical" aria-label="向右拖动以退出独占详情" aria-valuemin={0} aria-valuemax={containerWidth} aria-valuenow={0} aria-valuetext="独占详情；向右拖动超过阈值关闭详情" tabIndex={0} className="absolute inset-y-0 left-0 z-10 w-px touch-none cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20" onPointerDown={onExclusivePointerDown} onPointerMove={onExclusivePointerMove} onKeyDown={onExclusiveKeyDown} />
       <div className="min-h-full p-4 md:p-6"><div className={cn("mx-auto w-full", contentWidthClassName[contentWidth] || contentWidthClassName.standard)}>{detail}</div></div>
     </section>}
     {inlineMounted && <div className="flex min-h-0 shrink-0 overflow-hidden border-l border-border transition-[width] duration-200 ease-out motion-reduce:transition-none" style={{ width: inlineVisible ? constrainedWidth + 1 : 0 }}>
-      <div role="separator" aria-orientation="vertical" aria-label="调整详情面板宽度" aria-valuemin={MIN_DETAIL_WIDTH} aria-valuemax={maxDetailWidth(containerWidth || INLINE_MIN_WIDTH)} aria-valuenow={constrainedWidth} tabIndex={0} className={cn("relative z-10 w-px shrink-0 cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20", !inlineVisible && "pointer-events-none opacity-0")} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onKeyDown={onKeyDown} />
+      <div role="separator" aria-orientation="vertical" aria-label="调整详情面板宽度" aria-valuemin={MIN_DETAIL_WIDTH} aria-valuemax={maxDetailWidth(containerWidth || INLINE_MIN_WIDTH)} aria-valuenow={constrainedWidth} tabIndex={0} className={cn("relative z-10 w-px shrink-0 touch-none cursor-col-resize bg-border outline-none before:absolute before:inset-y-0 before:-left-2 before:w-4 focus-visible:bg-ring focus-visible:before:bg-ring/20", !inlineVisible && "pointer-events-none opacity-0")} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onKeyDown={onKeyDown} />
       <aside className={cn("min-h-0 shrink-0 overflow-y-auto bg-background transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none", !inlineVisible && "pointer-events-none translate-x-2 opacity-0")} style={{ width: constrainedWidth }}>{detail}</aside>
     </div>}
     {open && !canInline && <Sheet open={open} onOpenChange={onOpenChange}>
