@@ -160,11 +160,9 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   const headerActions = type === "programs" ? <Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "program-types"))}><ListMusic />管理节目类型</Button> : type === "venues" ? <Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "venue-types"))}><ListMusic />管理场地类型</Button> : null;
 
   return <>
-    <div className="app-content-scroll h-full min-h-0 overflow-x-hidden overflow-y-auto p-4 md:p-6">
-      <ResourcePage title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} headerActions={headerActions} onCreate={canManage(workspace) ? () => setOpen(true) : undefined} loading={loading} empty={empty}>
+    <ResourcePage title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} headerActions={headerActions} onCreate={canManage(workspace) ? () => setOpen(true) : undefined} loading={loading} empty={empty}>
       {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <Card variant="flush"><CardContent className="p-0">{items.map((item) => <Item key={item.id} item={item} />)}</CardContent></Card>}
-      </ResourcePage>
-    </div>
+    </ResourcePage>
     <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} programTypes={types} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />
   </>;
 }

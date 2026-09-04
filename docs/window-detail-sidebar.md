@@ -77,9 +77,9 @@ useEffect(() => registerDetail({
 
 普通页面继续使用 `document`：外层滚动、内边距和 `standard / wide / full` 最大宽度保持原有行为。
 
-需要列表与详情并列、两侧独立滚动的页面使用 `workspace`。接入新路由时，要在 `RoutedMainShell` 的 `contentLayout` 路由判断中加入该页面；不要在页面内部再包一层全屏滚动壳。
+需要列表与详情并列、两侧独立滚动的页面使用 `workspace`。接入新路由时，要在 `RoutedMainShell` 的 `contentLayout` 路由判断中加入该页面；页面不得再包一层全屏滚动壳。
 
-全局页面宽度偏好由 `AppContentLayout` 统一应用。详情独占时，详情画布也遵循相同偏好；嵌入式详情会填满它被分配的栏位，不再叠加页面最大宽度。
+`AppContentLayout` 在 `workspace` 和 `document` 模式都统一应用页面宽度偏好、居中画布和页面内边距；`workspace` 模式额外提供主区唯一的全高滚动边界。详情的 overlay 和 exclusive 模式同样遵循 `contentWidth`，在详情表面内部居中；嵌入式详情填满它被分配的栏位，不叠加主区最大宽度。
 
 ## 详情内容约束
 
