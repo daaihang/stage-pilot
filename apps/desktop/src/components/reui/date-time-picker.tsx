@@ -53,10 +53,12 @@ export function DateTimePicker({
   clearable = true,
   className,
   align = "start",
+  iconOnly = false,
 }) {
   const [open, setOpen] = useState(false)
   // 面板内的待定日期：选中日期但不选时间时，不产生不完整提交。
   const [pendingDate, setPendingDate] = useState(null)
+  const [pendingMinutes, setPendingMinutes] = useState(null)
   const [month, setMonth] = useState(undefined)
 
   const { date: valueDate, minutes: valueMinutes } = instantToParts(value, timezone)
@@ -65,6 +67,7 @@ export function DateTimePicker({
   useEffect(() => {
     if (open) {
       setPendingDate(valueDate ?? null)
+      setPendingMinutes(valueMinutes ?? 9 * 60)
       setMonth(valueDate ?? todayInTimezone(timezone))
     }
   }, [open, timezone])
@@ -86,11 +89,16 @@ export function DateTimePicker({
   const handleSelectDate = (date) => {
     setPendingDate(date ?? null)
     if (!date) return
-    // 已有完整值的时间部分作为默认时刻；否则整点（草稿常见 00:00 起步）。
+    // 已有同日值的时间部分作为默认时刻；否则使用 09:00 作为待确认初始值。
     const fallbackMinutes = valueDate && valueMinutes != null && toDateKey(valueDate) === toDateKey(date)
       ? valueMinutes
       : 9 * 60
-    commit(date, fallbackMinutes)
+    setPendingMinutes(fallbackMinutes)
+  }
+
+  const confirm = () => {
+    if (!pendingDate || pendingMinutes == null) return
+    commit(pendingDate, pendingMinutes)
   }
 
   const display = formatDateTimeValue(value, timezone)
@@ -103,12 +111,14 @@ export function DateTimePicker({
             type="button"
             variant="outline"
             disabled={disabled}
-            className={cn("group/date-time w-full justify-between font-normal", className)}
-            aria-label="选择日期与时间"
+            size={iconOnly ? "icon" : "default"}
+            className={cn(iconOnly ? "size-8" : "group/date-time w-full justify-between font-normal", className)}
+            aria-label={iconOnly ? (display || "选择日期与时间") : undefined}
+            title={iconOnly ? (display || "选择日期与时间") : undefined}
           >
-            <span className={cn("truncate", !display && "text-muted-foreground")}>
+            {!iconOnly && <span className={cn("truncate", !display && "text-muted-foreground")}>
               {display || placeholder}
-            </span>
+            </span>}
             <IconPlaceholder
               lucide="CalendarIcon"
               tabler="IconCalendarEvent"
@@ -128,11 +138,6 @@ export function DateTimePicker({
             onSelect={handleSelectDate}
             month={month}
             onMonthChange={setMonth}
-            footer={
-              <div className="border-t px-4 py-2 text-xs text-muted-foreground">
-                先选日期，再在右侧选择时间
-              </div>
-            }
           />
           <div className="relative w-full max-sm:h-48 sm:w-40">
             <div className="absolute inset-0 py-4 max-sm:border-t">
@@ -151,13 +156,13 @@ export function DateTimePicker({
                         className="w-full"
                         size="sm"
                         variant={
-                          pendingDate && valueDate && toDateKey(pendingDate) === toDateKey(valueDate) && valueMinutes === slot
+                          pendingDate && pendingMinutes === slot
                             ? "default"
                             : "outline"
                         }
                         onClick={() => {
                           if (!pendingDate) return
-                          commit(pendingDate, slot)
+                          setPendingMinutes(slot)
                         }}
                         disabled={!pendingDate}
                       >
@@ -170,28 +175,34 @@ export function DateTimePicker({
             </div>
           </div>
         </div>
-        {clearable && (value || pendingDate) && (
-          <div className="border-t p-2">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="w-full text-muted-foreground"
-              onClick={() => {
-                setPendingDate(null)
-                onChange?.("")
-                setOpen(false)
-              }}
-            >
-              <IconPlaceholder
-                lucide="XIcon"
-                tabler="IconX"
-                hugeicons="Cancel01Icon"
-                phosphor="XIcon"
-                remixicon="RiCloseLine"
-                aria-hidden="true"
-              />
-              清除时间
+        {(clearable || pendingDate) && (
+          <div className="flex items-center justify-end gap-2 border-t p-2">
+            {clearable && (value || pendingDate) && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={() => {
+                  setPendingDate(null)
+                  setPendingMinutes(null)
+                  onChange?.("")
+                  setOpen(false)
+                }}
+              >
+                <IconPlaceholder
+                  lucide="XIcon"
+                  tabler="IconX"
+                  hugeicons="Cancel01Icon"
+                  phosphor="XIcon"
+                  remixicon="RiCloseLine"
+                  aria-hidden="true"
+                />
+                清除时间
+              </Button>
+            )}
+            <Button type="button" size="sm" onClick={confirm} disabled={!pendingDate || pendingMinutes == null}>
+              确认
             </Button>
           </div>
         )}

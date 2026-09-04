@@ -292,29 +292,46 @@ export function Calendar26({
   placeholder = "选择日期",
   disabled = false,
   align = "start",
+  className,
+  iconOnly = false,
+  ariaLabel,
+  clearable = false,
 }: {
   selected?: Date | null
   onSelect?: (date: Date | undefined) => void
   placeholder?: string
   disabled?: boolean
   align?: "start" | "center" | "end"
+  className?: string
+  iconOnly?: boolean
+  ariaLabel?: string
+  clearable?: boolean
 }) {
   const today = new Date()
   const [month, setMonth] = useState<Date>(selected ?? today)
   const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (selected) {
+      setMonth((current) => current?.getTime() === selected.getTime() ? current : selected)
+    }
+  }, [selected])
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <Button
-            className="group/pick-date w-60 justify-between"
+            className={cn(iconOnly ? "size-8" : "group/pick-date w-full justify-between", className)}
             variant="outline"
+            size={iconOnly ? "icon" : "default"}
             disabled={disabled}
+            aria-label={iconOnly ? (ariaLabel || placeholder) : undefined}
+            title={iconOnly ? (ariaLabel || placeholder) : undefined}
           >
-            <span className={cn("truncate", !selected && "text-muted-foreground")}>
+            {!iconOnly && <span className={cn("truncate", !selected && "text-muted-foreground")}>
               {selected ? `${selected.getFullYear()}年${selected.getMonth() + 1}月${selected.getDate()}日` : placeholder}
-            </span>
+            </span>}
             <IconPlaceholder
               lucide="CalendarIcon"
               tabler="IconCalendarEvent"
@@ -337,6 +354,22 @@ export function Calendar26({
           month={month}
           onMonthChange={setMonth}
         />
+        {clearable && selected && (
+          <div className="border-t p-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+              onClick={() => {
+                onSelect?.(undefined)
+                setOpen(false)
+              }}
+            >
+              清除日期
+            </Button>
+          </div>
+        )}
       </PopoverContent>
     </Popover>
   )
