@@ -21,28 +21,30 @@ type ResourceTypeDefinition struct {
 	ResourceTableName  string
 	ResourceTypeColumn string
 	ResourceLabel      string
+	UsageColumn        string
 	UsageJSONKey       string
 	PathValueName      string
 	DefaultColor       string
 	SupportsUsageQuery bool
+	ProtectSystemName  bool
 	UsesLegacyHandler  bool
 }
 
 var (
 	programResourceTypeDefinition = ResourceTypeDefinition{
-		Key: "programs", TableName: "program_types", TemplateTableName: "program_type_templates", ResourceTableName: "programs", ResourceTypeColumn: "program_type_id", ResourceLabel: "节目", UsageJSONKey: "program_count", PathValueName: "programTypeId", DefaultColor: "#2563eb", SupportsUsageQuery: true, UsesLegacyHandler: true,
+		Key: "programs", TableName: "program_types", TemplateTableName: "program_type_templates", ResourceTableName: "programs", ResourceTypeColumn: "program_type_id", ResourceLabel: "节目", UsageColumn: "program_type_id", UsageJSONKey: "program_count", PathValueName: "programTypeId", DefaultColor: "#2563eb", SupportsUsageQuery: true, ProtectSystemName: true, UsesLegacyHandler: true,
 	}
 	venueResourceTypeDefinition = ResourceTypeDefinition{
-		Key: "venues", TableName: "venue_types", TemplateTableName: "venue_type_templates", ResourceTableName: "venues", ResourceTypeColumn: "venue_type_id", ResourceLabel: "场地", UsageJSONKey: "venue_count", PathValueName: "venueTypeId", DefaultColor: "#64748b", SupportsUsageQuery: true, UsesLegacyHandler: true,
+		Key: "venues", TableName: "venue_types", TemplateTableName: "venue_type_templates", ResourceTableName: "venues", ResourceTypeColumn: "venue_type_id", ResourceLabel: "场地", UsageColumn: "venue_type_id", UsageJSONKey: "venue_count", PathValueName: "venueTypeId", DefaultColor: "#64748b", SupportsUsageQuery: true, ProtectSystemName: true, UsesLegacyHandler: true,
 	}
 	personResourceTypeDefinition = ResourceTypeDefinition{
-		Key: "people", TableName: "person_types", TemplateTableName: "person_type_templates", ResourceTableName: "people", ResourceTypeColumn: "person_type_id", ResourceLabel: "人员", UsageJSONKey: "person_count", PathValueName: "personTypeId", DefaultColor: "#2563eb", SupportsUsageQuery: true,
+		Key: "people", TableName: "person_types", TemplateTableName: "person_type_templates", ResourceTableName: "people", ResourceTypeColumn: "person_type_id", ResourceLabel: "人员", UsageColumn: "person_type_id", UsageJSONKey: "person_count", PathValueName: "personTypeId", DefaultColor: "#2563eb", SupportsUsageQuery: true, ProtectSystemName: true,
 	}
 	organizationResourceTypeDefinition = ResourceTypeDefinition{
-		Key: "organizations", TableName: "organization_types", TemplateTableName: "organization_type_templates", ResourceTableName: "organizations", ResourceTypeColumn: "organization_type_id", ResourceLabel: "机构", UsageJSONKey: "organization_count", PathValueName: "organizationTypeId", DefaultColor: "#7c3aed", SupportsUsageQuery: true,
+		Key: "organizations", TableName: "organization_types", TemplateTableName: "organization_type_templates", ResourceTableName: "organizations", ResourceTypeColumn: "organization_type_id", ResourceLabel: "机构", UsageColumn: "organization_type_id", UsageJSONKey: "organization_count", PathValueName: "organizationTypeId", DefaultColor: "#7c3aed", SupportsUsageQuery: true, ProtectSystemName: true,
 	}
 	equipmentResourceTypeDefinition = ResourceTypeDefinition{
-		Key: "equipment", TableName: "equipment_types", TemplateTableName: "equipment_type_templates", ResourceTableName: "equipment_items", ResourceTypeColumn: "equipment_type_id", ResourceLabel: "设备", UsageJSONKey: "equipment_count", PathValueName: "equipmentTypeId", DefaultColor: "#64748b", SupportsUsageQuery: true,
+		Key: "equipment", TableName: "equipment_types", TemplateTableName: "equipment_type_templates", ResourceTableName: "equipment_items", ResourceTypeColumn: "equipment_type_id", ResourceLabel: "设备", UsageColumn: "equipment_type_id", UsageJSONKey: "equipment_count", PathValueName: "equipmentTypeId", DefaultColor: "#64748b", SupportsUsageQuery: true, ProtectSystemName: true,
 	}
 )
 
