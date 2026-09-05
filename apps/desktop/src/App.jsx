@@ -483,7 +483,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route?.mode === "invite") content = <ProductionInvitePage token={route.token} />;
   else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} />;
   else if (isWorkspacesRoute) content = <WorkspacesPage onCreateWorkspace={() => setCreateWorkspaceOpen(true)} />;
-  else if (workspaceError) content = <NavigationFailure description={workspaceError.message} onRetry={retryWorkspaces} />;
+  else if (workspaceError && !currentWorkspace) content = <NavigationFailure description={workspaceError.message} onRetry={retryWorkspaces} />;
   else if (location.pathname === "/") content = <AppLoading />;
   else if (!route) content = <NavigationFailure title="页面不存在" description="这个 StagePilot 页面地址无效或已经移动。" homePath={currentWorkspace ? workspacePath(currentWorkspace.id) : undefined} />;
   else if (route.direct && directProductionState.loading) content = <AppLoading />;

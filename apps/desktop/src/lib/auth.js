@@ -26,13 +26,31 @@ function requestError(response, body) {
   const error = new Error(body.error?.message || "请求失败");
   error.status = response.status;
   error.code = body.error?.code;
+  if (body.error && typeof body.error === "object") {
+    Object.assign(error, body.error);
+  }
   return error;
 }
 
 async function rawRequest(path, options = {}) {
+  const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const method = (options.method || "GET").toUpperCase();
   const headers = { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt);
+      console.debug(`[api] ${method} ${path} NETWORK_ERROR ${duration}ms`);
+    }
+    throw error;
+  }
+  if (import.meta.env.DEV) {
+    const duration = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - startedAt);
+    console.debug(`[api] ${method} ${path} ${response.status} ${duration}ms`);
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw requestError(response, body);
   return body;

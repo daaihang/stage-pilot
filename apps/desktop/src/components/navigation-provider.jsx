@@ -1,123 +1,128 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { navigationRepository } from "@/lib/navigation-repository";
 
 const NavigationContext = createContext(null);
 
-export function NavigationProvider({ children, repository = navigationRepository }) {
-  const [workspaces, setWorkspaces] = useState([]);
+export function NavigationProvider({ children, repository = navigationRepository, authStatus = "authenticated" }) {
   const [productionsByWorkspace, setProductionsByWorkspace] = useState({});
-  // 前端优先的 Draft：仅存在于当前 React 会话，绝不写入 API 或本机持久化存储。
-  // 后端实现 createDraftProduction 后，可用 Repository 返回的数据替换这层临时适配。
-  const [localDraftsByWorkspace, setLocalDraftsByWorkspace] = useState({});
-  const [productionAliases, setProductionAliases] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const productionsByWorkspaceRef = useRef({});
+  const productionRequestsRef = useRef(new Map());
+  const cacheGenerationRef = useRef(0);
+  const [productionLoadStates, setProductionLoadStates] = useState({});
+  // 创建会话只存在于当前 React 会话，不属于 Production 集合，也不写入 API 或本机存储。
+  const [creationSession, setCreationSession] = useState(null);
+  const creationSessionRef = useRef(null);
+  productionsByWorkspaceRef.current = productionsByWorkspace;
 
-  const loadWorkspaces = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setWorkspaces(await repository.listWorkspaces());
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError : new Error(String(nextError)));
-    } finally {
-      setLoading(false);
-    }
-  }, [repository]);
+  const resetNavigationCache = useCallback(() => {
+    cacheGenerationRef.current += 1;
+    productionRequestsRef.current.clear();
+    setProductionsByWorkspace({});
+    setProductionLoadStates({});
+  }, []);
 
-  useEffect(() => { loadWorkspaces(); }, [loadWorkspaces]);
+  // WorkspaceProvider is the single owner of workspace loading. This provider
+  // only owns the production cache, so navigation never issues a second
+  // workspace request or toggles the shell's global loading state.
+  useEffect(() => {
+    if (authStatus !== "authenticated") resetNavigationCache();
+  }, [authStatus, resetNavigationCache]);
 
   const loadProductions = useCallback(async (workspaceId, { force = false } = {}) => {
-    if (!force && Object.prototype.hasOwnProperty.call(productionsByWorkspace, workspaceId)) {
-      return productionsByWorkspace[workspaceId];
-    }
-    const productions = await repository.listProductions(workspaceId);
-    setProductionsByWorkspace((current) => ({ ...current, [workspaceId]: productions }));
-    return productions;
-  }, [productionsByWorkspace, repository]);
+    const cached = productionsByWorkspaceRef.current[workspaceId];
+    if (!force && cached) return cached;
+    const pending = productionRequestsRef.current.get(workspaceId);
+    if (pending) return pending;
+
+    const generation = cacheGenerationRef.current;
+    setProductionLoadStates((current) => ({ ...current, [workspaceId]: { status: "loading", error: null } }));
+    const request = repository.listProductions(workspaceId).then((productions) => {
+      if (generation !== cacheGenerationRef.current) return productions;
+      const existingById = new Map((productionsByWorkspaceRef.current[workspaceId] ?? []).map((item) => [item.id, item]));
+      const merged = productions.map((item) => ({ ...item, venue: existingById.get(item.id)?.venue ?? item.venue ?? "" }));
+      setProductionsByWorkspace((current) => ({ ...current, [workspaceId]: merged }));
+      setProductionLoadStates((current) => ({ ...current, [workspaceId]: { status: "ready", error: null } }));
+      return merged;
+    }).catch((nextError) => {
+      const error = nextError instanceof Error ? nextError : new Error(String(nextError));
+      if (generation === cacheGenerationRef.current) setProductionLoadStates((current) => ({ ...current, [workspaceId]: { status: "error", error } }));
+      throw error;
+    }).finally(() => {
+      productionRequestsRef.current.delete(workspaceId);
+    });
+    productionRequestsRef.current.set(workspaceId, request);
+    return request;
+  }, [repository]);
 
   /** 深链恢复的 production 详情合并进列表缓存，保持单一事实源。 */
   const setProductionsByWorkspaceEntry = useCallback((workspaceId, production) => {
     setProductionsByWorkspace((current) => {
-      const existing = current[workspaceId];
-      if (!existing) return current;
+      const existing = current[workspaceId] ?? [];
+      const previous = existing.find((item) => item.id === production.id);
+      const nextProduction = { ...production, venue: production.venue ?? previous?.venue ?? "" };
       if (existing.some((item) => item.id === production.id)) {
-        return { ...current, [workspaceId]: existing.map((item) => (item.id === production.id ? production : item)) };
+        return { ...current, [workspaceId]: existing.map((item) => (item.id === production.id ? nextProduction : item)) };
       }
-      return { ...current, [workspaceId]: [production, ...existing] };
+      return { ...current, [workspaceId]: [nextProduction, ...existing] };
     });
+    setProductionLoadStates((current) => ({ ...current, [workspaceId]: { status: "ready", error: null } }));
   }, []);
 
-  const createLocalDraft = useCallback((workspaceId) => {
+  const createCreationSession = useCallback((workspaceId) => {
+    if (creationSessionRef.current) return creationSessionRef.current;
     const suffix = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    const draft = {
-      id: `local-draft-${suffix}`,
+    const defaultName = `活动-${Date.now()}`;
+    const session = {
+      id: `creation-session-${suffix}`,
       workspaceId,
-      name: `活动-${Date.now()}`,
-      status: "draft",
-      startsAt: "",
-      endsAt: "",
+      name: defaultName,
+      defaultName,
+      plannedStartAt: "",
+      plannedEndAt: "",
       timezone: "Asia/Shanghai",
       venue: "",
       description: "",
-      isLocalDraft: true,
+      isCreationSession: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    setLocalDraftsByWorkspace((current) => ({
-      ...current,
-      [workspaceId]: [draft, ...(current[workspaceId] ?? [])],
-    }));
-    return draft;
+    creationSessionRef.current = session;
+    setCreationSession(session);
+    return session;
   }, []);
 
-  const updateLocalDraft = useCallback((workspaceId, draftId, patch) => {
-    setLocalDraftsByWorkspace((current) => {
-      const drafts = current[workspaceId] ?? [];
-      return {
-        ...current,
-        [workspaceId]: drafts.map((draft) => draft.id === draftId
-          ? { ...draft, ...patch, updatedAt: new Date().toISOString() }
-          : draft),
-      };
-    });
+  const updateCreationSession = useCallback((sessionId, patch) => {
+    const current = creationSessionRef.current;
+    if (!current || current.id !== sessionId) return null;
+    const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
+    creationSessionRef.current = next;
+    setCreationSession(next);
+    return next;
   }, []);
 
-  const discardLocalDraft = useCallback((workspaceId, draftId) => {
-    setLocalDraftsByWorkspace((current) => ({
-      ...current,
-      [workspaceId]: (current[workspaceId] ?? []).filter((draft) => draft.id !== draftId),
-    }));
+  const discardCreationSession = useCallback((sessionId) => {
+    if (sessionId && creationSessionRef.current?.id !== sessionId) return;
+    creationSessionRef.current = null;
+    setCreationSession(null);
   }, []);
 
-  const promoteLocalDraft = useCallback((workspaceId, draftId, production) => {
-    setProductionAliases((current) => ({ ...current, [draftId]: production.id }));
-    setLocalDraftsByWorkspace((current) => ({
-      ...current,
-      [workspaceId]: (current[workspaceId] ?? []).filter((draft) => draft.id !== draftId),
-    }));
-    setProductionsByWorkspace((current) => ({
-      ...current,
-      [workspaceId]: [production, ...(current[workspaceId] ?? []).filter((item) => item.id !== production.id)],
-    }));
-  }, []);
+  const getCreationSession = useCallback(() => creationSessionRef.current, []);
 
   const value = useMemo(() => ({
     repository,
-    workspaces,
     productionsByWorkspace,
-    localDraftsByWorkspace,
-    productionAliases,
-    loading,
-    error,
-    retry: loadWorkspaces,
+    productionLoadStates,
+    creationSession,
+    loading: false,
+    error: null,
+    retry: resetNavigationCache,
     loadProductions,
     setProductionsByWorkspaceEntry,
-    createLocalDraft,
-    updateLocalDraft,
-    discardLocalDraft,
-    promoteLocalDraft,
-  }), [repository, workspaces, productionsByWorkspace, localDraftsByWorkspace, productionAliases, loading, error, loadWorkspaces, loadProductions, setProductionsByWorkspaceEntry, createLocalDraft, updateLocalDraft, discardLocalDraft, promoteLocalDraft]);
+    createCreationSession,
+    updateCreationSession,
+    discardCreationSession,
+    getCreationSession,
+  }), [repository, productionsByWorkspace, productionLoadStates, creationSession, loadProductions, setProductionsByWorkspaceEntry, createCreationSession, updateCreationSession, discardCreationSession, getCreationSession, resetNavigationCache]);
 
   return <NavigationContext.Provider value={value}>{children}</NavigationContext.Provider>;
 }

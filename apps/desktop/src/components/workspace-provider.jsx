@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { navigationRepository } from "@/lib/navigation-repository";
 import { getLastWorkspace, listWorkspaceMembers, setLastWorkspace } from "@/lib/workspace-api";
 
@@ -38,19 +38,29 @@ function cacheLastWorkspace(workspaceId) {
   }
 }
 
-export function WorkspaceProvider({ children, repository = navigationRepository }) {
+export function WorkspaceProvider({ children, repository = navigationRepository, authStatus = "authenticated" }) {
   const [status, setStatus] = useState("loading");
   const [workspaces, setWorkspaces] = useState([]);
   const [currentWorkspace, setCurrentWorkspace] = useState(null);
   const [membershipRole, setMembershipRole] = useState("");
   const [error, setError] = useState(null);
+  const hasResolvedRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const currentWorkspaceRef = useRef(null);
+  const workspacesRef = useRef([]);
+  currentWorkspaceRef.current = currentWorkspace;
+  workspacesRef.current = workspaces;
 
   const loadWorkspaces = useCallback(async () => {
-    setStatus("loading");
+    const requestId = ++requestIdRef.current;
+    const hasCurrentContext = Boolean(currentWorkspaceRef.current || workspacesRef.current.length);
+    if (!hasCurrentContext && !hasResolvedRef.current) setStatus("loading");
     setError(null);
     try {
       const list = await repository.listWorkspaces();
+      if (requestId !== requestIdRef.current) return;
       setWorkspaces(list);
+      hasResolvedRef.current = true;
       if (!list.length) {
         setCurrentWorkspace(null);
         setMembershipRole("");
@@ -74,19 +84,32 @@ export function WorkspaceProvider({ children, repository = navigationRepository 
       if (!restored && list.length === 1) restored = list[0];
       if (restored) {
         setCurrentWorkspace(restored);
-        setMembershipRole(restored.plan || "");
+        setMembershipRole(restored.role || String(restored.plan || "").toLowerCase());
         cacheLastWorkspace(restored.id);
         setStatus("ready");
         return;
       }
       setStatus("selecting");
     } catch (nextError) {
+      if (requestId !== requestIdRef.current) return;
       setError(nextError instanceof Error ? nextError : new Error(String(nextError)));
-      setStatus("error");
+      if (!hasCurrentContext) setStatus("error");
     }
   }, [repository]);
 
-  useEffect(() => { loadWorkspaces(); }, [loadWorkspaces]);
+  useEffect(() => {
+    if (authStatus !== "authenticated") {
+      requestIdRef.current += 1;
+      setStatus("loading");
+      hasResolvedRef.current = false;
+      setWorkspaces([]);
+      setCurrentWorkspace(null);
+      setMembershipRole("");
+      setError(null);
+      return;
+    }
+    loadWorkspaces();
+  }, [authStatus, loadWorkspaces]);
 
   const switchWorkspace = useCallback(async (workspaceId) => {
     // 仅允许切换到列表内的工作空间；列表本身已按 membership 过滤。
@@ -99,7 +122,7 @@ export function WorkspaceProvider({ children, repository = navigationRepository 
       // 服务端记录失败不阻塞本地切换；下次恢复会重新走列表校验。
     }
     setCurrentWorkspace(target);
-    setMembershipRole(target.plan || "");
+    setMembershipRole(target.role || String(target.plan || "").toLowerCase());
     cacheLastWorkspace(workspaceId);
     setStatus("ready");
   }, [workspaces, currentWorkspace]);
@@ -118,12 +141,12 @@ export function WorkspaceProvider({ children, repository = navigationRepository 
   const adoptCreatedWorkspace = useCallback(async (created) => {
     const summary = created.plan
       ? created
-      : { id: created.id, name: created.name, slug: created.slug, plan: "OWNER", logo: ([...created.name][0]) || "W" };
+      : { id: created.id, name: created.name, slug: created.slug, role: "owner", plan: "OWNER", logo: ([...created.name][0]) || "W" };
     const list = await loadWorkspacesNow();
     const known = list.find((item) => item.id === summary.id);
     const adopted = known || summary;
     setCurrentWorkspace(adopted);
-    setMembershipRole(adopted.plan || "OWNER");
+    setMembershipRole(adopted.role || String(adopted.plan || "OWNER").toLowerCase());
     cacheLastWorkspace(adopted.id);
     setStatus("ready");
   }, [loadWorkspacesNow]);
