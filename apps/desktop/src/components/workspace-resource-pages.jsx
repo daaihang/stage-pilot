@@ -16,6 +16,7 @@ import { appStore } from "@/lib/app-store";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { createOrganizationContact, createResource, createVenueSpace, deleteOrganizationContact, deleteResource, getResource, listOrganizationContacts, listResource, listResourceTypes, listVenueSpaces, updateResource, resourceDefinitions } from "@/lib/resource-api";
 import { ResourceTypeDefinition, ResourceTypeManagementPanel } from "@/components/resource-type-management-panel";
+import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { resourcePath, resourceTypePanelPath, workspacePath } from "@/lib/navigation";
 
 const configs = {
@@ -220,6 +221,8 @@ function ResourceRelations({ workspace, type, resourceId }) {
   const [people, setPeople] = useState([]);
   const [name, setName] = useState("");
   const [personID, setPersonID] = useState("");
+  const [pendingRemoval, setPendingRemoval] = useState(null);
+  const [removing, setRemoving] = useState(false);
   const editable = canManage(workspace);
 
   const load = async () => {
@@ -255,7 +258,10 @@ function ResourceRelations({ workspace, type, resourceId }) {
     }
   };
 
-  const remove = async (id) => {
+  const remove = async () => {
+    if (!pendingRemoval) return;
+    const id = pendingRemoval.id;
+    setRemoving(true);
     const toast = notify.loading("正在移除…");
     try {
       if (type === "venues") {
@@ -265,8 +271,11 @@ function ResourceRelations({ workspace, type, resourceId }) {
       }
       await load();
       notify.success("已移除", { id: toast });
+      setPendingRemoval(null);
     } catch (error) {
       notify.error("移除失败", { id: toast, description: error?.message || String(error) });
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -283,7 +292,12 @@ function ResourceRelations({ workspace, type, resourceId }) {
         <span>{type === "venues"
           ? `${item.name}${item.capacity != null ? ` · ${item.capacity} 人` : ""}`
           : `${item.person_name}${item.title ? ` · ${item.title}` : ""}`}</span>
-        {editable && <Button variant="ghost" size="sm" onClick={() => remove(item.id)}>移除</Button>}
+        {editable && <Button variant="ghost" size="sm" onClick={() => setPendingRemoval({
+          id: item.id,
+          name: type === "venues"
+            ? item.name
+            : `${item.person_name}${item.title ? ` · ${item.title}` : ""}`,
+        })}>移除</Button>}
       </div>)}
       {editable && <form className="flex gap-2" onSubmit={create}>
         {type === "venues"
@@ -304,6 +318,15 @@ function ResourceRelations({ workspace, type, resourceId }) {
         <Button type="submit" disabled={type === "venues" ? !name.trim() : !personID}><Plus />添加</Button>
       </form>}
     </CardContent>
+    <ConfirmDeleteDialog
+      open={Boolean(pendingRemoval)}
+      onOpenChange={(nextOpen) => { if (!nextOpen && !removing) setPendingRemoval(null); }}
+      resourceType={type === "venues" ? "场地空间" : "机构联系人"}
+      resourceName={pendingRemoval?.name}
+      resourceCollectionLabel={type === "venues" ? "场地空间列表" : "机构联系人列表"}
+      busy={removing}
+      onConfirm={remove}
+    />
   </Card>;
 }
 
@@ -322,6 +345,8 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
   const [types, setTypes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
     let active = true;
@@ -360,49 +385,64 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
   };
 
   const remove = async () => {
-    if (!window.confirm(`确定删除${resourceDefinitions[type].singular}吗？`)) return;
-    const toast = notify.loading("正在删除…");
+    if (deleting) return;
+    setDeleting(true);
+    const toast = notify.loading(`正在删除${resourceDefinitions[type].singular}…`);
     try {
       await deleteResource(workspace.id, type, resourceId);
       notify.success("已删除", { id: toast });
+      setDeleteOpen(false);
       onDeleted?.();
     } catch (error) {
       notify.error("删除失败", { id: toast, description: error?.message || String(error) });
+    } finally {
+      setDeleting(false);
     }
   };
 
   if (loading) return <div className="min-h-full text-sm text-muted-foreground">正在加载资源…</div>;
   if (error || !item) return <div className="space-y-3"><p className="text-sm text-destructive">无法加载{resourceDefinitions[type].singular}</p><div className="flex gap-2"><Button variant="outline" onClick={load}>重试</Button><Button variant="ghost" onClick={onClose}>返回资源库</Button></div></div>;
 
-  return <div className="@container/resource-detail min-h-full min-w-0 space-y-5">
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <p className="text-xs text-muted-foreground">{resourceDefinitions[type].title}</p>
-        <h1 className="mt-1 text-xl font-semibold">{item[cfg.primary]}</h1>
-        <p className="text-sm text-muted-foreground">修改字段后在离开输入框时自动保存。</p>
+  return <>
+    <div className="@container/resource-detail min-h-full min-w-0 space-y-5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs text-muted-foreground">{resourceDefinitions[type].title}</p>
+          <h1 className="mt-1 text-xl font-semibold">{item[cfg.primary]}</h1>
+          <p className="text-sm text-muted-foreground">修改字段后在离开输入框时自动保存。</p>
+        </div>
+        {canManage(workspace) && <Button variant="destructive" size="sm" disabled={deleting} onClick={() => setDeleteOpen(true)}><Trash2 />删除</Button>}
       </div>
-      {canManage(workspace) && <Button variant="destructive" size="sm" onClick={remove}><Trash2 />删除</Button>}
+      <Card>
+        <CardContent className="grid gap-4 p-5 @min-[36rem]/resource-detail:grid-cols-2">
+          {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 @min-[36rem]/resource-detail:col-span-2" : "space-y-1"}>
+            <span className="text-sm font-medium">{fieldLabels[key]}</span>
+            {["ownership", "status", ...typeFields].includes(key)
+              ? <Select
+                items={detailSelectOptions(key, cfg, types).map(([value, label]) => ({ value, label }))}
+                value={typeFields.has(key) ? (item[key] || "unassigned") : (item[key] || "")}
+                disabled={!canManage(workspace)}
+                onValueChange={(value) => save(key, typeFields.has(key) && value === "unassigned" ? "" : value)}
+              >
+                <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>{detailSelectOptions(key, cfg, types).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
+              </Select>
+              : ["description", "bio", "technical_notes"].includes(key)
+                ? <textarea className="min-h-24 w-full border bg-background p-2 text-sm" defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />
+                : <Input type={["default_duration_seconds", "quantity_total"].includes(key) ? "number" : "text"} defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />}
+          </label>)}
+        </CardContent>
+      </Card>
+      {["venues", "organizations"].includes(type) && <ResourceRelations workspace={workspace} type={type} resourceId={resourceId} />}
     </div>
-    <Card>
-      <CardContent className="grid gap-4 p-5 @min-[36rem]/resource-detail:grid-cols-2">
-        {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 @min-[36rem]/resource-detail:col-span-2" : "space-y-1"}>
-          <span className="text-sm font-medium">{fieldLabels[key]}</span>
-          {["ownership", "status", ...typeFields].includes(key)
-            ? <Select
-              items={detailSelectOptions(key, cfg, types).map(([value, label]) => ({ value, label }))}
-              value={typeFields.has(key) ? (item[key] || "unassigned") : (item[key] || "")}
-              disabled={!canManage(workspace)}
-              onValueChange={(value) => save(key, typeFields.has(key) && value === "unassigned" ? "" : value)}
-            >
-              <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>{detailSelectOptions(key, cfg, types).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
-            </Select>
-            : ["description", "bio", "technical_notes"].includes(key)
-              ? <textarea className="min-h-24 w-full border bg-background p-2 text-sm" defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />
-              : <Input type={["default_duration_seconds", "quantity_total"].includes(key) ? "number" : "text"} defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />}
-        </label>)}
-      </CardContent>
-    </Card>
-    {["venues", "organizations"].includes(type) && <ResourceRelations workspace={workspace} type={type} resourceId={resourceId} />}
-  </div>;
+    <ConfirmDeleteDialog
+      open={deleteOpen}
+      onOpenChange={setDeleteOpen}
+      resourceType={resourceDefinitions[type].singular}
+      resourceName={item[cfg.primary]}
+      resourceCollectionLabel="资源库"
+      busy={deleting}
+      onConfirm={remove}
+    />
+  </>;
 }
