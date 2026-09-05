@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarRange, ClipboardList, ListTree, Plus, XCircle } from "@/components/ui/icons";
 import { ProductionPageHeader } from "@/components/production-page-shell";
 import { PlanningToolbar } from "@/components/planning/planning-toolbar";

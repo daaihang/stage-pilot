@@ -120,7 +120,9 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     setRecentContexts(next);
   }, [recentContextAccountKey]);
   const workspace = route?.direct && directProductionState.value ? { id: directProductionState.value.workspaceId, name: directProductionState.value.workspaceName, role: directProductionState.value.workspaceRole, plan: "活动协作者", workspaceNavigable: directProductionState.value.workspaceNavigable } : (route ? workspaces.find((item) => item.id === route.workspaceId) : null);
-  const productionsLoaded = route ? Object.prototype.hasOwnProperty.call(productionsByWorkspace, route.workspaceId) : false;
+  // Direct production routes load the activity independently and do not have
+  // a workspace cache key. They must not be blocked by the workspace list gate.
+  const productionsLoaded = route?.direct ? true : route ? Object.prototype.hasOwnProperty.call(productionsByWorkspace, route.workspaceId) : false;
   const remoteProductions = route ? productionsByWorkspace[route.workspaceId] ?? [] : [];
   const productions = remoteProductions;
   const isProductionRoute = route?.mode === "production";
