@@ -8,6 +8,16 @@ BEGIN
     INTO missing_workspaces
     FROM workspaces w
     WHERE w.deleted_at IS NULL
+      AND (EXISTS (SELECT 1 FROM programs r WHERE r.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM venues r WHERE r.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM people r WHERE r.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM organizations r WHERE r.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM equipment_items r WHERE r.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM program_types t WHERE t.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM venue_types t WHERE t.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM person_types t WHERE t.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM organization_types t WHERE t.workspace_id = w.id)
+        OR EXISTS (SELECT 1 FROM equipment_types t WHERE t.workspace_id = w.id))
       AND NOT EXISTS (
           SELECT 1
           FROM workspace_memberships m
@@ -18,6 +28,29 @@ BEGIN
 
     IF missing_workspaces IS NOT NULL THEN
         RAISE EXCEPTION 'cannot normalize resource types: active Workspace Owner missing for %', missing_workspaces;
+    END IF;
+END $$;
+
+DO $$
+DECLARE
+    skipped_workspaces TEXT;
+BEGIN
+    SELECT string_agg(w.id, ', ' ORDER BY w.id)
+    INTO skipped_workspaces
+    FROM workspaces w
+    WHERE w.deleted_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM programs r WHERE r.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM venues r WHERE r.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM people r WHERE r.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM organizations r WHERE r.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM equipment_items r WHERE r.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM program_types t WHERE t.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM venue_types t WHERE t.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM person_types t WHERE t.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM organization_types t WHERE t.workspace_id = w.id)
+      AND NOT EXISTS (SELECT 1 FROM equipment_types t WHERE t.workspace_id = w.id);
+    IF skipped_workspaces IS NOT NULL THEN
+        RAISE NOTICE 'resource_type_normalization: skipped empty workspaces without an owner: %', skipped_workspaces;
     END IF;
 END $$;
 
