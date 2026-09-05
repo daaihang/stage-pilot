@@ -34,6 +34,14 @@ function isVisible(element) {
   return styles.display !== "none" && styles.visibility !== "hidden";
 }
 
+// Base UI renders Select, Popover, Menu, Combobox and Dialog surfaces into a
+// body-level portal. In exclusive detail mode those surfaces are still owned
+// by the detail editor; treating them as outside focus would immediately pull
+// focus back to the inset surface and make the popup appear unclickable.
+function isDetailOwnedPortalTarget(element) {
+  return Boolean(element?.closest?.("[data-base-ui-portal]"));
+}
+
 function transitionDurationMs(element) {
   if (!element) return 0;
   const styles = window.getComputedStyle(element);
@@ -282,6 +290,10 @@ export function DetailSplitPane({
     };
     const handleKeyDown = (event) => {
       if (event.key !== "Tab") return;
+      // A body-level Base UI popup temporarily owns focus. Let its own focus
+      // manager handle Tab/arrow navigation instead of cycling back to the
+      // detail surface while a Select, Menu, Popover or Dialog is open.
+      if (isDetailOwnedPortalTarget(event.target) || isDetailOwnedPortalTarget(document.activeElement)) return;
       const focusable = getFocusable();
       if (!focusable.length) {
         event.preventDefault();
@@ -299,7 +311,7 @@ export function DetailSplitPane({
       }
     };
     const handleFocusIn = (event) => {
-      if (surfaceRef.current?.contains(event.target) || event.target.closest?.("[data-detail-titlebar-control]")) return;
+      if (surfaceRef.current?.contains(event.target) || event.target.closest?.("[data-detail-titlebar-control]") || isDetailOwnedPortalTarget(event.target)) return;
       surfaceRef.current?.focus?.();
     };
     document.addEventListener("keydown", handleKeyDown, true);
