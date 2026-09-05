@@ -108,6 +108,12 @@ func TestUnifiedResourceTypeRoutesAndSystemDefaults(t *testing.T) {
 		if response := authedRequest(t, app, token, http.MethodPatch, path+"/"+other["id"].(string), map[string]any{"name": "不可修改"}); response.Code != http.StatusConflict {
 			t.Fatalf("rename system %s type = %d, want 409: %s", test.key, response.Code, response.Body.String())
 		}
+		if response := authedRequest(t, app, token, http.MethodPatch, path+"/"+other["id"].(string), map[string]any{"color": "#123456"}); response.Code != http.StatusConflict {
+			t.Fatalf("recolor system %s type = %d, want 409: %s", test.key, response.Code, response.Body.String())
+		}
+		if response := authedRequest(t, app, token, http.MethodPatch, path+"/"+other["id"].(string), map[string]any{"sort_order": 0}); response.Code != http.StatusConflict {
+			t.Fatalf("resort system %s type = %d, want 409: %s", test.key, response.Code, response.Body.String())
+		}
 		if response := authedRequest(t, app, token, http.MethodPatch, path+"/"+other["id"].(string), map[string]any{"is_active": true}); response.Code != http.StatusOK {
 			t.Fatalf("reactivate system %s type = %d: %s", test.key, response.Code, response.Body.String())
 		}
@@ -227,4 +233,154 @@ func TestResourceTypesRejectNullAndCrossWorkspaceAssignments(t *testing.T) {
 			t.Fatalf("cross workspace %s type = %d, want 400", test.key, response.Code)
 		}
 	}
+}
+
+func TestResourceTypeOrderingKeepsOtherLastAcrossLibraries(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "resource-type-order-"+newID()+"@example.test")
+	token := issueTestToken(t, app, owner)
+	workspaceID := createWorkspaceFor(t, app, token, "资源类型排序")["id"].(string)
+
+	for _, test := range resourceTypeTestCases {
+		path := resourceTypePath(workspaceID, test.key)
+		items, _ := decodeResourceList(t, authedRequest(t, app, token, http.MethodGet, path, nil).Body.Bytes())
+		if len(items) < 2 {
+			t.Fatalf("%s has too few seeded types", test.key)
+		}
+		other := findResourceType(t, items, "other")
+		if items[len(items)-1]["id"] != other["id"] {
+			t.Fatalf("%s other is not last before reorder: %#v", test.key, items)
+		}
+
+		// Reorder system defaults as well as custom rows. The numeric values are
+		// intentionally bogus: the server uses array position as the source of
+		// truth and rewrites a contiguous sequence.
+		reordered := append([]map[string]any(nil), items...)
+		reordered[0], reordered[1] = reordered[1], reordered[0]
+		orderItems := make([]map[string]any, 0, len(reordered))
+		for index, item := range reordered {
+			sortOrder := 9000 - index
+			if index == 0 {
+				sortOrder = -99
+			}
+			orderItems = append(orderItems, map[string]any{"id": item["id"], "sort_order": sortOrder})
+		}
+		response := authedRequest(t, app, token, http.MethodPatch, path+"/order", map[string]any{"items": orderItems})
+		if response.Code != http.StatusOK {
+			t.Fatalf("reorder %s = %d: %s", test.key, response.Code, response.Body.String())
+		}
+		ordered, _ := decodeResourceList(t, response.Body.Bytes())
+		if ordered[len(ordered)-1]["id"] != other["id"] {
+			t.Fatalf("%s other moved after reorder: %#v", test.key, ordered)
+		}
+		for index, item := range ordered {
+			if int(item["sort_order"].(float64)) != index {
+				t.Fatalf("%s sort order is not contiguous at %d: %#v", test.key, index, ordered)
+			}
+		}
+
+		// New custom types are always inserted immediately before “other”.
+		custom := authedRequest(t, app, token, http.MethodPost, path, map[string]any{"name": "排序自定义" + test.key, "color": "#123456"})
+		if custom.Code != http.StatusCreated {
+			t.Fatalf("create custom %s = %d: %s", test.key, custom.Code, custom.Body.String())
+		}
+		customID := resourceID(t, custom.Body.Bytes())
+		latest, _ := decodeResourceList(t, authedRequest(t, app, token, http.MethodGet, path, nil).Body.Bytes())
+		other = findResourceType(t, latest, "other")
+		var customOrder int
+		for _, item := range latest {
+			if item["id"] == customID {
+				customOrder = int(item["sort_order"].(float64))
+			}
+		}
+		if customOrder != int(other["sort_order"].(float64))-1 {
+			t.Fatalf("custom %s was not inserted before other: custom=%d other=%v", test.key, customOrder, other["sort_order"])
+		}
+
+		invalid := append([]map[string]any(nil), latest...)
+		invalid[0], invalid[len(invalid)-1] = invalid[len(invalid)-1], invalid[0]
+		invalidItems := make([]map[string]any, 0, len(invalid))
+		for _, item := range invalid {
+			invalidItems = append(invalidItems, map[string]any{"id": item["id"], "sort_order": 0})
+		}
+		if response := authedRequest(t, app, token, http.MethodPatch, path+"/order", map[string]any{"items": invalidItems}); response.Code != http.StatusConflict {
+			t.Fatalf("other-first reorder %s = %d, want 409: %s", test.key, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestRestoreResourceTypesResetsCatalogAndMigratesResources(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "resource-type-restore-"+newID()+"@example.test")
+	token := issueTestToken(t, app, owner)
+	workspaceID := createWorkspaceFor(t, app, token, "恢复资源类型")["id"].(string)
+	path := resourceTypePath(workspaceID, "programs")
+	items, _ := decodeResourceList(t, authedRequest(t, app, token, http.MethodGet, path, nil).Body.Bytes())
+	otherID := findResourceType(t, items, "other")["id"].(string)
+
+	customResponse := authedRequest(t, app, token, http.MethodPost, path, map[string]any{"name": "自定义恢复类型", "color": "#123456", "is_active": true})
+	if customResponse.Code != http.StatusCreated {
+		t.Fatalf("create restore custom = %d: %s", customResponse.Code, customResponse.Body.String())
+	}
+	customID := resourceID(t, customResponse.Body.Bytes())
+	resource := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/programs", map[string]any{"name": "待迁移节目", "program_type_id": customID})
+	if resource.Code != http.StatusCreated {
+		t.Fatalf("create restore resource = %d: %s", resource.Code, resource.Body.String())
+	}
+	resourceIDValue := resourceID(t, resource.Body.Bytes())
+
+	// Simulate a historical/customized system row; restore must bring every
+	// template-owned field back, not just its activation state.
+	music := findResourceType(t, items, "music")
+	if _, err := app.db.Exec(t.Context(), `UPDATE program_types SET name='历史自定义音乐',color='#abcdef',sort_order=99,is_active=FALSE WHERE id=$1`, music["id"].(string)); err != nil {
+		t.Fatalf("customize system row before restore: %v", err)
+	}
+	restore := authedRequest(t, app, token, http.MethodPost, path+"/restore", map[string]any{})
+	if restore.Code != http.StatusOK {
+		t.Fatalf("restore programs = %d: %s", restore.Code, restore.Body.String())
+	}
+	var restoreBody map[string]any
+	if err := json.Unmarshal(restore.Body.Bytes(), &restoreBody); err != nil {
+		t.Fatal(err)
+	}
+	if restoreBody["removed_custom_count"] != float64(1) || restoreBody["migrated_resource_count"] != float64(1) {
+		t.Fatalf("restore statistics = %#v", restoreBody)
+	}
+	for _, item := range restoredTypeItems(t, app, token, path) {
+		if item["id"] == customID {
+			t.Fatalf("soft-deleted custom type is still listed: %#v", item)
+		}
+	}
+	if response := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/programs/"+resourceIDValue, nil); response.Code != http.StatusOK || !containsTypeID(t, response.Body.Bytes(), "program_type_id", otherID) {
+		t.Fatalf("restored resource type = %d: %s", response.Code, response.Body.String())
+	}
+	restoredItems, _ := decodeResourceList(t, authedRequest(t, app, token, http.MethodGet, path, nil).Body.Bytes())
+	if restoredMusic := findResourceType(t, restoredItems, "music"); restoredMusic["is_active"] != true {
+		t.Fatalf("music was not reactivated by restore: %#v", restoredMusic)
+	}
+	if restoredMusic := findResourceType(t, restoredItems, "music"); restoredMusic["name"] != "音乐" || restoredMusic["color"] != "#2563eb" || restoredMusic["sort_order"] != float64(0) {
+		t.Fatalf("music template fields were not restored: %#v", restoredMusic)
+	}
+	if restoredItems[len(restoredItems)-1]["system_key"] != "other" {
+		t.Fatalf("restored other is not last: %#v", restoredItems)
+	}
+
+	// Restore is idempotent once all custom rows have been removed.
+	second := authedRequest(t, app, token, http.MethodPost, path+"/restore", map[string]any{})
+	if second.Code != http.StatusOK {
+		t.Fatalf("second restore = %d: %s", second.Code, second.Body.String())
+	}
+	var secondBody map[string]any
+	if err := json.Unmarshal(second.Body.Bytes(), &secondBody); err != nil {
+		t.Fatal(err)
+	}
+	if secondBody["removed_custom_count"] != float64(0) || secondBody["migrated_resource_count"] != float64(0) {
+		t.Fatalf("second restore statistics = %#v", secondBody)
+	}
+}
+
+func restoredTypeItems(t *testing.T, app *application, token, path string) []map[string]any {
+	t.Helper()
+	items, _ := decodeResourceList(t, authedRequest(t, app, token, http.MethodGet, path, nil).Body.Bytes())
+	return items
 }

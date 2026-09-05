@@ -44,6 +44,7 @@ export async function listResourceTypes(workspaceId, resourceType, filters) {
 export function createResourceType(workspaceId, resourceType, payload) { return request(base(workspaceId, resourceTypePath(resourceType)), { method: "POST", body: JSON.stringify(payload) }); }
 export function updateResourceType(workspaceId, resourceType, id, payload) { return request(base(workspaceId, `${resourceTypePath(resourceType)}/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
 export function reorderResourceTypes(workspaceId, resourceType, items) { return request(base(workspaceId, `${resourceTypePath(resourceType)}/order`), { method: "PATCH", body: JSON.stringify({ items }) }); }
+export function restoreResourceTypes(workspaceId, resourceType) { return request(base(workspaceId, `${resourceTypePath(resourceType)}/restore`), { method: "POST", body: JSON.stringify({}) }); }
 export function deleteResourceType(workspaceId, resourceType, id, options = {}) {
   return request(base(workspaceId, `${resourceTypePath(resourceType)}/${id}/delete`), { method: "POST", body: JSON.stringify(options) });
 }

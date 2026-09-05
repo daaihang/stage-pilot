@@ -138,7 +138,8 @@ type updateProgramPayload struct {
 }
 
 // UnmarshalJSON keeps the distinction between an omitted type and an explicit
-// null. The latter is how a client clears a program's assignment.
+// null. Explicit null is rejected by the resource-type validator; the
+// distinction lets omitted fields retain their current assignment.
 func (p *updateProgramPayload) UnmarshalJSON(data []byte) error {
 	type payloadAlias updateProgramPayload
 	var decoded payloadAlias

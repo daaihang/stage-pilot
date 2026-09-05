@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
-import { createResourceType, deleteResourceType, listResourceTypes, reorderResourceTypes, updateResourceType } from "@/lib/resource-api";
+import { createResourceType, deleteResourceType, listResourceTypes, reorderResourceTypes, restoreResourceTypes, updateResourceType } from "@/lib/resource-api";
 import { roleAtLeast } from "@/lib/workspace-api";
 import { useUserPreferences } from "@/components/user-preferences-provider";
 import { formatInstantInTimeZone } from "@/lib/timezone";
@@ -31,7 +31,7 @@ export const ResourceTypeDefinition = Object.freeze({
     usageCountField: "program_count",
     usageQuery: (usage) => (usage === "all" ? {} : { has_programs: usage === "used" ? "true" : "false" }),
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["program_count", "节目数量"], ["updated_at", "更新时间"]],
-    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "programs", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "programs", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "programs", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "programs", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "programs", id, options) },
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "programs", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "programs", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "programs", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "programs", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "programs", id, options), restore: (workspaceId) => restoreResourceTypes(workspaceId, "programs") },
   },
   venues: {
     resourceType: "venues",
@@ -44,7 +44,7 @@ export const ResourceTypeDefinition = Object.freeze({
     usageCountField: "venue_count",
     usageQuery: (usage) => (usage === "all" ? {} : { has_venues: usage === "used" ? "true" : "false" }),
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["venue_count", "场地数量"], ["updated_at", "更新时间"]],
-    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "venues", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "venues", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "venues", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "venues", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "venues", id, options) },
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "venues", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "venues", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "venues", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "venues", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "venues", id, options), restore: (workspaceId) => restoreResourceTypes(workspaceId, "venues") },
   },
   people: {
     resourceType: "people",
@@ -57,7 +57,7 @@ export const ResourceTypeDefinition = Object.freeze({
     usageCountField: "person_count",
     usageQuery: (usage) => (usage === "all" ? {} : { has_people: usage === "used" ? "true" : "false" }),
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["person_count", "人员数量"], ["updated_at", "更新时间"]],
-    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "people", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "people", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "people", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "people", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "people", id, options) },
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "people", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "people", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "people", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "people", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "people", id, options), restore: (workspaceId) => restoreResourceTypes(workspaceId, "people") },
   },
   organizations: {
     resourceType: "organizations",
@@ -70,7 +70,7 @@ export const ResourceTypeDefinition = Object.freeze({
     usageCountField: "organization_count",
     usageQuery: (usage) => (usage === "all" ? {} : { has_organizations: usage === "used" ? "true" : "false" }),
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["organization_count", "机构数量"], ["updated_at", "更新时间"]],
-    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "organizations", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "organizations", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "organizations", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "organizations", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "organizations", id, options) },
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "organizations", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "organizations", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "organizations", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "organizations", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "organizations", id, options), restore: (workspaceId) => restoreResourceTypes(workspaceId, "organizations") },
   },
   equipment: {
     resourceType: "equipment",
@@ -83,7 +83,7 @@ export const ResourceTypeDefinition = Object.freeze({
     usageCountField: "equipment_count",
     usageQuery: (usage) => (usage === "all" ? {} : { has_equipment: usage === "used" ? "true" : "false" }),
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["equipment_count", "设备数量"], ["updated_at", "更新时间"]],
-    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "equipment", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "equipment", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "equipment", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "equipment", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "equipment", id, options) },
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "equipment", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "equipment", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "equipment", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "equipment", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "equipment", id, options), restore: (workspaceId) => restoreResourceTypes(workspaceId, "equipment") },
   },
 });
 
@@ -114,6 +114,12 @@ function formatDate(value, timezone) {
   return value ? (formatInstantInTimeZone(value, timezone) || "-") : "-";
 }
 
+function keepOtherLast(items) {
+  const other = items.find((item) => item.system_key === "other");
+  if (!other) return items;
+  return [...items.filter((item) => item.id !== other.id), other];
+}
+
 function errorDescription(error, definition) {
   if (!error) return "请求失败";
   const count = error[definition.usageCountField];
@@ -128,7 +134,7 @@ function gridClassName(canWrite) {
 }
 
 export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange, item, onSaved }) {
-  const [form, setForm] = useState({ name: "", color: definition.initialColor, is_active: true, sort_order: 1 });
+  const [form, setForm] = useState({ name: "", color: definition.initialColor, is_active: true });
   const [busy, setBusy] = useState(false);
   const editing = Boolean(item);
   const systemDefault = Boolean(item?.is_system_default);
@@ -136,8 +142,8 @@ export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange
   useEffect(() => {
     if (!open) return;
     setForm(item
-      ? { name: item.name, color: item.color || definition.initialColor, is_active: Boolean(item.is_active), sort_order: displayPosition(item.sort_order) }
-      : { name: "", color: definition.initialColor, is_active: true, sort_order: 1 });
+      ? { name: item.name, color: item.color || definition.initialColor, is_active: Boolean(item.is_active) }
+      : { name: "", color: definition.initialColor, is_active: true });
     setBusy(false);
   }, [definition, item, open]);
 
@@ -145,16 +151,14 @@ export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange
     event.preventDefault();
     const name = form.name.trim();
     const color = form.color.trim();
-    const displaySortOrder = Number(form.sort_order);
     if ([...name].length < 1 || [...name].length > 120) return notify.error(`${definition.title}名称必须为 1–120 个字符`);
     if (!/^#[0-9a-f]{6}$/i.test(color)) return notify.error("颜色必须是 #RRGGBB 格式");
-    if (!Number.isInteger(displaySortOrder) || displaySortOrder < 1) return notify.error("排序位置必须是正整数");
-    if (systemDefault && (!editing || name !== item.name || color.toLowerCase() !== String(item.color || definition.initialColor).toLowerCase() || displaySortOrder !== displayPosition(item.sort_order))) return notify.error(`系统默认${definition.resourceLabel}类型不能修改`);
+    if (systemDefault && (!editing || name !== item.name || color.toLowerCase() !== String(item.color || definition.initialColor).toLowerCase())) return notify.error(`系统默认${definition.resourceLabel}类型不能修改`);
 
     const toast = notify.loading(editing ? `正在保存${definition.title}…` : `正在创建${definition.title}…`);
     setBusy(true);
     try {
-      const payload = systemDefault ? { is_active: Boolean(form.is_active) } : { name, color, is_active: Boolean(form.is_active), sort_order: displaySortOrder - 1 };
+      const payload = systemDefault ? { is_active: Boolean(form.is_active) } : { name, color, is_active: Boolean(form.is_active) };
       const saved = editing
         ? await definition.api.update(workspaceId, item.id, payload)
         : await definition.api.create(workspaceId, payload);
@@ -174,14 +178,13 @@ export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange
         <DialogHeader>
           <DialogTitle>{editing ? `编辑${definition.title}` : `新建${definition.title}`}</DialogTitle>
           <DialogDescription>
-            {systemDefault ? `系统默认${definition.resourceLabel}类型只能启用或停用，不能修改名称、颜色、排序或删除。` : `停用后不能用于新建${definition.resourceLabel}。`}
+            {systemDefault ? `系统默认${definition.resourceLabel}类型只能启用或停用；排序请在列表中拖动（“其他”固定在末尾）。` : `停用后不能用于新建${definition.resourceLabel}；排序请在列表中拖动。`}
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={submit}>
           <label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus maxLength={120} disabled={systemDefault} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></label>
           <label className="block space-y-1"><span className="text-sm font-medium">颜色</span><div className="flex items-center gap-2"><input aria-label={`${definition.title}颜色`} disabled={systemDefault} className="size-9 cursor-pointer border bg-background p-0.5" type="color" value={/^#[0-9a-f]{6}$/i.test(form.color) ? form.color : definition.initialColor} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} /><Input disabled={systemDefault} value={form.color} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} placeholder={definition.initialColor} /></div></label>
           <label className="flex items-center justify-between gap-3 border-y py-3"><span><span className="block text-sm font-medium">启用</span><span className="text-xs text-muted-foreground">停用类型不会出现在新建{definition.resourceLabel}选项中。</span></span><Switch checked={Boolean(form.is_active)} onCheckedChange={(checked) => setForm((current) => ({ ...current, is_active: checked }))} /></label>
-          <label className="block space-y-1"><span className="text-sm font-medium">排序位置</span><Input disabled={systemDefault} type="number" min="1" step="1" value={form.sort_order} onChange={(event) => setForm((current) => ({ ...current, sort_order: event.target.value }))} /></label>
           <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "保存中…" : "保存"}</Button></DialogFooter>
         </form>
       </DialogContent>
@@ -255,6 +258,55 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
   );
 }
 
+export function ResourceTypeRestoreDialog({ definition, workspaceId, types, open, onOpenChange, onRestored }) {
+  const [summary, setSummary] = useState({ customCount: 0, resourceCount: 0 });
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setBusy(false);
+    const fallback = types.filter((type) => !type.is_system_default);
+    setSummary({ customCount: fallback.length, resourceCount: fallback.reduce((total, type) => total + Number(type[definition.usageCountField] ?? 0), 0) });
+    setLoadingSummary(true);
+    let active = true;
+    definition.api.list(workspaceId, { sort: "sort_order", direction: "asc" })
+      .then((result) => {
+        if (!active) return;
+        const custom = result.items.filter((type) => !type.is_system_default);
+        setSummary({ customCount: custom.length, resourceCount: custom.reduce((total, type) => total + Number(type[definition.usageCountField] ?? 0), 0) });
+      })
+      .catch((error) => { if (active) notify.error(`无法加载${definition.title}恢复信息`, { description: errorDescription(error, definition) }); })
+      .finally(() => { if (active) setLoadingSummary(false); });
+    return () => { active = false; };
+  }, [definition, open, types, workspaceId]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (busy || loadingSummary) return;
+    const toast = notify.loading(`正在恢复${definition.title}默认…`);
+    setBusy(true);
+    try {
+      const result = await definition.api.restore(workspaceId);
+      notify.success(`${definition.title}默认已恢复`, { id: toast, description: `已处理 ${Number(result.removed_custom_count ?? summary.customCount)} 个自定义类型，迁移 ${Number(result.migrated_resource_count ?? summary.resourceCount)} 个${definition.resourceLabel}。` });
+      onOpenChange(false);
+      onRestored?.(result);
+    } catch (error) {
+      notify.error(`${definition.title}恢复默认失败`, { id: toast, description: errorDescription(error, definition) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
+    <DialogContent className="max-w-md">
+      <DialogHeader><DialogTitle>恢复“{definition.title}”默认</DialogTitle><DialogDescription>系统默认类型将恢复模板中的名称、颜色、顺序和启用状态。所有自定义类型会被软删除，关联的{definition.resourceLabel}会移动到系统默认的“其他”类型，{definition.resourceLabel}本身不会删除。</DialogDescription></DialogHeader>
+      <div className="border bg-muted/30 p-3 text-sm"><p>将处理 {summary.customCount} 个自定义类型、迁移 {summary.resourceCount} 个{definition.resourceLabel}。</p><p className="mt-1 text-xs text-muted-foreground">当前没有恢复自定义类型的入口。该操作完成后不可撤销。</p></div>
+      <form onSubmit={submit}><DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="destructive" disabled={busy || loadingSummary}>{busy ? "恢复中…" : loadingSummary ? "读取中…" : "恢复默认"}</Button></DialogFooter></form>
+    </DialogContent>
+  </Dialog>;
+}
+
 function ManagementSkeleton() {
   return <Card variant="flush"><CardContent className="divide-y p-0">{Array.from({ length: 5 }, (_, index) => <div key={index} className="flex min-h-28 items-center gap-4 px-4 py-4"><Skeleton className="size-8 shrink-0" /><div className="min-w-0 flex-1 space-y-2"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-64 max-w-full" /></div><Skeleton className="hidden h-8 w-20 sm:block" /></div>)}</CardContent></Card>;
 }
@@ -262,10 +314,11 @@ function ManagementSkeleton() {
 export function ResourceTypeRow({ definition, item, timezone, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
   const Icon = definition.icon;
   const systemDefault = Boolean(item.is_system_default);
+  const isOther = item.system_key === "other";
   const toggleDisabled = !canWrite || pendingToggleId === item.id;
-  return <SortableItem value={item.id} disabled={!reorderable || systemDefault} className="border-b last:border-b-0"><div className={`${gridClassName(canWrite)} py-3 transition-colors hover:bg-muted/40`}>
-    {systemDefault ? <span className="size-7" aria-hidden="true" /> : <SortableItemHandle className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={reorderable ? `拖动${item.name}调整排序` : "排序仅在默认排序视图可用"} title={reorderable ? "拖动调整排序" : "清除筛选后可调整排序"}><GripVertical className="size-4" /></SortableItemHandle>}
-    {systemDefault ? <span className="hidden size-7 sm:block" aria-hidden="true" /> : <Badge variant="outline" className="hidden size-7 justify-center px-0 tabular-nums sm:inline-flex">{displayPosition(item.sort_order)}</Badge>}
+  return <SortableItem value={item.id} disabled={!reorderable || isOther} className="border-b last:border-b-0"><div className={`${gridClassName(canWrite)} py-3 transition-colors hover:bg-muted/40`}>
+    {isOther ? <span className="size-7" aria-hidden="true" /> : <SortableItemHandle className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={reorderable ? `拖动${item.name}调整排序` : "排序仅在默认排序视图可用"} title={reorderable ? "拖动调整排序" : "清除筛选后可调整排序"}><GripVertical className="size-4" /></SortableItemHandle>}
+    {isOther ? <span className="hidden size-7 sm:block" aria-hidden="true" /> : <Badge variant="outline" className="hidden size-7 justify-center px-0 tabular-nums sm:inline-flex">{displayPosition(item.sort_order)}</Badge>}
     <span className="size-3 rounded-full" style={{ backgroundColor: item.color }} aria-label={`颜色 ${item.color}`} title={item.color} />
     <div className="flex size-8 items-center justify-center bg-muted text-muted-foreground"><Icon className="size-4" /></div>
     <div className="flex min-w-0 flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">{item.name}</p>{item.is_system_default && <Badge variant="outline">系统默认</Badge>}{!item.is_active && <Badge variant="secondary">已停用</Badge>}</div>
@@ -299,6 +352,11 @@ export function ResourceTypeManagementPanel({ workspace, resourceType, onChanged
   const requestFilters = useMemo(() => ({ q: search.trim(), ...(status !== "all" ? { status } : {}), ...definition.usageQuery(usage), sort, direction }), [definition, direction, search, sort, status, usage]);
   const visibleTypes = useMemo(() => {
     return [...types].sort((left, right) => {
+      if (sort === "sort_order" && direction === "asc") {
+        const leftOther = left.system_key === "other";
+        const rightOther = right.system_key === "other";
+        if (leftOther !== rightOther) return leftOther ? 1 : -1;
+      }
       let result = sort === "name" ? String(left.name).localeCompare(String(right.name), "zh-CN") : sort === definition.usageCountField ? Number(left[definition.usageCountField] ?? 0) - Number(right[definition.usageCountField] ?? 0) : sort === "sort_order" ? Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0) : new Date(left.updated_at || 0).getTime() - new Date(right.updated_at || 0).getTime();
       if (result === 0) result = Number(left.sort_order ?? 0) - Number(right.sort_order ?? 0);
       return direction === "asc" ? result : -result;
@@ -356,25 +414,23 @@ export function ResourceTypeManagementPanel({ workspace, resourceType, onChanged
   }, [canWrite, definition, loadTypes, onChanged, pendingToggleId, types, workspaceId]);
   const handleValueCommit = useCallback(async (next, meta) => {
     if (!reorderable) return;
-    const currentByID = new Map(types.map((item) => [item.id, item]));
-    const customSlots = types.filter((item) => !item.is_system_default).sort((left, right) => Number(left.sort_order) - Number(right.sort_order)).map((item) => item.sort_order);
-    const customOrder = next.filter((item) => !item.is_system_default);
-    const orders = new Map(customOrder.map((item, index) => [item.id, customSlots[index]]));
+    const ordered = keepOtherLast(next);
     const toast = notify.loading(`正在保存${definition.title}排序…`);
-    try { await definition.api.reorder(workspaceId, next.map((item) => ({ id: item.id, sort_order: item.is_system_default ? currentByID.get(item.id)?.sort_order : orders.get(item.id) }))); notify.success(`${definition.title}排序已保存`, { id: toast }); onChanged?.(); await loadTypes().catch(() => {}); }
+    try { await definition.api.reorder(workspaceId, ordered.map((item, index) => ({ id: item.id, sort_order: index }))); notify.success(`${definition.title}排序已保存`, { id: toast }); onChanged?.(); await loadTypes().catch(() => {}); }
     catch (nextError) { setTypes(meta.previousValue); notify.error(`保存${definition.title}排序失败`, { id: toast, description: errorDescription(nextError, definition) }); await loadTypes().catch(() => {}); }
-  }, [definition, loadTypes, onChanged, reorderable, types, workspaceId]);
+  }, [definition, loadTypes, onChanged, reorderable, workspaceId]);
 
   const filterFields = [statusFilter, { id: "usage", label: "使用情况", type: "select", defaultOperator: "is_any_of", options: [{ value: "used", label: `有${definition.resourceLabel}` }, { value: "unused", label: `无${definition.resourceLabel}` }] }];
   const empty = error ? { icon: definition.icon, title: `无法加载${definition.title}`, description: errorDescription(error, definition), action: <Button variant="outline" onClick={retry}><RefreshCw />重试</Button> } : visibleTypes.length === 0 ? { icon: definition.icon, title: search.trim() || status !== "all" || usage !== "all" ? `没有匹配的${definition.title}` : `还没有${definition.title}`, description: search.trim() || status !== "all" || usage !== "all" ? "调整搜索词或筛选条件后再试。" : `创建${definition.title}后，${definition.resourceLabel}库中的类型会统一使用这里的配置。`, action: canWrite ? <Button onClick={() => setDialog({ type: "create" })}><Plus />新建{definition.title}</Button> : null } : null;
   const sortControls = <div className="flex min-w-0 flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">排序</span><Select items={definition.sortOptions.map(([value, label]) => ({ value, label }))} value={sort} onValueChange={setSort}><SelectTrigger className="w-28" aria-label="排序字段"><SelectValue /></SelectTrigger><SelectContent>{definition.sortOptions.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button type="button" variant="outline" size="sm" onClick={() => setDirection((current) => current === "asc" ? "desc" : "asc")} aria-label={direction === "asc" ? "切换为降序" : "切换为升序"}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}<span>{direction === "asc" ? "升序" : "降序"}</span></Button></div>;
 
   return <>
-    <ResourcePage title={definition.title} description={definition.description} count={visibleTypes.length} search={{ value: search, onChange: setSearch, placeholder: `搜索${definition.title}…` }} filters={<><ResourceFilters fields={filterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />{sortControls}</>} showViewToggle={false} onCreate={canWrite ? () => setDialog({ type: "create" }) : undefined} createLabel={`新建${definition.title}`} loading={loading} loadingContent={<ManagementSkeleton />} empty={empty} summary={reorderable ? <span className="inline-flex items-center gap-1"><GripVertical className="size-3" />可拖动调整排序</span> : null}>
-      <Card variant="flush"><CardContent className="p-0"><div className={`${gridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}><span aria-hidden="true" /><span className="text-center">位置</span><span aria-hidden="true" /><span aria-hidden="true" /><span>{definition.title}</span><span className="text-right">{definition.resourceLabel}数量</span><span className="hidden text-right lg:block">更新时间</span><span className="whitespace-nowrap text-center">启用状态</span>{canWrite && <span aria-hidden="true" />}</div><Sortable value={visibleTypes} onValueChange={(next) => { if (reorderable) setTypes(next); }} onValueCommit={handleValueCommit} getItemValue={(item) => item.id} strategy="vertical" className="divide-y-0">{visibleTypes.map((item) => <ResourceTypeRow key={item.id} definition={definition} item={item} timezone={timezone} canWrite={canWrite} reorderable={reorderable} pendingToggleId={pendingToggleId} onToggle={handleToggle} onEdit={(selected) => setDialog({ type: "edit", item: selected })} onDelete={(selected) => setDialog({ type: "delete", item: selected })} />)}</Sortable></CardContent></Card>
+    <ResourcePage title={definition.title} description={definition.description} count={visibleTypes.length} search={{ value: search, onChange: setSearch, placeholder: `搜索${definition.title}…` }} filters={<><ResourceFilters fields={filterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />{sortControls}</>} showViewToggle={false} onCreate={canWrite ? () => setDialog({ type: "create" }) : undefined} createLabel={`新建${definition.title}`} headerActions={canWrite ? <Button type="button" variant="outline" onClick={() => setDialog({ type: "restore" })}><RefreshCw />恢复默认</Button> : undefined} loading={loading} loadingContent={<ManagementSkeleton />} empty={empty} summary={reorderable ? <span className="inline-flex items-center gap-1"><GripVertical className="size-3" />可拖动调整排序，其他固定在末尾</span> : null}>
+      <Card variant="flush"><CardContent className="p-0"><div className={`${gridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}><span aria-hidden="true" /><span className="text-center">位置</span><span aria-hidden="true" /><span aria-hidden="true" /><span>{definition.title}</span><span className="text-right">{definition.resourceLabel}数量</span><span className="hidden text-right lg:block">更新时间</span><span className="whitespace-nowrap text-center">启用状态</span>{canWrite && <span aria-hidden="true" />}</div><Sortable value={visibleTypes} onValueChange={(next) => { if (reorderable) setTypes(keepOtherLast(next)); }} onValueCommit={handleValueCommit} getItemValue={(item) => item.id} strategy="vertical" className="divide-y-0">{visibleTypes.map((item) => <ResourceTypeRow key={item.id} definition={definition} item={item} timezone={timezone} canWrite={canWrite} reorderable={reorderable} pendingToggleId={pendingToggleId} onToggle={handleToggle} onEdit={(selected) => setDialog({ type: "edit", item: selected })} onDelete={(selected) => setDialog({ type: "delete", item: selected })} />)}</Sortable></CardContent></Card>
     </ResourcePage>
     {dialog?.type !== "delete" && <ResourceTypeDialog definition={definition} workspaceId={workspaceId} open={dialog?.type === "create" || dialog?.type === "edit"} onOpenChange={(open) => { if (!open) setDialog(null); }} item={dialog?.type === "edit" ? dialog.item : null} onSaved={handleSaved} />}
     {dialog?.type === "delete" && <ResourceTypeDeleteDialog definition={definition} workspace={workspace} item={dialog.item} types={types} open onOpenChange={(open) => { if (!open) setDialog(null); }} onDeleted={handleDeleted} />}
+    <ResourceTypeRestoreDialog definition={definition} workspaceId={workspaceId} types={types} open={dialog?.type === "restore"} onOpenChange={(open) => { if (!open) setDialog(null); }} onRestored={handleDeleted} />
   </>;
 }
 

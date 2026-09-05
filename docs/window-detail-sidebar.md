@@ -76,7 +76,7 @@ useEffect(() => registerDetail({
 
 新增或修改资源库页面时，优先复用 `ResourceDetailPanel` 和现有资源配置；不要重新引入 `ResourceDetailPage`、页面私有抽屉或第二套详情布局。
 
-资源库类型管理也使用同一个窗口详情 surface：五个资源库的“管理类型”操作导航到当前资源列表的 `?panel=types`，并注册 `ResourceTypeManagementPanel`。类型管理与资源详情互斥，关闭类型面板只移除 `panel` 参数并保留列表的搜索、筛选和视图状态。类型管理统一调用 `/v1/workspaces/{workspaceId}/resource-types/{resourceType}`，其中 `resourceType` 只能为 `programs`、`venues`、`people`、`organizations` 或 `equipment`；文件类型继续独立管理。
+资源库类型管理也使用同一个窗口详情 surface：五个资源库的“管理类型”操作导航到当前资源列表的 `?panel=types`，并注册 `ResourceTypeManagementPanel`。类型管理与资源详情互斥，关闭类型面板只移除 `panel` 参数并保留列表的搜索、筛选和视图状态。类型管理统一调用 `/v1/workspaces/{workspaceId}/resource-types/{resourceType}`，其中 `resourceType` 只能为 `programs`、`venues`、`people`、`organizations` 或 `equipment`；文件类型继续独立管理。默认排序通过完整列表拖动持久化，系统默认类型同样可排序，`other` 永远固定在末尾；管理员可调用同一路径下的 `/restore` 恢复系统模板并将自定义资源迁移到 `other`。
 
 `DetailSplitPane` 只保留一个 `[data-detail-surface]` 详情节点。嵌入、独占和覆盖是同一节点的三种几何状态；页面详情内容不得为了不同宽度再渲染第二份。
 
