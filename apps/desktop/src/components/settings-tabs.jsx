@@ -206,7 +206,7 @@ export function SectionTabsLayout({
       <div className={cn(
         "relative w-full min-w-0 lg:h-fit",
         shouldPin && "sticky top-0 z-20 self-start bg-background/95 py-1 backdrop-blur-sm",
-        shouldPin && orientation === "horizontal" && "after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-3 after:h-3 after:bg-gradient-to-b after:from-background/95 after:to-transparent",
+        shouldPin && orientation === "horizontal" && "after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-4 after:h-9 after:bg-gradient-to-b after:from-background after:via-background/90 after:to-transparent",
       )}>
         <TabsList
           ref={activeTabsListRef}
