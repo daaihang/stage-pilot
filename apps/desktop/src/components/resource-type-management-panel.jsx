@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, GripVertical, ListMusic, MapPin, Pencil, Plus, RefreshCw, Trash2 } from "@/components/ui/icons";
+import { ArrowDown, ArrowUp, Building2, GripVertical, ListMusic, MapPin, Package, Pencil, Plus, RefreshCw, Trash2, UsersRound } from "@/components/ui/icons";
 import { Sortable, SortableItem, SortableItemHandle } from "@/components/reui/sortable";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { ResourcePage } from "@/components/resource-page";
@@ -47,6 +47,48 @@ export const ResourceTypeDefinition = Object.freeze({
     sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["venue_count", "场地数量"], ["updated_at", "更新时间"]],
     api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "venues", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "venues", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "venues", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "venues", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "venues", id, options) },
     deletePolicy: "venue",
+  },
+  people: {
+    resourceType: "people",
+    title: "人员类型",
+    description: "管理当前工作空间的人员类型、排序和使用情况。",
+    resourceLabel: "人员",
+    typeField: "person_type_id",
+    icon: UsersRound,
+    initialColor: "#2563eb",
+    usageCountField: "person_count",
+    usageQuery: (usage) => (usage === "all" ? {} : { has_people: usage === "used" ? "true" : "false" }),
+    sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["person_count", "人员数量"], ["updated_at", "更新时间"]],
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "people", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "people", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "people", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "people", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "people", id, options) },
+    deletePolicy: "unassign",
+  },
+  organizations: {
+    resourceType: "organizations",
+    title: "机构类型",
+    description: "管理当前工作空间的机构类型、排序和使用情况。",
+    resourceLabel: "机构",
+    typeField: "organization_type_id",
+    icon: Building2,
+    initialColor: "#7c3aed",
+    usageCountField: "organization_count",
+    usageQuery: (usage) => (usage === "all" ? {} : { has_organizations: usage === "used" ? "true" : "false" }),
+    sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["organization_count", "机构数量"], ["updated_at", "更新时间"]],
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "organizations", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "organizations", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "organizations", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "organizations", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "organizations", id, options) },
+    deletePolicy: "unassign",
+  },
+  equipment: {
+    resourceType: "equipment",
+    title: "设备类型",
+    description: "管理当前工作空间的设备类型、排序和使用情况。",
+    resourceLabel: "设备",
+    typeField: "equipment_type_id",
+    icon: Package,
+    initialColor: "#64748b",
+    usageCountField: "equipment_count",
+    usageQuery: (usage) => (usage === "all" ? {} : { has_equipment: usage === "used" ? "true" : "false" }),
+    sortOptions: [["sort_order", "排序位置"], ["name", "名称"], ["equipment_count", "设备数量"], ["updated_at", "更新时间"]],
+    api: { list: (workspaceId, filters) => listResourceTypes(workspaceId, "equipment", filters), create: (workspaceId, payload) => createResourceType(workspaceId, "equipment", payload), update: (workspaceId, id, payload) => updateResourceType(workspaceId, "equipment", id, payload), reorder: (workspaceId, items) => reorderResourceTypes(workspaceId, "equipment", items), remove: (workspaceId, id, options) => deleteResourceType(workspaceId, "equipment", id, options) },
+    deletePolicy: "unassign",
   },
 });
 
@@ -158,9 +200,10 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
   const [busy, setBusy] = useState(false);
   const usageCount = Number(item?.[definition.usageCountField] ?? 0);
   const isProgram = definition.deletePolicy === "program";
+  const unassignOnDelete = definition.deletePolicy === "unassign";
   const blockedBySystem = Boolean(item?.is_system_default);
   const targets = availableTypes.filter((type) => type.id !== item?.id && type.is_active);
-  const canDelete = Boolean(item) && !blockedBySystem && (isProgram ? usageCount === 0 || strategy !== "delete" : usageCount === 0);
+  const canDelete = Boolean(item) && !blockedBySystem && (isProgram ? usageCount === 0 || strategy !== "delete" : unassignOnDelete || usageCount === 0);
 
   useEffect(() => {
     if (!open) return;
@@ -208,7 +251,7 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>{isProgram ? `处理“${item?.name || definition.title}”` : `删除${definition.title}`}</DialogTitle><DialogDescription>{blockedBySystem ? `系统默认${definition.title}不能删除，但可以停用。` : usageCount > 0 ? `“${item?.name}”仍有 ${usageCount} 个${definition.resourceLabel}使用，请先调整类型。` : `删除“${item?.name}”后不可恢复。`}</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>{isProgram ? `处理“${item?.name || definition.title}”` : `删除${definition.title}`}</DialogTitle><DialogDescription>{blockedBySystem ? `系统默认${definition.title}不能删除，但可以停用。` : usageCount > 0 && unassignOnDelete ? `删除后，${usageCount} 个${definition.resourceLabel}会保留并改为未分类。` : usageCount > 0 ? `“${item?.name}”仍有 ${usageCount} 个${definition.resourceLabel}使用，请先调整类型。` : `删除“${item?.name}”后不可恢复。`}</DialogDescription></DialogHeader>
         {isProgram ? <form className="space-y-3" onSubmit={submit}><RadioGroup value={strategy} onValueChange={setStrategy} className="gap-2">
           {blockedBySystem ? <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="deactivate" className="mt-0.5" /><span><span className="block text-sm font-medium">仅停用</span><span className="text-xs text-muted-foreground">系统默认类型不能删除，但可以停用。</span></span></label> : usageCount === 0 ? <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="delete" className="mt-0.5" /><span><span className="block text-sm font-medium">直接删除</span><span className="text-xs text-muted-foreground">类型会被软删除。</span></span></label> : <>
             {targets.length > 0 && <label className="block cursor-pointer border p-3"><span className="flex items-start gap-2"><RadioGroupItem value="move" className="mt-0.5" /><span><span className="block text-sm font-medium">移动到其他启用类型</span><span className="text-xs text-muted-foreground">现有节目会迁移到所选类型。</span></span></span>{strategy === "move" && <Select items={targets.map((type) => ({ value: type.id, label: type.name }))} value={replacementTypeId} onValueChange={setReplacementTypeId}><SelectTrigger className="mt-3 w-full" disabled={loadingTargets}><SelectValue placeholder="选择目标节目类型" /></SelectTrigger><SelectContent>{targets.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select>}</label>}

@@ -33,7 +33,13 @@ export function getResource(workspaceId, type, id) { return request(`${base(work
 export function createResource(workspaceId, type, payload) { return request(base(workspaceId, resourceDefinitions[type].path), { method: "POST", body: JSON.stringify(payload) }); }
 export function updateResource(workspaceId, type, id, payload) { return request(base(workspaceId, `${resourceDefinitions[type].path}/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
 export function deleteResource(workspaceId, type, id) { return request(base(workspaceId, `${resourceDefinitions[type].path}/${id}`), { method: "DELETE" }); }
-const resourceTypePaths = Object.freeze({ programs: "program-types", venues: "venue-types" });
+const resourceTypePaths = Object.freeze({
+  programs: "program-types",
+  people: "person-types",
+  organizations: "organization-types",
+  venues: "venue-types",
+  equipment: "equipment-types",
+});
 function resourceTypePath(resourceType) {
   const path = resourceTypePaths[resourceType];
   if (!path) throw new Error(`Unsupported resource type: ${resourceType}`);

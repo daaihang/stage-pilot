@@ -42,7 +42,7 @@ function initialLocationForm(location) {
 function LocationForm({ form, venues, spaces, busy, error, onChange, onVenueChange, onCancel, onSubmit }) {
   const availableSpaces = spaces.filter((space) => space.status !== "archived");
   return (
-    <form className="flex min-h-full flex-col gap-5 p-5" onSubmit={onSubmit}>
+    <form className="flex min-h-full flex-col gap-5" onSubmit={onSubmit}>
       <div className="flex items-start justify-between gap-3 border-b pb-4">
         <div>
           <p className="text-lg font-semibold">{form.id ? "编辑活动地点" : "添加活动地点"}</p>
@@ -214,7 +214,7 @@ export function ProductionLocationManagementPanel({ workspace, production, onCha
   }
 
   return (
-    <section className="flex min-h-full flex-col p-5">
+    <section className="flex min-h-full flex-col">
       <header className="flex items-start justify-between gap-3 border-b pb-4">
         <div><p className="text-lg font-semibold">活动地点</p><p className="mt-1 text-sm text-muted-foreground">管理本活动可使用的场地和空间资源。</p></div>
         {canWrite && <Button type="button" size="sm" onClick={beginCreate} disabled={busy || !venues.length}><Plus />添加地点</Button>}

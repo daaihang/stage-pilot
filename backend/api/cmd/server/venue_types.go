@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"github.com/jackc/pgx/v5"
 	"net/http"
 	"strconv"
@@ -21,39 +20,6 @@ type venueType struct {
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	VenueCount      int       `json:"venue_count"`
-}
-
-func valueOrEmpty(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-func (app *application) resolveVenueType(ctx context.Context, workspaceID string, id *string, legacy string) (string, string, error) {
-	var query string
-	var arg string
-	if id != nil && strings.TrimSpace(*id) != "" {
-		query = `SELECT id,COALESCE(system_key,'other') FROM venue_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL AND is_active`
-		arg = *id
-	} else {
-		key := legacy
-		if key == "hall" {
-			key = "auditorium"
-		}
-		if key == "" {
-			key = "other"
-		}
-		query = `SELECT id,COALESCE(system_key,'other') FROM venue_types WHERE system_key=$1 AND workspace_id=$2 AND deleted_at IS NULL AND is_active`
-		arg = key
-	}
-	var resolved, key string
-	if err := app.db.QueryRow(ctx, query, arg, workspaceID).Scan(&resolved, &key); err != nil {
-		return "", "", err
-	}
-	if key == "auditorium" {
-		key = "hall"
-	}
-	return resolved, key, nil
 }
 
 func (app *application) legacyListVenueTypes(w http.ResponseWriter, r *http.Request) {

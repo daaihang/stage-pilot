@@ -79,7 +79,7 @@ func TestResourceInputValidation(t *testing.T) {
 	}
 }
 
-func TestVenueTypesAndLegacyKindCompatibility(t *testing.T) {
+func TestVenueTypesAndNoLegacyKindCompatibility(t *testing.T) {
 	app := newIntegrationApp(t)
 	owner := createTestUser(t, app, "venue-type-owner-"+newID()+"@example.test")
 	token := issueTestToken(t, app, owner)
@@ -92,16 +92,20 @@ func TestVenueTypesAndLegacyKindCompatibility(t *testing.T) {
 	if len(items) != 10 || total != 10 {
 		t.Fatalf("venue defaults = %d/%d, want 10/10", len(items), total)
 	}
-	created := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "旧客户端场地", "kind": "hall"})
+	legacy := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "旧客户端场地", "kind": "hall"})
+	if legacy.Code != http.StatusBadRequest {
+		t.Fatalf("legacy venue kind = %d, want 400: %s", legacy.Code, legacy.Body.String())
+	}
+	created := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "未分类场地", "venue_type_id": nil})
 	if created.Code != http.StatusCreated {
-		t.Fatalf("legacy venue create = %d: %s", created.Code, created.Body.String())
+		t.Fatalf("unclassified venue create = %d: %s", created.Code, created.Body.String())
 	}
 	var venue map[string]any
 	if err := json.Unmarshal(created.Body.Bytes(), &venue); err != nil {
 		t.Fatal(err)
 	}
-	if venue["venue_type_id"] == nil || venue["kind"] != "hall" {
-		t.Fatalf("legacy venue response = %#v", venue)
+	if venue["venue_type_id"] != nil || venue["kind"] != nil {
+		t.Fatalf("venue response must expose only venue_type_id: %#v", venue)
 	}
 	protected := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venue-types/"+items[0]["id"].(string)+"/delete", map[string]any{})
 	if protected.Code != http.StatusConflict {
@@ -123,6 +127,73 @@ func TestVenueTypesAndLegacyKindCompatibility(t *testing.T) {
 	blocked := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "停用类型场地", "venue_type_id": items[1]["id"]})
 	if blocked.Code != http.StatusBadRequest {
 		t.Fatalf("inactive venue type = %d: %s", blocked.Code, blocked.Body.String())
+	}
+}
+
+func TestPeopleOrganizationsAndEquipmentTypes(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "resource-type-owner-"+newID()+"@example.test")
+	token := issueTestToken(t, app, owner)
+	workspaceID := createWorkspaceFor(t, app, token, "扩展资源类型测试")["id"].(string)
+
+	cases := []struct {
+		path, resourcePath, typeField, name, usageField string
+		defaults                                        int
+		body                                            map[string]any
+	}{
+		{"person-types", "people", "person_type_id", "人员", "person_count", 10, map[string]any{"display_name": "艺人甲"}},
+		{"organization-types", "organizations", "organization_type_id", "机构", "organization_count", 22, map[string]any{"name": "机构甲"}},
+		{"equipment-types", "equipment", "equipment_type_id", "设备", "equipment_count", 17, map[string]any{"name": "设备甲", "quantity_total": 1, "ownership": "owned"}},
+	}
+	for _, test := range cases {
+		listed := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/"+test.path, nil)
+		if listed.Code != http.StatusOK {
+			t.Fatalf("list %s = %d: %s", test.name, listed.Code, listed.Body.String())
+		}
+		types, total := decodeResourceList(t, listed.Body.Bytes())
+		if len(types) != test.defaults || total != test.defaults {
+			t.Fatalf("%s defaults = %d/%d, want %d", test.name, len(types), total, test.defaults)
+		}
+		typeID := types[0]["id"].(string)
+		body := map[string]any{}
+		for key, value := range test.body {
+			body[key] = value
+		}
+		body[test.typeField] = typeID
+		created := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/"+test.resourcePath, body)
+		if created.Code != http.StatusCreated {
+			t.Fatalf("create typed %s = %d: %s", test.name, created.Code, created.Body.String())
+		}
+		resource := resourceID(t, created.Body.Bytes())
+		removed := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/"+test.path, map[string]any{"name": "临时" + test.name, "color": "#123456"})
+		if removed.Code != http.StatusCreated {
+			t.Fatalf("create custom %s type = %d: %s", test.name, removed.Code, removed.Body.String())
+		}
+		customID := resourceID(t, removed.Body.Bytes())
+		assigned := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/"+test.resourcePath+"/"+resource, map[string]any{test.typeField: customID})
+		if assigned.Code != http.StatusOK {
+			t.Fatalf("assign custom %s type = %d: %s", test.name, assigned.Code, assigned.Body.String())
+		}
+		deleted := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/"+test.path+"/"+customID+"/delete", map[string]any{})
+		if deleted.Code != http.StatusOK {
+			t.Fatalf("delete custom %s type = %d: %s", test.name, deleted.Code, deleted.Body.String())
+		}
+		read := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/"+test.resourcePath+"/"+resource, nil)
+		var value map[string]any
+		if read.Code != http.StatusOK || json.Unmarshal(read.Body.Bytes(), &value) != nil || value[test.typeField] != nil {
+			t.Fatalf("deleted type must unassign %s = %d: %s", test.name, read.Code, read.Body.String())
+		}
+		legacyKey := "kind"
+		if test.resourcePath == "equipment" {
+			legacyKey = "category"
+		}
+		legacy := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/"+test.resourcePath+"?"+legacyKey+"=other", nil)
+		if legacy.Code != http.StatusBadRequest {
+			t.Fatalf("legacy %s filter for %s = %d, want 400", legacyKey, test.name, legacy.Code)
+		}
+		if _, ok := types[0][test.usageField]; !ok {
+			t.Fatalf("%s type response missing %s", test.name, test.usageField)
+		}
 	}
 }
 
@@ -251,7 +322,21 @@ func TestProgramTypeDeleteStrategiesAndProgramAssignment(t *testing.T) {
 	workspaceID := createWorkspaceFor(t, app, token, "节目类型删除策略")["id"].(string)
 	list := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/program-types", nil)
 	types, _ := decodeResourceList(t, list.Body.Bytes())
-	sourceID, targetID := types[0]["id"].(string), types[1]["id"].(string)
+	custom := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/program-types", map[string]any{"name": "可删除节目类型", "color": "#123456"})
+	if custom.Code != http.StatusCreated {
+		t.Fatalf("create source type = %d: %s", custom.Code, custom.Body.String())
+	}
+	sourceID, targetID := resourceID(t, custom.Body.Bytes()), types[1]["id"].(string)
+	unusedType := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/program-types", map[string]any{"name": "待删除节目类型", "color": "#234567"})
+	if unusedType.Code != http.StatusCreated {
+		t.Fatalf("create unused type = %d: %s", unusedType.Code, unusedType.Body.String())
+	}
+	noReferenceID := resourceID(t, unusedType.Body.Bytes())
+	unassignType := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/program-types", map[string]any{"name": "待取消分配节目类型", "color": "#345678"})
+	if unassignType.Code != http.StatusCreated {
+		t.Fatalf("create unassign type = %d: %s", unassignType.Code, unassignType.Body.String())
+	}
+	unassignSource := resourceID(t, unassignType.Body.Bytes())
 
 	program := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/programs", map[string]any{"name": "迁移节目", "program_type_id": sourceID})
 	programID := resourceID(t, program.Body.Bytes())
@@ -279,7 +364,6 @@ func TestProgramTypeDeleteStrategiesAndProgramAssignment(t *testing.T) {
 		}
 	}
 
-	noReferenceID := types[3]["id"].(string)
 	deleted := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/program-types/"+noReferenceID+"/delete", map[string]any{"strategy": "delete"})
 	if deleted.Code != http.StatusOK {
 		t.Fatalf("delete unused type = %d: %s", deleted.Code, deleted.Body.String())
@@ -293,7 +377,11 @@ func TestProgramTypeDeleteStrategiesAndProgramAssignment(t *testing.T) {
 
 	// Explicit null clears an assignment, while a disabled type remains valid
 	// for existing programs but cannot be selected for a new one.
-	secondSource := types[2]["id"].(string)
+	secondType := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/program-types", map[string]any{"name": "待停用节目类型", "color": "#456789"})
+	if secondType.Code != http.StatusCreated {
+		t.Fatalf("create second source type = %d: %s", secondType.Code, secondType.Body.String())
+	}
+	secondSource := resourceID(t, secondType.Body.Bytes())
 	secondProgram := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/programs", map[string]any{"name": "未分配迁移节目", "program_type_id": secondSource})
 	secondProgramID := resourceID(t, secondProgram.Body.Bytes())
 	if deactivate := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/program-types/"+secondSource, map[string]any{"is_active": false}); deactivate.Code != http.StatusOK {
@@ -322,7 +410,6 @@ func TestProgramTypeDeleteStrategiesAndProgramAssignment(t *testing.T) {
 		t.Fatalf("rollback changed program assignment = %d: %s", programAfterRollback.Code, programAfterRollback.Body.String())
 	}
 
-	unassignSource := types[4]["id"].(string)
 	unassignedProgram := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/programs", map[string]any{"name": "删除后未分配", "program_type_id": unassignSource})
 	unassignedProgramID := resourceID(t, unassignedProgram.Body.Bytes())
 	unassigned := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/program-types/"+unassignSource+"/delete", map[string]any{"strategy": "unassign"})

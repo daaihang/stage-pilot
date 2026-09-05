@@ -15,30 +15,69 @@ import { useWindowDetail } from "@/components/window-detail-context";
 import { appStore } from "@/lib/app-store";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { createOrganizationContact, createResource, createVenueSpace, deleteOrganizationContact, deleteResource, getResource, listOrganizationContacts, listResource, listResourceTypes, listVenueSpaces, updateResource, resourceDefinitions } from "@/lib/resource-api";
-import { ResourceTypeManagementPanel } from "@/components/resource-type-management-panel";
+import { ResourceTypeDefinition, ResourceTypeManagementPanel } from "@/components/resource-type-management-panel";
 import { resourcePath, resourceTypePanelPath, workspacePath } from "@/lib/navigation";
 
 const configs = {
   programs: { icon: FileMusic, primary: "name", kind: "program_type_id", label: "节目类型", defaults: [], fields: ["name", "program_type_id", "default_duration_seconds", "tags", "description", "technical_notes", "status"] },
-  people: { icon: UsersRound, primary: "display_name", kind: "kind", label: "人员类别", defaults: [["artist", "演出者"], ["crew", "工作人员"], ["contact", "联系人"]], fields: ["display_name", "kind", "primary_email", "primary_phone", "skills", "tags", "bio", "status"] },
-  organizations: { icon: Building2, primary: "name", kind: "kind", label: "机构类别", defaults: [["organizer", "主办方"], ["partner", "合作方"], ["sponsor", "赞助方"], ["supplier", "供应商"], ["school", "学校"], ["ensemble", "演出团体"], ["other", "其他"]], fields: ["name", "kind", "city", "address", "tags", "description", "status"] },
+  people: { icon: UsersRound, primary: "display_name", kind: "person_type_id", label: "人员类型", defaults: [], fields: ["display_name", "person_type_id", "primary_email", "primary_phone", "skills", "tags", "bio", "status"] },
+  organizations: { icon: Building2, primary: "name", kind: "organization_type_id", label: "机构类型", defaults: [], fields: ["name", "organization_type_id", "city", "address", "tags", "description", "status"] },
   venues: { icon: MapPin, primary: "name", kind: "venue_type_id", label: "场地类型", defaults: [], fields: ["name", "venue_type_id", "city", "address", "timezone", "tags", "description", "status"] },
-  equipment: { icon: Package, primary: "name", kind: "category", label: "设备类别", defaults: [["audio", "音频"], ["lighting", "灯光"], ["video", "视频"], ["stage", "舞台"], ["power", "电力"], ["other", "其他"]], fields: ["name", "category", "quantity_total", "unit", "ownership", "storage_location", "tags", "technical_notes", "status"] },
+  equipment: { icon: Package, primary: "name", kind: "equipment_type_id", label: "设备类型", defaults: [], fields: ["name", "equipment_type_id", "quantity_total", "unit", "ownership", "storage_location", "tags", "technical_notes", "status"] },
 };
-const labels = { artist: "演出者", crew: "工作人员", contact: "联系人", organizer: "主办方", partner: "合作方", sponsor: "赞助方", supplier: "供应商", school: "学校", ensemble: "演出团体", theatre: "剧院", hall: "礼堂", club: "俱乐部", outdoor: "户外", audio: "音频", lighting: "灯光", video: "视频", stage: "舞台", power: "电力", owned: "自有", rented: "租赁", active: "可用", maintenance: "维护中", archived: "已归档" };
-const fieldLabels = { name: "名称", display_name: "姓名", program_type_id: "节目类型", venue_type_id: "场地类型", default_duration_seconds: "默认时长（秒）", kind: "类别", category: "类别", primary_email: "邮箱", primary_phone: "电话", skills: "技能（逗号分隔）", tags: "标签（逗号分隔）", bio: "简介", city: "城市", address: "地址", timezone: "时区", quantity_total: "库存数量", unit: "单位", ownership: "归属", storage_location: "存放位置", description: "说明", technical_notes: "技术备注", status: "状态" };
+const labels = { owned: "自有", rented: "租赁", active: "可用", maintenance: "维护中", archived: "已归档" };
+const fieldLabels = { name: "名称", display_name: "姓名", program_type_id: "节目类型", person_type_id: "人员类型", organization_type_id: "机构类型", venue_type_id: "场地类型", equipment_type_id: "设备类型", default_duration_seconds: "默认时长（秒）", primary_email: "邮箱", primary_phone: "电话", skills: "技能（逗号分隔）", tags: "标签（逗号分隔）", bio: "简介", city: "城市", address: "地址", timezone: "时区", quantity_total: "库存数量", unit: "单位", ownership: "归属", storage_location: "存放位置", description: "说明", technical_notes: "技术备注", status: "状态" };
 const canManage = (workspace) => ["owner", "admin"].includes(workspace?.role);
 const textValue = (item, key) => Array.isArray(item[key]) ? item[key].join(", ") : item[key] ?? "";
-const apiValue = (key, value) => key === "program_type_id" ? (value || null) : ["tags", "skills"].includes(key) ? value.split(",").map((x) => x.trim()).filter(Boolean) : ["default_duration_seconds", "quantity_total"].includes(key) ? Number(value || 0) : value;
+const typeFields = new Set(Object.values(configs).map((config) => config.kind));
+const apiValue = (key, value) => typeFields.has(key) ? (value || null) : ["tags", "skills"].includes(key) ? value.split(",").map((x) => x.trim()).filter(Boolean) : ["default_duration_seconds", "quantity_total"].includes(key) ? Number(value || 0) : value;
 const statusField = { id: "status", label: "状态", type: "select", defaultOperator: "is_any_of", options: [{ value: "active", label: "可用" }, { value: "maintenance", label: "维护中" }, { value: "archived", label: "已归档" }] };
-const filterFields = (type, types) => [type === "programs" ? { id: "type_id", label: "节目类型", type: "select", defaultOperator: "is_any_of", options: [{ value: "unassigned", label: "未分配" }, ...types.map((x) => ({ value: x.id, label: x.name }))] } : { id: configs[type].kind, label: configs[type].label, type: "select", defaultOperator: "is_any_of", options: (type === "venues" ? types.map((x) => [x.id, x.name]) : configs[type].defaults).map(([value, label]) => ({ value, label })) }, statusField];
+const filterFields = (type, types) => [{ id: type === "programs" ? "type_id" : configs[type].kind, label: configs[type].label, type: "select", defaultOperator: "is_any_of", options: [{ value: "unassigned", label: type === "programs" ? "未分配" : "未分类" }, ...types.map((x) => ({ value: x.id, label: x.name }))] }, statusField];
 function filtersToParams(query) { const result = {}; for (const condition of getResourceFilterConditions(query)) { if (condition.operator === "is_any_of" && condition.values?.length) result[condition.field] = condition.values; } return result; }
 
-function selectOptions(type, types) { return type === "programs" ? [["", "未分配"], ...types.filter((x) => x.is_active).map((x) => [x.id, x.name])] : type === "venues" ? types.filter((x) => x.is_active).map((x) => [x.id, x.name]) : configs[type].defaults; }
-function venueTypeFor(item, types) { return types.find((x) => x.id === item.venue_type_id) || (item.kind ? { name: labels[item.kind] || item.kind, color: "#64748b" } : null); }
-function subtitle(type, item, types) { const cfg = configs[type]; const kind = type === "programs" ? types.find((x) => x.id === item.program_type_id)?.name || "未分配" : type === "venues" ? venueTypeFor(item, types)?.name || "未分类" : labels[item[cfg.kind]] || "未分类"; if (type === "equipment") return `${kind} · ${item.quantity_total} ${item.unit} · ${labels[item.ownership]}`; if (type === "people") return `${kind} · ${item.primary_email || item.primary_phone || "联系方式待补充"}`; return `${kind} · ${item.city || (item.default_duration_seconds ? `${Math.round(item.default_duration_seconds / 60)} 分钟` : "资料待补充")}`; }
+function selectOptions(type, types) { return [["", type === "programs" ? "未分配" : "未分类"], ...types.filter((x) => x.is_active).map((x) => [x.id, x.name])]; }
+function resourceTypeFor(type, item, types) { return types.find((entry) => entry.id === item[configs[type].kind]) || null; }
+function subtitle(type, item, types) { const resourceType = resourceTypeFor(type, item, types); const kind = resourceType?.name || (type === "programs" ? "未分配" : "未分类"); if (type === "equipment") return `${kind} · ${item.quantity_total} ${item.unit} · ${labels[item.ownership]}`; if (type === "people") return `${kind} · ${item.primary_email || item.primary_phone || "联系方式待补充"}`; return `${kind} · ${item.city || (item.default_duration_seconds ? `${Math.round(item.default_duration_seconds / 60)} 分钟` : "资料待补充")}`; }
 
-function CreateResourceDialog({ workspace, type, open, onOpenChange, programTypes, onCreated }) { const cfg = configs[type]; const [name, setName] = useState(""); const [kind, setKind] = useState(""); const [busy, setBusy] = useState(false); useEffect(() => { if (open) { setName(""); setKind(type === "programs" ? "" : selectOptions(type, programTypes)[0]?.[0] || ""); } }, [open, type]); useEffect(() => { if (open && type === "programs" && kind && !programTypes.some((item) => item.id === kind && item.is_active)) setKind(""); }, [kind, open, programTypes, type]); const submit = async (event) => { event.preventDefault(); if (!name.trim()) return notify.error(`请输入${resourceDefinitions[type].singular}名称`); const body = type === "programs" ? { name: name.trim(), program_type_id: kind || null } : type === "equipment" ? { name: name.trim(), category: kind, quantity_total: 1, ownership: "owned" } : { [cfg.primary]: name.trim(), [cfg.kind]: kind }; setBusy(true); const toast = notify.loading(`正在创建${resourceDefinitions[type].singular}…`); try { const item = await createResource(workspace.id, type, body); notify.success(`已创建${resourceDefinitions[type].singular}`, { id: toast }); onOpenChange(false); onCreated(item); } catch (error) { notify.error(`创建${resourceDefinitions[type].singular}失败`, { id: toast, description: error?.message || String(error) }); } finally { setBusy(false); } }; const options = selectOptions(type, programTypes); const selectItems = options.map(([value, label]) => ({ value: value || "unassigned", label })); return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={submit}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={selectItems} value={kind || "unassigned"} onValueChange={(value) => setKind(value === "unassigned" ? "" : value)}><SelectTrigger className="h-9 w-full"><SelectValue placeholder={`选择${cfg.label}`} /></SelectTrigger><SelectContent>{options.map(([value, label]) => <SelectItem key={value || "unassigned"} value={value || "unassigned"}>{label}</SelectItem>)}</SelectContent></Select></div><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "创建中…" : "创建"}</Button></div></form></DialogContent></Dialog>; }
+function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTypes, onCreated }) {
+  const cfg = configs[type];
+  const [name, setName] = useState("");
+  const [typeId, setTypeId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const options = selectOptions(type, resourceTypes);
+
+  useEffect(() => {
+    if (!open) return;
+    setName("");
+    setTypeId("");
+  }, [open, type]);
+
+  useEffect(() => {
+    if (open && typeId && !resourceTypes.some((item) => item.id === typeId && item.is_active)) setTypeId("");
+  }, [open, resourceTypes, typeId]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (!name.trim()) return notify.error(`请输入${resourceDefinitions[type].singular}名称`);
+    const body = type === "equipment"
+      ? { name: name.trim(), equipment_type_id: typeId || null, quantity_total: 1, ownership: "owned" }
+      : { [cfg.primary]: name.trim(), [cfg.kind]: typeId || null };
+    setBusy(true);
+    const toast = notify.loading(`正在创建${resourceDefinitions[type].singular}…`);
+    try {
+      const item = await createResource(workspace.id, type, body);
+      notify.success(`已创建${resourceDefinitions[type].singular}`, { id: toast });
+      onOpenChange(false);
+      onCreated(item);
+    } catch (error) {
+      notify.error(`创建${resourceDefinitions[type].singular}失败`, { id: toast, description: error?.message || String(error) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={submit}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={options.map(([value, label]) => ({ value: value || "unassigned", label }))} value={typeId || "unassigned"} onValueChange={(value) => setTypeId(value === "unassigned" ? "" : value)}><SelectTrigger className="h-9 w-full"><SelectValue placeholder={`选择${cfg.label}`} /></SelectTrigger><SelectContent>{options.map(([value, label]) => <SelectItem key={value || "unassigned"} value={value || "unassigned"}>{label}</SelectItem>)}</SelectContent></Select></div><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "创建中…" : "创建"}</Button></div></form></DialogContent></Dialog>;
+}
 
 export function WorkspaceResourcePage({ workspace, resourceType, selectedResourceId, panel }) {
   const type = resourceType;
@@ -128,12 +167,12 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   }, [reload]);
 
   useEffect(() => {
-    if (!["programs", "venues"].includes(type)) return undefined;
+    if (!ResourceTypeDefinition[type]) return undefined;
     let active = true;
-    listResourceTypes(workspace.id, type === "venues" ? "venues" : "programs").then((result) => {
+    listResourceTypes(workspace.id, type).then((result) => {
       if (active) setTypes(result.items);
     }).catch((nextError) => {
-      if (active) notify.error(type === "venues" ? "无法加载场地类型" : "无法加载节目类型", { description: nextError?.message || String(nextError) });
+      if (active) notify.error(`无法加载${configs[type].label}`, { description: nextError?.message || String(nextError) });
     });
     return () => { active = false; };
   }, [type, workspace.id]);
@@ -162,16 +201,17 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
       triggerRefs.current.set(item.id, ref);
     };
     return view === "grid"
-      ? <button ref={itemRef} type="button" className={`text-left ${selected ? "ring-2 ring-primary" : ""}`} onClick={() => openResource(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openResource(item); } }} aria-current={selected ? "page" : undefined}><Card className="cursor-pointer hover:bg-muted/40"><CardHeader><div className="flex justify-between"><div className="flex size-10 items-center justify-center bg-primary/10 text-primary"><Icon className="size-5" /></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></div><CardTitle className="truncate text-base">{item[cfg.primary]}</CardTitle><CardDescription className="truncate">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</CardDescription></CardHeader><CardContent>{item.tags?.slice(0, 3).map((tag) => <Badge key={tag} variant="outline" className="mr-1">{tag}</Badge>)}</CardContent></Card></button>
-      : <button ref={itemRef} type="button" className={`flex w-full items-center gap-3 border-b px-3 py-3 text-left last:border-b-0 hover:bg-muted/40 ${selected ? "bg-muted/60" : ""}`} onClick={() => openResource(item)} aria-current={selected ? "page" : undefined}><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><Icon className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{item[cfg.primary]}</p><p className="mt-1 flex items-center truncate text-xs text-muted-foreground">{type === "venues" && venueTypeFor(item, types) && <span className="mr-1 inline-flex size-2 shrink-0 rounded-full" style={{ backgroundColor: venueTypeFor(item, types).color }} aria-label="场地类型颜色" />}{subtitle(type, item, types)}</p></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></button>;
+      ? <button ref={itemRef} type="button" className={`text-left ${selected ? "ring-2 ring-primary" : ""}`} onClick={() => openResource(item)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openResource(item); } }} aria-current={selected ? "page" : undefined}><Card className="cursor-pointer hover:bg-muted/40"><CardHeader><div className="flex justify-between"><div className="flex size-10 items-center justify-center bg-primary/10 text-primary"><Icon className="size-5" /></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></div><CardTitle className="truncate text-base">{item[cfg.primary]}</CardTitle><CardDescription className="truncate">{resourceTypeFor(type, item, types) && <span className="mr-1 inline-flex size-2 rounded-full" style={{ backgroundColor: resourceTypeFor(type, item, types).color }} aria-label={`${cfg.label}颜色`} />}{subtitle(type, item, types)}</CardDescription></CardHeader><CardContent>{item.tags?.slice(0, 3).map((tag) => <Badge key={tag} variant="outline" className="mr-1">{tag}</Badge>)}</CardContent></Card></button>
+      : <button ref={itemRef} type="button" className={`flex w-full items-center gap-3 border-b px-3 py-3 text-left last:border-b-0 hover:bg-muted/40 ${selected ? "bg-muted/60" : ""}`} onClick={() => openResource(item)} aria-current={selected ? "page" : undefined}><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><Icon className="size-4" /></div><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{item[cfg.primary]}</p><p className="mt-1 flex items-center truncate text-xs text-muted-foreground">{resourceTypeFor(type, item, types) && <span className="mr-1 inline-flex size-2 shrink-0 rounded-full" style={{ backgroundColor: resourceTypeFor(type, item, types).color }} aria-label={`${cfg.label}颜色`} />}{subtitle(type, item, types)}</p></div><Badge variant={item.status === "active" ? "default" : "secondary"}>{labels[item.status]}</Badge></button>;
   };
-  const headerActions = type === "programs" ? <Button ref={typePanelTriggerRef} variant="outline" onClick={() => navigate(resourceTypePanelPath(workspace.id, type))}><ListMusic />管理节目类型</Button> : type === "venues" ? <Button ref={typePanelTriggerRef} variant="outline" onClick={() => navigate(resourceTypePanelPath(workspace.id, type))}><MapPin />管理场地类型</Button> : null;
+  const TypeIcon = ResourceTypeDefinition[type]?.icon;
+  const headerActions = TypeIcon ? <Button ref={typePanelTriggerRef} variant="outline" onClick={() => navigate(resourceTypePanelPath(workspace.id, type))}><TypeIcon />管理{configs[type].label}</Button> : null;
 
   return <>
     <ResourcePage title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} headerActions={headerActions} onCreate={canManage(workspace) ? () => setOpen(true) : undefined} loading={loading} empty={empty}>
       {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <Card variant="flush"><CardContent className="p-0">{items.map((item) => <Item key={item.id} item={item} />)}</CardContent></Card>}
     </ResourcePage>
-    <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} programTypes={types} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />
+    <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} resourceTypes={types} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />
   </>;
 }
 
@@ -267,10 +307,8 @@ function ResourceRelations({ workspace, type, resourceId }) {
   </Card>;
 }
 
-const detailSelectOptions = (key, cfg, types) => key === "program_type_id"
-  ? [["unassigned", "未分配"], ...types.map((x) => [x.id, `${x.name}${x.is_active ? "" : "（已停用）"}`])]
-  : key === "venue_type_id"
-    ? types.map((x) => [x.id, `${x.name}${x.is_active ? "" : "（已停用）"}`])
+const detailSelectOptions = (key, cfg, types) => typeFields.has(key)
+  ? [["unassigned", key === "program_type_id" ? "未分配" : "未分类"], ...types.map((x) => [x.id, `${x.name}${x.is_active ? "" : "（已停用）"}`])]
   : key === "status"
     ? [["active", "可用"], ["maintenance", "维护中"], ["archived", "已归档"]]
     : key === "ownership"
@@ -299,11 +337,11 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
         }
       })
       .finally(() => { if (active) setLoading(false); });
-    if (!["programs", "venues"].includes(type)) return () => { active = false; };
-    listResourceTypes(workspace.id, type === "venues" ? "venues" : "programs")
+    if (!ResourceTypeDefinition[type]) return () => { active = false; };
+    listResourceTypes(workspace.id, type)
       .then((result) => { if (active) setTypes(result.items); })
       .catch((error) => {
-        if (active) notify.error(type === "venues" ? "无法加载场地类型" : "无法加载节目类型", { description: error?.message || String(error) });
+        if (active) notify.error(`无法加载${cfg.label}`, { description: error?.message || String(error) });
       });
     return () => { active = false; };
   }, [workspace.id, type, resourceId]);
@@ -333,10 +371,10 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
     }
   };
 
-  if (loading) return <div className="min-h-full p-6 text-sm text-muted-foreground">正在加载资源…</div>;
-  if (error || !item) return <div className="space-y-3 p-6"><p className="text-sm text-destructive">无法加载{resourceDefinitions[type].singular}</p><div className="flex gap-2"><Button variant="outline" onClick={load}>重试</Button><Button variant="ghost" onClick={onClose}>返回资源库</Button></div></div>;
+  if (loading) return <div className="min-h-full text-sm text-muted-foreground">正在加载资源…</div>;
+  if (error || !item) return <div className="space-y-3"><p className="text-sm text-destructive">无法加载{resourceDefinitions[type].singular}</p><div className="flex gap-2"><Button variant="outline" onClick={load}>重试</Button><Button variant="ghost" onClick={onClose}>返回资源库</Button></div></div>;
 
-  return <div className="@container/resource-detail min-w-0 min-h-full space-y-5 p-5">
+  return <div className="@container/resource-detail min-h-full min-w-0 space-y-5">
     <div className="flex items-start justify-between gap-3">
       <div>
         <p className="text-xs text-muted-foreground">{resourceDefinitions[type].title}</p>
@@ -349,12 +387,12 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
       <CardContent className="grid gap-4 p-5 @min-[36rem]/resource-detail:grid-cols-2">
         {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 @min-[36rem]/resource-detail:col-span-2" : "space-y-1"}>
           <span className="text-sm font-medium">{fieldLabels[key]}</span>
-          {["kind", "category", "ownership", "status", "program_type_id", "venue_type_id"].includes(key)
+          {["ownership", "status", ...typeFields].includes(key)
             ? <Select
               items={detailSelectOptions(key, cfg, types).map(([value, label]) => ({ value, label }))}
-              value={key === "program_type_id" ? (item[key] || "unassigned") : (item[key] || "")}
+              value={typeFields.has(key) ? (item[key] || "unassigned") : (item[key] || "")}
               disabled={!canManage(workspace)}
-              onValueChange={(value) => save(key, key === "program_type_id" && value === "unassigned" ? "" : value)}
+              onValueChange={(value) => save(key, typeFields.has(key) && value === "unassigned" ? "" : value)}
             >
               <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
               <SelectContent>{detailSelectOptions(key, cfg, types).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>

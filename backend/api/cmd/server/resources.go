@@ -46,7 +46,7 @@ type person struct {
 	ID           string    `json:"id"`
 	WorkspaceID  string    `json:"workspace_id"`
 	DisplayName  string    `json:"display_name"`
-	Kind         string    `json:"kind"`
+	PersonTypeID *string   `json:"person_type_id"`
 	PrimaryEmail string    `json:"primary_email"`
 	PrimaryPhone string    `json:"primary_phone"`
 	Bio          string    `json:"bio"`
@@ -57,17 +57,17 @@ type person struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 type organization struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Name        string    `json:"name"`
-	Kind        string    `json:"kind"`
-	City        string    `json:"city"`
-	Address     string    `json:"address"`
-	Description string    `json:"description"`
-	Tags        []string  `json:"tags"`
-	Status      string    `json:"status"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	WorkspaceID        string    `json:"workspace_id"`
+	Name               string    `json:"name"`
+	OrganizationTypeID *string   `json:"organization_type_id"`
+	City               string    `json:"city"`
+	Address            string    `json:"address"`
+	Description        string    `json:"description"`
+	Tags               []string  `json:"tags"`
+	Status             string    `json:"status"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 type organizationContact struct {
 	ID             string    `json:"id"`
@@ -84,7 +84,6 @@ type venue struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspace_id"`
 	Name        string    `json:"name"`
-	Kind        string    `json:"kind"`
 	VenueTypeID *string   `json:"venue_type_id"`
 	City        string    `json:"city"`
 	Address     string    `json:"address"`
@@ -111,7 +110,7 @@ type equipmentItem struct {
 	ID              string    `json:"id"`
 	WorkspaceID     string    `json:"workspace_id"`
 	Name            string    `json:"name"`
-	Category        string    `json:"category"`
+	EquipmentTypeID *string   `json:"equipment_type_id"`
 	QuantityTotal   int       `json:"quantity_total"`
 	Unit            string    `json:"unit"`
 	Ownership       string    `json:"ownership"`
@@ -156,6 +155,114 @@ func (p *updateProgramPayload) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type updatePersonPayload struct {
+	DisplayName       *string `json:"display_name"`
+	PersonTypeID      *string `json:"person_type_id"`
+	PersonTypePresent bool
+	PrimaryEmail      *string   `json:"primary_email"`
+	PrimaryPhone      *string   `json:"primary_phone"`
+	Bio               *string   `json:"bio"`
+	Skills            *[]string `json:"skills"`
+	Tags              *[]string `json:"tags"`
+	Status            *string   `json:"status"`
+}
+
+func (p *updatePersonPayload) UnmarshalJSON(data []byte) error {
+	type alias updatePersonPayload
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*p = updatePersonPayload(decoded)
+	_, p.PersonTypePresent = fields["person_type_id"]
+	return nil
+}
+
+type updateOrganizationPayload struct {
+	Name                    *string `json:"name"`
+	OrganizationTypeID      *string `json:"organization_type_id"`
+	OrganizationTypePresent bool
+	City                    *string   `json:"city"`
+	Address                 *string   `json:"address"`
+	Description             *string   `json:"description"`
+	Tags                    *[]string `json:"tags"`
+	Status                  *string   `json:"status"`
+}
+
+func (p *updateOrganizationPayload) UnmarshalJSON(data []byte) error {
+	type alias updateOrganizationPayload
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*p = updateOrganizationPayload(decoded)
+	_, p.OrganizationTypePresent = fields["organization_type_id"]
+	return nil
+}
+
+type updateEquipmentPayload struct {
+	Name                 *string `json:"name"`
+	EquipmentTypeID      *string `json:"equipment_type_id"`
+	EquipmentTypePresent bool
+	QuantityTotal        *int      `json:"quantity_total"`
+	Unit                 *string   `json:"unit"`
+	Ownership            *string   `json:"ownership"`
+	StorageLocation      *string   `json:"storage_location"`
+	TechnicalNotes       *string   `json:"technical_notes"`
+	Tags                 *[]string `json:"tags"`
+	Status               *string   `json:"status"`
+}
+
+func (p *updateEquipmentPayload) UnmarshalJSON(data []byte) error {
+	type alias updateEquipmentPayload
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*p = updateEquipmentPayload(decoded)
+	_, p.EquipmentTypePresent = fields["equipment_type_id"]
+	return nil
+}
+
+type updateVenuePayload struct {
+	Name             *string `json:"name"`
+	VenueTypeID      *string `json:"venue_type_id"`
+	VenueTypePresent bool
+	City             *string   `json:"city"`
+	Address          *string   `json:"address"`
+	Timezone         *string   `json:"timezone"`
+	Description      *string   `json:"description"`
+	Tags             *[]string `json:"tags"`
+	Status           *string   `json:"status"`
+}
+
+func (p *updateVenuePayload) UnmarshalJSON(data []byte) error {
+	type alias updateVenuePayload
+	var decoded alias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*p = updateVenuePayload(decoded)
+	_, p.VenueTypePresent = fields["venue_type_id"]
+	return nil
+}
+
 func resourceAccess(r *http.Request) workspaceAccess { return currentWorkspaceAccess(r) }
 func resourceNotFound(w http.ResponseWriter, label string) {
 	errorJSON(w, http.StatusNotFound, "resource_not_found", label+"不存在")
@@ -167,6 +274,82 @@ func validOne(v string, allowed ...string) bool {
 		}
 	}
 	return false
+}
+
+func decodeJSONRejectingFields(w http.ResponseWriter, r *http.Request, destination any, fields ...string) bool {
+	raw := map[string]json.RawMessage{}
+	if !decodeJSON(w, r, &raw) {
+		return false
+	}
+	for _, field := range fields {
+		if _, present := raw[field]; present {
+			errorJSON(w, http.StatusBadRequest, "invalid_input", field+" 已移除，请改用对应的类型 ID")
+			return false
+		}
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil || json.Unmarshal(encoded, destination) != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_input", "请求格式无效")
+		return false
+	}
+	return true
+}
+
+func rejectLegacyClassificationQuery(w http.ResponseWriter, r *http.Request, fields ...string) bool {
+	for _, field := range fields {
+		if _, present := r.URL.Query()[field]; present {
+			errorJSON(w, http.StatusBadRequest, "invalid_input", field+" 筛选已移除，请改用对应的类型 ID")
+			return false
+		}
+	}
+	return true
+}
+
+func normalizedTypeID(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func (app *application) validAssignedResourceType(ctx context.Context, workspaceID string, definition ResourceTypeDefinition, value *string, activeOnly bool) (*string, error) {
+	value = normalizedTypeID(value)
+	if value == nil {
+		return nil, nil
+	}
+	exists, err := resourceTypeExists(ctx, app.db, definition, workspaceID, *value, activeOnly)
+	if err != nil || !exists {
+		return nil, err
+	}
+	return value, nil
+}
+
+func appendTypeFilter(where *[]string, args *[]any, column string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	hasUnassigned := false
+	ids := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "unassigned" {
+			hasUnassigned = true
+		} else if strings.TrimSpace(value) != "" {
+			ids = append(ids, value)
+		}
+	}
+	if hasUnassigned && len(ids) > 0 {
+		*args = append(*args, ids)
+		*where = append(*where, "("+column+" = ANY($"+strconv.Itoa(len(*args))+") OR "+column+" IS NULL)")
+	} else if hasUnassigned {
+		*where = append(*where, column+" IS NULL")
+	} else if len(ids) > 0 {
+		*args = append(*args, ids)
+		*where = append(*where, column+" = ANY($"+strconv.Itoa(len(*args))+")")
+	}
 }
 func validName(w http.ResponseWriter, value, label string) (string, bool) {
 	value = strings.TrimSpace(value)
@@ -783,9 +966,12 @@ func (app *application) updateProgram(w http.ResponseWriter, r *http.Request) {
 // Their list APIs deliberately use only static SQL fragments and validated values.
 
 func (app *application) listPeople(w http.ResponseWriter, r *http.Request) {
+	if !rejectLegacyClassificationQuery(w, r, "kind") {
+		return
+	}
 	access := resourceAccess(r)
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	kinds := arrayParam(r, "kind")
+	typeIDs := arrayParam(r, "person_type_id")
 	ss := statuses(r)
 	skills := arrayParam(r, "skill")
 	tags := arrayParam(r, "tag")
@@ -806,9 +992,7 @@ func (app *application) listPeople(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "%"+q+"%")
 		where = append(where, "(display_name ILIKE $"+strconv.Itoa(len(args))+" OR primary_email ILIKE $"+strconv.Itoa(len(args))+" OR primary_phone ILIKE $"+strconv.Itoa(len(args))+")")
 	}
-	if len(kinds) > 0 {
-		add("kind = ANY", kinds)
-	}
+	appendTypeFilter(&where, &args, "person_type_id", typeIDs)
 	if len(ss) > 0 {
 		add("status = ANY", ss)
 	}
@@ -829,7 +1013,7 @@ func (app *application) writePeopleList(w http.ResponseWriter, r *http.Request, 
 	}
 	offset, limit := listOffset(r), listLimit(r)
 	args = append(args, limit, offset)
-	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,display_name,kind,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at FROM people WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
+	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at FROM people WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -838,7 +1022,7 @@ func (app *application) writePeopleList(w http.ResponseWriter, r *http.Request, 
 	items := []person{}
 	for rows.Next() {
 		var x person
-		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.Kind, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.PersonTypeID, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -854,27 +1038,28 @@ func (app *application) writePeopleList(w http.ResponseWriter, r *http.Request, 
 func (app *application) createPerson(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		DisplayName  string   `json:"display_name"`
-		Kind         string   `json:"kind"`
+		PersonTypeID *string  `json:"person_type_id"`
 		PrimaryEmail string   `json:"primary_email"`
 		PrimaryPhone string   `json:"primary_phone"`
 		Bio          string   `json:"bio"`
 		Skills       []string `json:"skills"`
 		Tags         []string `json:"tags"`
 	}
-	if !decodeJSON(w, r, &in) {
+	if !decodeJSONRejectingFields(w, r, &in, "kind") {
 		return
 	}
 	name, ok := validName(w, in.DisplayName, "人员姓名")
 	if !ok {
 		return
 	}
-	if !validOne(in.Kind, "artist", "crew", "contact") {
-		errorJSON(w, 400, "invalid_input", "人员类别无效")
+	access := resourceAccess(r)
+	typeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, personResourceTypeDefinition, in.PersonTypeID, true)
+	if err != nil || (in.PersonTypeID != nil && typeID == nil) {
+		errorJSON(w, 400, "invalid_input", "人员类型无效、未启用或不属于当前工作空间")
 		return
 	}
-	access := resourceAccess(r)
 	var x person
-	err := app.db.QueryRow(r.Context(), `INSERT INTO people(id,workspace_id,display_name,kind,primary_email,primary_phone,bio,skills,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,workspace_id,display_name,kind,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, in.Kind, strings.TrimSpace(in.PrimaryEmail), strings.TrimSpace(in.PrimaryPhone), strings.TrimSpace(in.Bio), normalizedStrings(in.Skills, 40), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.Kind, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err = app.db.QueryRow(r.Context(), `INSERT INTO people(id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, strings.TrimSpace(in.PrimaryEmail), strings.TrimSpace(in.PrimaryPhone), strings.TrimSpace(in.Bio), normalizedStrings(in.Skills, 40), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.PersonTypeID, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -884,7 +1069,7 @@ func (app *application) createPerson(w http.ResponseWriter, r *http.Request) {
 func (app *application) getPerson(w http.ResponseWriter, r *http.Request) {
 	access := resourceAccess(r)
 	var x person
-	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,display_name,kind,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at FROM people WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("personId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.Kind, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at FROM people WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("personId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.PersonTypeID, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "人员")
 		return
@@ -896,27 +1081,14 @@ func (app *application) getPerson(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, x)
 }
 func (app *application) updatePerson(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		DisplayName  *string   `json:"display_name"`
-		Kind         *string   `json:"kind"`
-		PrimaryEmail *string   `json:"primary_email"`
-		PrimaryPhone *string   `json:"primary_phone"`
-		Bio          *string   `json:"bio"`
-		Skills       *[]string `json:"skills"`
-		Tags         *[]string `json:"tags"`
-		Status       *string   `json:"status"`
-	}
-	if !decodeJSON(w, r, &in) {
+	var in updatePersonPayload
+	if !decodeJSONRejectingFields(w, r, &in, "kind") {
 		return
 	}
 	if in.DisplayName != nil {
 		if _, ok := validName(w, *in.DisplayName, "人员姓名"); !ok {
 			return
 		}
-	}
-	if in.Kind != nil && !validOne(*in.Kind, "artist", "crew", "contact") {
-		errorJSON(w, 400, "invalid_input", "人员类别无效")
-		return
 	}
 	if in.Status != nil && !validOne(*in.Status, "active", "archived") {
 		errorJSON(w, 400, "invalid_input", "人员状态无效")
@@ -930,8 +1102,17 @@ func (app *application) updatePerson(w http.ResponseWriter, r *http.Request) {
 		tags = normalizedStrings(*in.Tags, 40)
 	}
 	access := resourceAccess(r)
+	if in.PersonTypePresent {
+		requested := in.PersonTypeID
+		resolved, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, personResourceTypeDefinition, requested, true)
+		if err != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
+			errorJSON(w, 400, "invalid_input", "人员类型无效、未启用或不属于当前工作空间")
+			return
+		}
+		in.PersonTypeID = resolved
+	}
 	var x person
-	err := app.db.QueryRow(r.Context(), `UPDATE people SET display_name=COALESCE($1,display_name),kind=COALESCE($2,kind),primary_email=COALESCE($3,primary_email),primary_phone=COALESCE($4,primary_phone),bio=COALESCE($5,bio),skills=COALESCE($6,skills),tags=COALESCE($7,tags),status=COALESCE($8,status),archived_at=CASE WHEN COALESCE($8,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$9 AND workspace_id=$10 AND deleted_at IS NULL RETURNING id,workspace_id,display_name,kind,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at`, nullableTrimmed(in.DisplayName), in.Kind, nullableTrimmed(in.PrimaryEmail), nullableTrimmed(in.PrimaryPhone), nullableTrimmed(in.Bio), skills, tags, in.Status, r.PathValue("personId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.Kind, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `UPDATE people SET display_name=COALESCE($1,display_name),person_type_id=CASE WHEN $10 THEN $2 ELSE person_type_id END,primary_email=COALESCE($3,primary_email),primary_phone=COALESCE($4,primary_phone),bio=COALESCE($5,bio),skills=COALESCE($6,skills),tags=COALESCE($7,tags),status=COALESCE($8,status),archived_at=CASE WHEN COALESCE($8,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$9 AND workspace_id=$11 AND deleted_at IS NULL RETURNING id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at`, nullableTrimmed(in.DisplayName), in.PersonTypeID, nullableTrimmed(in.PrimaryEmail), nullableTrimmed(in.PrimaryPhone), nullableTrimmed(in.Bio), skills, tags, in.Status, r.PathValue("personId"), in.PersonTypePresent, access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.PersonTypeID, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "人员")
 		return
@@ -944,9 +1125,12 @@ func (app *application) updatePerson(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) listOrganizations(w http.ResponseWriter, r *http.Request) {
+	if !rejectLegacyClassificationQuery(w, r, "kind") {
+		return
+	}
 	access := resourceAccess(r)
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	kinds := arrayParam(r, "kind")
+	typeIDs := arrayParam(r, "organization_type_id")
 	cities := arrayParam(r, "city")
 	ss := statuses(r)
 	tags := arrayParam(r, "tag")
@@ -967,9 +1151,7 @@ func (app *application) listOrganizations(w http.ResponseWriter, r *http.Request
 		args = append(args, "%"+q+"%")
 		where = append(where, "(name ILIKE $"+strconv.Itoa(len(args))+" OR description ILIKE $"+strconv.Itoa(len(args))+")")
 	}
-	if len(kinds) > 0 {
-		add("kind = ANY", kinds)
-	}
+	appendTypeFilter(&where, &args, "organization_type_id", typeIDs)
 	if len(cities) > 0 {
 		add("city = ANY", cities)
 	}
@@ -990,7 +1172,7 @@ func (app *application) writeOrganizationsList(w http.ResponseWriter, r *http.Re
 	}
 	offset, limit := listOffset(r), listLimit(r)
 	args = append(args, limit, offset)
-	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,name,kind,city,address,description,tags,status,created_at,updated_at FROM organizations WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
+	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,name,organization_type_id,city,address,description,tags,status,created_at,updated_at FROM organizations WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -999,7 +1181,7 @@ func (app *application) writeOrganizationsList(w http.ResponseWriter, r *http.Re
 	items := []organization{}
 	for rows.Next() {
 		var x organization
-		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.OrganizationTypeID, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -1014,27 +1196,28 @@ func (app *application) writeOrganizationsList(w http.ResponseWriter, r *http.Re
 }
 func (app *application) createOrganization(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name        string   `json:"name"`
-		Kind        string   `json:"kind"`
-		City        string   `json:"city"`
-		Address     string   `json:"address"`
-		Description string   `json:"description"`
-		Tags        []string `json:"tags"`
+		Name               string   `json:"name"`
+		OrganizationTypeID *string  `json:"organization_type_id"`
+		City               string   `json:"city"`
+		Address            string   `json:"address"`
+		Description        string   `json:"description"`
+		Tags               []string `json:"tags"`
 	}
-	if !decodeJSON(w, r, &in) {
+	if !decodeJSONRejectingFields(w, r, &in, "kind") {
 		return
 	}
 	name, ok := validName(w, in.Name, "机构名称")
 	if !ok {
 		return
 	}
-	if !validOne(in.Kind, "organizer", "partner", "sponsor", "supplier", "school", "ensemble", "other") {
-		errorJSON(w, 400, "invalid_input", "机构类别无效")
+	access := resourceAccess(r)
+	typeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, organizationResourceTypeDefinition, in.OrganizationTypeID, true)
+	if err != nil || (in.OrganizationTypeID != nil && typeID == nil) {
+		errorJSON(w, 400, "invalid_input", "机构类型无效、未启用或不属于当前工作空间")
 		return
 	}
-	access := resourceAccess(r)
 	var x organization
-	err := app.db.QueryRow(r.Context(), `INSERT INTO organizations(id,workspace_id,name,kind,city,address,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,workspace_id,name,kind,city,address,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, in.Kind, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err = app.db.QueryRow(r.Context(), `INSERT INTO organizations(id,workspace_id,name,organization_type_id,city,address,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,workspace_id,name,organization_type_id,city,address,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.OrganizationTypeID, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1044,7 +1227,7 @@ func (app *application) createOrganization(w http.ResponseWriter, r *http.Reques
 func (app *application) getOrganization(w http.ResponseWriter, r *http.Request) {
 	access := resourceAccess(r)
 	var x organization
-	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,name,kind,city,address,description,tags,status,created_at,updated_at FROM organizations WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("organizationId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,name,organization_type_id,city,address,description,tags,status,created_at,updated_at FROM organizations WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("organizationId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.OrganizationTypeID, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "机构")
 		return
@@ -1056,26 +1239,14 @@ func (app *application) getOrganization(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, x)
 }
 func (app *application) updateOrganization(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Name        *string   `json:"name"`
-		Kind        *string   `json:"kind"`
-		City        *string   `json:"city"`
-		Address     *string   `json:"address"`
-		Description *string   `json:"description"`
-		Tags        *[]string `json:"tags"`
-		Status      *string   `json:"status"`
-	}
-	if !decodeJSON(w, r, &in) {
+	var in updateOrganizationPayload
+	if !decodeJSONRejectingFields(w, r, &in, "kind") {
 		return
 	}
 	if in.Name != nil {
 		if _, ok := validName(w, *in.Name, "机构名称"); !ok {
 			return
 		}
-	}
-	if in.Kind != nil && !validOne(*in.Kind, "organizer", "partner", "sponsor", "supplier", "school", "ensemble", "other") {
-		errorJSON(w, 400, "invalid_input", "机构类别无效")
-		return
 	}
 	if in.Status != nil && !validOne(*in.Status, "active", "archived") {
 		errorJSON(w, 400, "invalid_input", "机构状态无效")
@@ -1086,8 +1257,17 @@ func (app *application) updateOrganization(w http.ResponseWriter, r *http.Reques
 		tags = normalizedStrings(*in.Tags, 40)
 	}
 	access := resourceAccess(r)
+	if in.OrganizationTypePresent {
+		requested := in.OrganizationTypeID
+		resolved, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, organizationResourceTypeDefinition, requested, true)
+		if err != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
+			errorJSON(w, 400, "invalid_input", "机构类型无效、未启用或不属于当前工作空间")
+			return
+		}
+		in.OrganizationTypeID = resolved
+	}
 	var x organization
-	err := app.db.QueryRow(r.Context(), `UPDATE organizations SET name=COALESCE($1,name),kind=COALESCE($2,kind),city=COALESCE($3,city),address=COALESCE($4,address),description=COALESCE($5,description),tags=COALESCE($6,tags),status=COALESCE($7,status),archived_at=CASE WHEN COALESCE($7,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$8 AND workspace_id=$9 AND deleted_at IS NULL RETURNING id,workspace_id,name,kind,city,address,description,tags,status,created_at,updated_at`, nullableTrimmed(in.Name), in.Kind, nullableTrimmed(in.City), nullableTrimmed(in.Address), nullableTrimmed(in.Description), tags, in.Status, r.PathValue("organizationId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `UPDATE organizations SET name=COALESCE($1,name),organization_type_id=CASE WHEN $9 THEN $2 ELSE organization_type_id END,city=COALESCE($3,city),address=COALESCE($4,address),description=COALESCE($5,description),tags=COALESCE($6,tags),status=COALESCE($7,status),archived_at=CASE WHEN COALESCE($7,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$8 AND workspace_id=$10 AND deleted_at IS NULL RETURNING id,workspace_id,name,organization_type_id,city,address,description,tags,status,created_at,updated_at`, nullableTrimmed(in.Name), in.OrganizationTypeID, nullableTrimmed(in.City), nullableTrimmed(in.Address), nullableTrimmed(in.Description), tags, in.Status, r.PathValue("organizationId"), in.OrganizationTypePresent, access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.OrganizationTypeID, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "机构")
 		return
@@ -1100,9 +1280,11 @@ func (app *application) updateOrganization(w http.ResponseWriter, r *http.Reques
 }
 
 func (app *application) listVenues(w http.ResponseWriter, r *http.Request) {
+	if !rejectLegacyClassificationQuery(w, r, "kind") {
+		return
+	}
 	access := resourceAccess(r)
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	kinds := arrayParam(r, "kind")
 	typeIDs := arrayParam(r, "venue_type_id")
 	cities := arrayParam(r, "city")
 	ss := statuses(r)
@@ -1124,12 +1306,7 @@ func (app *application) listVenues(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "%"+q+"%")
 		where = append(where, "(name ILIKE $"+strconv.Itoa(len(args))+" OR address ILIKE $"+strconv.Itoa(len(args))+")")
 	}
-	if len(kinds) > 0 {
-		add("kind = ANY", kinds)
-	}
-	if len(typeIDs) > 0 {
-		add("venue_type_id = ANY", typeIDs)
-	}
+	appendTypeFilter(&where, &args, "venue_type_id", typeIDs)
 	if len(cities) > 0 {
 		add("city = ANY", cities)
 	}
@@ -1147,7 +1324,7 @@ func (app *application) listVenues(w http.ResponseWriter, r *http.Request) {
 	}
 	offset, limit := listOffset(r), listLimit(r)
 	args = append(args, limit, offset)
-	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,name,kind,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at FROM venues WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
+	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at FROM venues WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1156,7 +1333,7 @@ func (app *application) listVenues(w http.ResponseWriter, r *http.Request) {
 	items := []venue{}
 	for rows.Next() {
 		var x venue
-		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -1172,7 +1349,6 @@ func (app *application) listVenues(w http.ResponseWriter, r *http.Request) {
 func (app *application) createVenue(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name        string   `json:"name"`
-		Kind        string   `json:"kind"`
 		VenueTypeID *string  `json:"venue_type_id"`
 		City        string   `json:"city"`
 		Address     string   `json:"address"`
@@ -1180,15 +1356,11 @@ func (app *application) createVenue(w http.ResponseWriter, r *http.Request) {
 		Description string   `json:"description"`
 		Tags        []string `json:"tags"`
 	}
-	if !decodeJSON(w, r, &in) {
+	if !decodeJSONRejectingFields(w, r, &in, "kind") {
 		return
 	}
 	name, ok := validName(w, in.Name, "场地名称")
 	if !ok {
-		return
-	}
-	if in.VenueTypeID == nil && !validOne(in.Kind, "theatre", "hall", "club", "outdoor", "other") {
-		errorJSON(w, 400, "invalid_input", "场地类型无效")
 		return
 	}
 	if in.Timezone != "" && !validProductionTimezone(in.Timezone) {
@@ -1199,13 +1371,13 @@ func (app *application) createVenue(w http.ResponseWriter, r *http.Request) {
 		in.Timezone = "Asia/Shanghai"
 	}
 	access := resourceAccess(r)
-	venueTypeID, kind, err := app.resolveVenueType(r.Context(), access.WorkspaceID, in.VenueTypeID, in.Kind)
-	if err != nil {
+	venueTypeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, venueResourceTypeDefinition, in.VenueTypeID, true)
+	if err != nil || (in.VenueTypeID != nil && venueTypeID == nil) {
 		errorJSON(w, 400, "invalid_input", "场地类型无效、未启用或不属于当前工作空间")
 		return
 	}
 	var x venue
-	err = app.db.QueryRow(r.Context(), `INSERT INTO venues(id,workspace_id,name,kind,venue_type_id,city,address,timezone,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,workspace_id,name,kind,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, kind, venueTypeID, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), in.Timezone, strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err = app.db.QueryRow(r.Context(), `INSERT INTO venues(id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, venueTypeID, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), in.Timezone, strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1215,7 +1387,7 @@ func (app *application) createVenue(w http.ResponseWriter, r *http.Request) {
 func (app *application) getVenue(w http.ResponseWriter, r *http.Request) {
 	access := resourceAccess(r)
 	var x venue
-	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,name,kind,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at FROM venues WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("venueId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at FROM venues WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("venueId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "场地")
 		return
@@ -1227,18 +1399,8 @@ func (app *application) getVenue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, x)
 }
 func (app *application) updateVenue(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Name        *string   `json:"name"`
-		Kind        *string   `json:"kind"`
-		VenueTypeID *string   `json:"venue_type_id"`
-		City        *string   `json:"city"`
-		Address     *string   `json:"address"`
-		Timezone    *string   `json:"timezone"`
-		Description *string   `json:"description"`
-		Tags        *[]string `json:"tags"`
-		Status      *string   `json:"status"`
-	}
-	if !decodeJSON(w, r, &in) {
+	var in updateVenuePayload
+	if !decodeJSONRejectingFields(w, r, &in, "kind") {
 		return
 	}
 	if in.Name != nil {
@@ -1259,20 +1421,17 @@ func (app *application) updateVenue(w http.ResponseWriter, r *http.Request) {
 		tags = normalizedStrings(*in.Tags, 40)
 	}
 	access := resourceAccess(r)
-	var venueTypeID *string
-	var resolvedLegacyKind *string
-	if in.VenueTypeID != nil || in.Kind != nil {
-		resolved, resolvedKind, resolveErr := app.resolveVenueType(r.Context(), access.WorkspaceID, in.VenueTypeID, valueOrEmpty(in.Kind))
-		if resolveErr != nil {
+	if in.VenueTypePresent {
+		requested := in.VenueTypeID
+		resolved, resolveErr := app.validAssignedResourceType(r.Context(), access.WorkspaceID, venueResourceTypeDefinition, requested, true)
+		if resolveErr != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
 			errorJSON(w, 400, "invalid_input", "场地类型无效、未启用或不属于当前工作空间")
 			return
 		}
-		venueTypeID = &resolved
-		resolvedLegacyKind = &resolvedKind
+		in.VenueTypeID = resolved
 	}
 	var x venue
-	legacyKind := resolvedLegacyKind
-	err := app.db.QueryRow(r.Context(), `UPDATE venues SET name=COALESCE($1,name),kind=COALESCE($2,kind),venue_type_id=COALESCE($3,venue_type_id),city=COALESCE($4,city),address=COALESCE($5,address),timezone=COALESCE($6,timezone),description=COALESCE($7,description),tags=COALESCE($8,tags),status=COALESCE($9,status),archived_at=CASE WHEN COALESCE($9,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$10 AND workspace_id=$11 AND deleted_at IS NULL RETURNING id,workspace_id,name,kind,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at`, nullableTrimmed(in.Name), legacyKind, venueTypeID, nullableTrimmed(in.City), nullableTrimmed(in.Address), in.Timezone, nullableTrimmed(in.Description), tags, in.Status, r.PathValue("venueId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Kind, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `UPDATE venues SET name=COALESCE($1,name),venue_type_id=CASE WHEN $10 THEN $2 ELSE venue_type_id END,city=COALESCE($3,city),address=COALESCE($4,address),timezone=COALESCE($5,timezone),description=COALESCE($6,description),tags=COALESCE($7,tags),status=COALESCE($8,status),archived_at=CASE WHEN COALESCE($8,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$9 AND workspace_id=$11 AND deleted_at IS NULL RETURNING id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at`, nullableTrimmed(in.Name), in.VenueTypeID, nullableTrimmed(in.City), nullableTrimmed(in.Address), in.Timezone, nullableTrimmed(in.Description), tags, in.Status, r.PathValue("venueId"), in.VenueTypePresent, access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "场地")
 		return
@@ -1285,9 +1444,12 @@ func (app *application) updateVenue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) listEquipment(w http.ResponseWriter, r *http.Request) {
+	if !rejectLegacyClassificationQuery(w, r, "category") {
+		return
+	}
 	access := resourceAccess(r)
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	categories := arrayParam(r, "category")
+	typeIDs := arrayParam(r, "equipment_type_id")
 	ownerships := arrayParam(r, "ownership")
 	ss := statuses(r)
 	tags := arrayParam(r, "tag")
@@ -1308,9 +1470,7 @@ func (app *application) listEquipment(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "%"+q+"%")
 		where = append(where, "(name ILIKE $"+strconv.Itoa(len(args))+" OR storage_location ILIKE $"+strconv.Itoa(len(args))+")")
 	}
-	if len(categories) > 0 {
-		add("category = ANY", categories)
-	}
+	appendTypeFilter(&where, &args, "equipment_type_id", typeIDs)
 	if len(ownerships) > 0 {
 		add("ownership = ANY", ownerships)
 	}
@@ -1328,7 +1488,7 @@ func (app *application) listEquipment(w http.ResponseWriter, r *http.Request) {
 	}
 	offset, limit := listOffset(r), listLimit(r)
 	args = append(args, limit, offset)
-	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,name,category,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at FROM equipment_items WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
+	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at FROM equipment_items WHERE `+base+` ORDER BY updated_at DESC,id DESC LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1337,7 +1497,7 @@ func (app *application) listEquipment(w http.ResponseWriter, r *http.Request) {
 	items := []equipmentItem{}
 	for rows.Next() {
 		var x equipmentItem
-		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Category, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.EquipmentTypeID, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -1353,7 +1513,7 @@ func (app *application) listEquipment(w http.ResponseWriter, r *http.Request) {
 func (app *application) createEquipment(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name            string   `json:"name"`
-		Category        string   `json:"category"`
+		EquipmentTypeID *string  `json:"equipment_type_id"`
 		QuantityTotal   int      `json:"quantity_total"`
 		Unit            string   `json:"unit"`
 		Ownership       string   `json:"ownership"`
@@ -1361,23 +1521,28 @@ func (app *application) createEquipment(w http.ResponseWriter, r *http.Request) 
 		TechnicalNotes  string   `json:"technical_notes"`
 		Tags            []string `json:"tags"`
 	}
-	if !decodeJSON(w, r, &in) {
+	if !decodeJSONRejectingFields(w, r, &in, "category") {
 		return
 	}
 	name, ok := validName(w, in.Name, "设备名称")
 	if !ok {
 		return
 	}
-	if !validOne(in.Category, "audio", "lighting", "video", "stage", "power", "other") || !validOne(in.Ownership, "owned", "rented") || in.QuantityTotal < 0 {
-		errorJSON(w, 400, "invalid_input", "设备类别、归属或数量无效")
+	if !validOne(in.Ownership, "owned", "rented") || in.QuantityTotal < 0 {
+		errorJSON(w, 400, "invalid_input", "设备归属或数量无效")
 		return
 	}
 	if strings.TrimSpace(in.Unit) == "" {
 		in.Unit = "件"
 	}
 	access := resourceAccess(r)
+	typeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, equipmentResourceTypeDefinition, in.EquipmentTypeID, true)
+	if err != nil || (in.EquipmentTypeID != nil && typeID == nil) {
+		errorJSON(w, 400, "invalid_input", "设备类型无效、未启用或不属于当前工作空间")
+		return
+	}
 	var x equipmentItem
-	err := app.db.QueryRow(r.Context(), `INSERT INTO equipment_items(id,workspace_id,name,category,quantity_total,unit,ownership,storage_location,technical_notes,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,workspace_id,name,category,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, in.Category, in.QuantityTotal, strings.TrimSpace(in.Unit), in.Ownership, strings.TrimSpace(in.StorageLocation), strings.TrimSpace(in.TechnicalNotes), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Category, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err = app.db.QueryRow(r.Context(), `INSERT INTO equipment_items(id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, in.QuantityTotal, strings.TrimSpace(in.Unit), in.Ownership, strings.TrimSpace(in.StorageLocation), strings.TrimSpace(in.TechnicalNotes), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.EquipmentTypeID, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1387,7 +1552,7 @@ func (app *application) createEquipment(w http.ResponseWriter, r *http.Request) 
 func (app *application) getEquipment(w http.ResponseWriter, r *http.Request) {
 	access := resourceAccess(r)
 	var x equipmentItem
-	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,name,category,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at FROM equipment_items WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("equipmentId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Category, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at FROM equipment_items WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("equipmentId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.EquipmentTypeID, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "设备")
 		return
@@ -1399,28 +1564,14 @@ func (app *application) getEquipment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, x)
 }
 func (app *application) updateEquipment(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Name            *string   `json:"name"`
-		Category        *string   `json:"category"`
-		QuantityTotal   *int      `json:"quantity_total"`
-		Unit            *string   `json:"unit"`
-		Ownership       *string   `json:"ownership"`
-		StorageLocation *string   `json:"storage_location"`
-		TechnicalNotes  *string   `json:"technical_notes"`
-		Tags            *[]string `json:"tags"`
-		Status          *string   `json:"status"`
-	}
-	if !decodeJSON(w, r, &in) {
+	var in updateEquipmentPayload
+	if !decodeJSONRejectingFields(w, r, &in, "category") {
 		return
 	}
 	if in.Name != nil {
 		if _, ok := validName(w, *in.Name, "设备名称"); !ok {
 			return
 		}
-	}
-	if in.Category != nil && !validOne(*in.Category, "audio", "lighting", "video", "stage", "power", "other") {
-		errorJSON(w, 400, "invalid_input", "设备类别无效")
-		return
 	}
 	if in.Ownership != nil && !validOne(*in.Ownership, "owned", "rented") {
 		errorJSON(w, 400, "invalid_input", "设备归属无效")
@@ -1439,8 +1590,17 @@ func (app *application) updateEquipment(w http.ResponseWriter, r *http.Request) 
 		tags = normalizedStrings(*in.Tags, 40)
 	}
 	access := resourceAccess(r)
+	if in.EquipmentTypePresent {
+		requested := in.EquipmentTypeID
+		resolved, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, equipmentResourceTypeDefinition, requested, true)
+		if err != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
+			errorJSON(w, 400, "invalid_input", "设备类型无效、未启用或不属于当前工作空间")
+			return
+		}
+		in.EquipmentTypeID = resolved
+	}
 	var x equipmentItem
-	err := app.db.QueryRow(r.Context(), `UPDATE equipment_items SET name=COALESCE($1,name),category=COALESCE($2,category),quantity_total=COALESCE($3,quantity_total),unit=COALESCE($4,unit),ownership=COALESCE($5,ownership),storage_location=COALESCE($6,storage_location),technical_notes=COALESCE($7,technical_notes),tags=COALESCE($8,tags),status=COALESCE($9,status),archived_at=CASE WHEN COALESCE($9,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$10 AND workspace_id=$11 AND deleted_at IS NULL RETURNING id,workspace_id,name,category,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at`, nullableTrimmed(in.Name), in.Category, in.QuantityTotal, nullableTrimmed(in.Unit), in.Ownership, nullableTrimmed(in.StorageLocation), nullableTrimmed(in.TechnicalNotes), tags, in.Status, r.PathValue("equipmentId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.Category, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `UPDATE equipment_items SET name=COALESCE($1,name),equipment_type_id=CASE WHEN $10 THEN $2 ELSE equipment_type_id END,quantity_total=COALESCE($3,quantity_total),unit=COALESCE($4,unit),ownership=COALESCE($5,ownership),storage_location=COALESCE($6,storage_location),technical_notes=COALESCE($7,technical_notes),tags=COALESCE($8,tags),status=COALESCE($9,status),archived_at=CASE WHEN COALESCE($9,status)='archived' THEN NOW() ELSE NULL END,updated_at=NOW() WHERE id=$11 AND workspace_id=$12 AND deleted_at IS NULL RETURNING id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at`, nullableTrimmed(in.Name), in.EquipmentTypeID, in.QuantityTotal, nullableTrimmed(in.Unit), in.Ownership, nullableTrimmed(in.StorageLocation), nullableTrimmed(in.TechnicalNotes), tags, in.Status, in.EquipmentTypePresent, r.PathValue("equipmentId"), access.WorkspaceID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.EquipmentTypeID, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "设备")
 		return
