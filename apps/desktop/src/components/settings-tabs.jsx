@@ -206,13 +206,13 @@ export function SectionTabsLayout({
       <div className={cn(
         "relative w-full min-w-0 lg:h-fit",
         shouldPin && "sticky top-0 z-20 self-start bg-background/95 py-1 backdrop-blur-sm",
-        shouldPin && orientation === "horizontal" && "after:pointer-events-none after:absolute after:inset-x-0 after:-bottom-4 after:h-9 after:bg-gradient-to-b after:from-background after:via-background/90 after:to-transparent",
       )}>
         <TabsList
           ref={activeTabsListRef}
           aria-label={ariaLabel}
           className={cn(
             "w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none lg:h-fit lg:w-full lg:flex-col lg:items-stretch",
+            shouldPin && orientation === "horizontal" && "shadow-[0_5px_12px_-8px_rgba(0,0,0,0.45)]",
             shouldPin && orientation === "vertical" && "max-h-[calc(100dvh-var(--app-titlebar-height)-2rem)] overflow-y-auto overflow-x-hidden scrollbar-thin",
             orientation === "vertical" && !shouldPin && "lg:overflow-visible",
           )}
