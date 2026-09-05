@@ -25,19 +25,35 @@ export function emptyProgramSheetState(productionId) {
 
 const statuses = new Set(["draft", "review", "published", "archived"]);
 const itemKinds = new Set(["program", "section", "interval", "note"]);
+const productionProgramStatuses = new Set(["draft", "needs_info", "confirmed", "archived"]);
+const productionProgramSources = new Set(["workspace_copy", "manual", "submission"]);
 
 function normalizeProductionProgram(item, productionId) {
+  const sourceKind = productionProgramSources.has(item?.sourceKind || item?.source_kind)
+    ? (item.sourceKind || item.source_kind)
+    : item?.sourceProgramId || item?.source_program_id ? "workspace_copy" : "manual";
+  const description = item?.description ?? item?.notes ?? "";
+  const programTypeName = String(item?.programTypeName || item?.program_type_name || item?.programType || item?.program_type || "");
   return {
     id: item?.id || makeId("production-program"),
     productionId,
+    sourceKind,
     sourceProgramId: item?.sourceProgramId || item?.source_program_id || null,
+    sourceEntryId: item?.sourceEntryId || item?.source_entry_id || null,
+    copiedAt: item?.copiedAt || item?.copied_at || null,
     name: String(item?.name || "未命名节目"),
-    programType: String(item?.programType || item?.program_type || ""),
+    programTypeId: item?.programTypeId || item?.program_type_id || null,
+    programTypeName,
+    programType: programTypeName,
     performers: Array.isArray(item?.performers) ? item.performers.map(String) : [],
     durationSeconds: Math.max(0, Number(item?.durationSeconds ?? item?.duration_seconds ?? 0) || 0),
-    notes: String(item?.notes || ""),
+    description: String(description),
+    notes: String(description),
+    technicalNotes: String(item?.technicalNotes ?? item?.technical_notes ?? ""),
+    status: productionProgramStatuses.has(item?.status) ? item.status : "draft",
     createdAt: item?.createdAt || item?.created_at || nowIso(),
     updatedAt: item?.updatedAt || item?.updated_at || nowIso(),
+    archivedAt: item?.archivedAt || item?.archived_at || null,
   };
 }
 
@@ -107,17 +123,25 @@ export async function saveProgramSheetState(productionId, value) {
 
 export function makeProductionProgram(productionId, source = {}) {
   const timestamp = nowIso();
+  const sourceKind = productionProgramSources.has(source.sourceKind) ? source.sourceKind : source.id ? "workspace_copy" : "manual";
   return normalizeProductionProgram({
     id: makeId("production-program"),
     productionId,
-    sourceProgramId: source.sourceProgramId || source.id || null,
+    sourceKind,
+    sourceProgramId: source.sourceProgramId || (sourceKind === "workspace_copy" ? source.id : null),
+    sourceEntryId: source.sourceEntryId || null,
+    copiedAt: source.copiedAt || (sourceKind === "workspace_copy" ? timestamp : null),
     name: source.name || "未命名节目",
-    programType: source.programType || source.program_type_name || source.program_type || "",
+    programTypeId: source.programTypeId || source.program_type_id || null,
+    programTypeName: source.programTypeName || source.program_type_name || source.programType || source.program_type || "",
     performers: source.performers || [],
     durationSeconds: source.durationSeconds ?? source.default_duration_seconds ?? 0,
-    notes: source.notes || source.description || "",
+    description: source.description || source.notes || "",
+    technicalNotes: source.technicalNotes || source.technical_notes || "",
+    status: source.status || "draft",
     createdAt: timestamp,
     updatedAt: timestamp,
+    archivedAt: null,
   }, productionId);
 }
 
