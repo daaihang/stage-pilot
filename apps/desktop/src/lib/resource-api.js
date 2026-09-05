@@ -64,15 +64,28 @@ export function createVenueType(workspaceId, payload) { return createResourceTyp
 export function updateVenueType(workspaceId, id, payload) { return updateResourceType(workspaceId, "venues", id, payload); }
 export function reorderVenueTypes(workspaceId, items) { return reorderResourceTypes(workspaceId, "venues", items); }
 export function deleteVenueType(workspaceId, id) { return deleteResourceType(workspaceId, "venues", id); }
-export async function listFileTypes(workspaceId, filters) {
-  return normalizeResourceList(await request(`${base(workspaceId, "file-types")}${queryString(filters)}`));
+async function fileTypeRequest(path, options) {
+  try {
+    return await request(path, options);
+  } catch (error) {
+    if (error?.status === 404) {
+      error.code = error.code || "file_type_api_unavailable";
+      error.message = "文件类型接口尚未部署，请重启或更新 API 服务后重试";
+    }
+    throw error;
+  }
 }
-export function createFileType(workspaceId, payload) { return request(base(workspaceId, "file-types"), { method: "POST", body: JSON.stringify(payload) }); }
-export function updateFileType(workspaceId, id, payload) { return request(base(workspaceId, `file-types/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
-export function reorderFileTypes(workspaceId, scope, items) { return request(base(workspaceId, "file-types/order"), { method: "PATCH", body: JSON.stringify({ scope, items }) }); }
-export function deleteFileType(workspaceId, id) { return request(base(workspaceId, `file-types/${id}/delete`), { method: "POST", body: JSON.stringify({}) }); }
-export function restoreFileTypes(workspaceId, scope) { return request(base(workspaceId, "file-types/restore"), { method: "POST", body: JSON.stringify({ scope }) }); }
-export function migrateFileTypes(workspaceId, scopes) { return request(base(workspaceId, "file-types/migrate"), { method: "POST", body: JSON.stringify({ scopes }) }); }
+export async function listFileTypes(workspaceId, filters) {
+  return normalizeResourceList(await fileTypeRequest(`${base(workspaceId, "file-types")}${queryString(filters)}`));
+}
+export function createFileType(workspaceId, payload) { return fileTypeRequest(base(workspaceId, "file-types"), { method: "POST", body: JSON.stringify(payload) }); }
+export function updateFileType(workspaceId, id, payload) { return fileTypeRequest(base(workspaceId, `file-types/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
+export function reorderFileTypes(workspaceId, scope, items) { return fileTypeRequest(base(workspaceId, "file-types/order"), { method: "PATCH", body: JSON.stringify({ scope, items }) }); }
+export function deleteFileType(workspaceId, id) { return fileTypeRequest(base(workspaceId, `file-types/${id}/delete`), { method: "POST", body: JSON.stringify({}) }); }
+export async function restoreFileTypes(workspaceId, scope) {
+  return normalizeResourceList(await fileTypeRequest(base(workspaceId, "file-types/restore"), { method: "POST", body: JSON.stringify({ scope }) }));
+}
+export function migrateFileTypes(workspaceId, scopes) { return fileTypeRequest(base(workspaceId, "file-types/migrate"), { method: "POST", body: JSON.stringify({ scopes }) }); }
 export function listVenueSpaces(workspaceId, venueId) { return request(base(workspaceId, `venues/${venueId}/spaces`)); }
 export function createVenueSpace(workspaceId, venueId, payload) { return request(base(workspaceId, `venues/${venueId}/spaces`), { method: "POST", body: JSON.stringify(payload) }); }
 export function updateVenueSpace(workspaceId, venueId, id, payload) { return request(base(workspaceId, `venues/${venueId}/spaces/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }

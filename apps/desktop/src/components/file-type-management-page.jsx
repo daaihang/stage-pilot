@@ -488,10 +488,14 @@ export function FileTypeManagementPage({ workspace }) {
     const toast = notify.loading("正在恢复系统默认…");
     setSaving(true);
     try {
-      await restoreFileTypes(workspaceId, scope);
+      const restored = await restoreFileTypes(workspaceId, scope);
+      if (activeWorkspaceRef.current === workspaceId && activeScope === scope) {
+        setTypes(restored.items);
+        setTotal(restored.total);
+        setError(null);
+      }
       notify.success("当前范围已恢复默认", { id: toast });
       setDialog(null);
-      await loadTypes().catch(() => {});
       return true;
     } catch (nextError) {
       notify.error("恢复文件类型失败", { id: toast, description: errorDescription(nextError) });

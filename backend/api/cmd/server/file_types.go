@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var fileTypeScopes = map[string]bool{
@@ -52,6 +54,11 @@ func fileTypeDescription(w http.ResponseWriter, value string) (string, bool) {
 		return "", false
 	}
 	return value, true
+}
+
+func isUniqueViolation(err error, constraint string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && (constraint == "" || pgErr.ConstraintName == constraint)
 }
 
 func (app *application) listFileTypes(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +196,11 @@ func (app *application) createFileType(w http.ResponseWriter, r *http.Request) {
 		VALUES($1,$2,$3,$4,$5,$6,FALSE,$7,$8)
 		RETURNING id,workspace_id,scope,template_key,name,description,sort_order,is_system_default,is_active,created_at,updated_at`, newID(), access.WorkspaceID, in.Scope, name, description, sortOrder, isActive, access.UserID).Scan(&item.ID, &item.WorkspaceID, &item.Scope, &item.TemplateKey, &item.Name, &item.Description, &item.SortOrder, &item.IsSystemDefault, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
-		errorJSON(w, http.StatusConflict, "duplicate_name", "当前范围内已经存在同名文件类型")
+		if isUniqueViolation(err, "file_types_workspace_scope_name_unique") {
+			errorJSON(w, http.StatusConflict, "duplicate_name", "当前范围内已经存在同名文件类型")
+		} else {
+			serverError(w, err)
+		}
 		return
 	}
 	if err = normalizeFileTypeScopeOrder(r.Context(), tx, access.WorkspaceID, in.Scope, nil); err != nil {
@@ -258,7 +269,7 @@ func (app *application) updateFileType(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var item fileType
-	err = tx.QueryRow(r.Context(), `UPDATE file_types SET name=COALESCE($1,name),description=COALESCE($2,description),sort_order=COALESCE($3,sort_order),is_active=COALESCE($4,is_active),updated_at=NOW()
+	err = tx.QueryRow(r.Context(), `UPDATE file_types SET name=COALESCE($1,name),description=COALESCE($2,description),sort_order=COALESCE($3,sort_order),is_active=COALESCE($4,is_active),updated_at=CASE WHEN ($1 IS NOT NULL AND name IS DISTINCT FROM $1) OR ($2 IS NOT NULL AND description IS DISTINCT FROM $2) OR ($3 IS NOT NULL AND sort_order IS DISTINCT FROM $3) OR ($4 IS NOT NULL AND is_active IS DISTINCT FROM $4) THEN NOW() ELSE updated_at END
 		WHERE id=$5 AND workspace_id=$6 AND deleted_at IS NULL
 		RETURNING id,workspace_id,scope,template_key,name,description,sort_order,is_system_default,is_active,created_at,updated_at`, in.Name, in.Description, in.SortOrder, in.IsActive, id, access.WorkspaceID).Scan(&item.ID, &item.WorkspaceID, &item.Scope, &item.TemplateKey, &item.Name, &item.Description, &item.SortOrder, &item.IsSystemDefault, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
 	if err == pgx.ErrNoRows {
@@ -266,7 +277,11 @@ func (app *application) updateFileType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		errorJSON(w, http.StatusConflict, "duplicate_name", "当前范围内已经存在同名文件类型")
+		if isUniqueViolation(err, "file_types_workspace_scope_name_unique") {
+			errorJSON(w, http.StatusConflict, "duplicate_name", "当前范围内已经存在同名文件类型")
+		} else {
+			serverError(w, err)
+		}
 		return
 	}
 	if err = normalizeFileTypeScopeOrder(r.Context(), tx, access.WorkspaceID, item.Scope, nil); err != nil {
@@ -289,7 +304,8 @@ func (app *application) deleteFileType(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("fileTypeId")
 	var systemDefault bool
 	var templateKey *string
-	err := app.db.QueryRow(r.Context(), `SELECT is_system_default,template_key FROM file_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, id, access.WorkspaceID).Scan(&systemDefault, &templateKey)
+	var scope string
+	err := app.db.QueryRow(r.Context(), `SELECT scope,is_system_default,template_key FROM file_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, id, access.WorkspaceID).Scan(&scope, &systemDefault, &templateKey)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "文件类型")
 		return
@@ -302,7 +318,21 @@ func (app *application) deleteFileType(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认文件类型不能删除")
 		return
 	}
-	if _, err = app.db.Exec(r.Context(), `UPDATE file_types SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, id, access.WorkspaceID); err != nil {
+	tx, err := app.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err = tx.Exec(r.Context(), `UPDATE file_types SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, id, access.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = normalizeFileTypeScopeOrder(r.Context(), tx, access.WorkspaceID, scope, nil); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -384,6 +414,7 @@ func (app *application) reorderFileTypes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	access := resourceAccess(r)
+	in.Scope = strings.TrimSpace(in.Scope)
 	tx, err := app.db.Begin(r.Context())
 	if err != nil {
 		serverError(w, err)
@@ -467,7 +498,11 @@ func (app *application) restoreFileTypes(w http.ResponseWriter, r *http.Request)
 	var in struct {
 		Scope string `json:"scope"`
 	}
-	if !decodeJSON(w, r, &in) || !validFileTypeScope(w, strings.TrimSpace(in.Scope)) {
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.Scope = strings.TrimSpace(in.Scope)
+	if !validFileTypeScope(w, in.Scope) {
 		return
 	}
 	access := resourceAccess(r)
@@ -477,7 +512,7 @@ func (app *application) restoreFileTypes(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback(r.Context())
-	if err = seedFileTypes(r.Context(), tx, access.WorkspaceID, access.UserID); err != nil {
+	if err = seedFileTypesForScope(r.Context(), tx, access.WorkspaceID, access.UserID, in.Scope); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -485,7 +520,7 @@ func (app *application) restoreFileTypes(w http.ResponseWriter, r *http.Request)
 		serverError(w, err)
 		return
 	}
-	if _, err = tx.Exec(r.Context(), `UPDATE file_types f SET name=t.name,description=t.description,sort_order=t.sort_order,is_active=t.is_active,deleted_at=NULL,updated_at=NOW()
+	if _, err = tx.Exec(r.Context(), `UPDATE file_types f SET name=t.name,description=t.description,sort_order=t.sort_order,is_active=t.is_active,deleted_at=NULL,updated_at=CASE WHEN f.name IS DISTINCT FROM t.name OR f.description IS DISTINCT FROM t.description OR f.sort_order IS DISTINCT FROM t.sort_order OR f.is_active IS DISTINCT FROM t.is_active OR f.deleted_at IS NOT NULL THEN NOW() ELSE f.updated_at END
 		FROM file_type_templates t WHERE f.workspace_id=$1 AND f.scope=$2 AND f.template_key=t.key AND t.scope=f.scope`, access.WorkspaceID, in.Scope); err != nil {
 		serverError(w, err)
 		return
@@ -536,12 +571,13 @@ func (app *application) migrateFileTypes(w http.ResponseWriter, r *http.Request)
 	migrated, skipped := 0, 0
 	warnings := []string{}
 	for scope, items := range in.Scopes {
+		scope = strings.TrimSpace(scope)
 		if !fileTypeScopes[scope] {
 			warnings = append(warnings, fmt.Sprintf("忽略未知范围 %s", scope))
 			skipped += len(items)
 			continue
 		}
-		if err = seedFileTypes(r.Context(), tx, access.WorkspaceID, access.UserID); err != nil {
+		if err = seedFileTypesForScope(r.Context(), tx, access.WorkspaceID, access.UserID, scope); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -584,6 +620,11 @@ func (app *application) migrateFileTypes(w http.ResponseWriter, r *http.Request)
 				skipped++
 				continue
 			}
+			if legacy.SortOrder < 0 {
+				warnings = append(warnings, fmt.Sprintf("忽略无效文件类型 %s/%s", scope, legacy.Name))
+				skipped++
+				continue
+			}
 			name := strings.TrimSpace(legacy.Name)
 			if utf8.RuneCountInString(name) > 120 || utf8.RuneCountInString(strings.TrimSpace(legacy.Description)) > 500 {
 				warnings = append(warnings, fmt.Sprintf("忽略无效文件类型 %s/%s", scope, name))
@@ -597,7 +638,12 @@ func (app *application) migrateFileTypes(w http.ResponseWriter, r *http.Request)
 				continue
 			}
 			seenNames[nameKey] = true
-			if legacy.IsSystemDefault {
+			isTemplate := legacy.TemplateKey != nil && strings.TrimSpace(*legacy.TemplateKey) != ""
+			if isTemplate {
+				templateKey := strings.TrimSpace(*legacy.TemplateKey)
+				legacy.TemplateKey = &templateKey
+			}
+			if isTemplate || legacy.IsSystemDefault {
 				if legacy.TemplateKey == nil || !strings.HasPrefix(*legacy.TemplateKey, scope+".") {
 					warnings = append(warnings, fmt.Sprintf("忽略未知系统模板 %s/%s", scope, name))
 					skipped++
@@ -613,7 +659,7 @@ func (app *application) migrateFileTypes(w http.ResponseWriter, r *http.Request)
 				if fileTypeIsUncategorized(legacy.TemplateKey) {
 					active = true
 				}
-				if _, queryErr = tx.Exec(r.Context(), `UPDATE file_types SET description=$1,is_active=$2,sort_order=$3,updated_at=NOW() WHERE id=$4 AND workspace_id=$5 AND deleted_at IS NULL`, strings.TrimSpace(legacy.Description), active, legacy.SortOrder, current.id, access.WorkspaceID); queryErr != nil {
+				if _, queryErr = tx.Exec(r.Context(), `UPDATE file_types SET description=$1,is_active=$2,sort_order=$3,updated_at=CASE WHEN description IS DISTINCT FROM $1 OR is_active IS DISTINCT FROM $2 OR sort_order IS DISTINCT FROM $3 THEN NOW() ELSE updated_at END WHERE id=$4 AND workspace_id=$5 AND deleted_at IS NULL`, strings.TrimSpace(legacy.Description), active, legacy.SortOrder, current.id, access.WorkspaceID); queryErr != nil {
 					serverError(w, queryErr)
 					return
 				}
@@ -624,7 +670,7 @@ func (app *application) migrateFileTypes(w http.ResponseWriter, r *http.Request)
 			current, found := existingByName[nameKey]
 			active := legacy.IsActive
 			if found {
-				if _, queryErr = tx.Exec(r.Context(), `UPDATE file_types SET description=$1,is_active=$2,sort_order=$3,updated_at=NOW() WHERE id=$4 AND workspace_id=$5 AND deleted_at IS NULL AND template_key IS NULL`, strings.TrimSpace(legacy.Description), active, legacy.SortOrder, current.id, access.WorkspaceID); queryErr != nil {
+				if _, queryErr = tx.Exec(r.Context(), `UPDATE file_types SET description=$1,is_active=$2,sort_order=$3,updated_at=CASE WHEN description IS DISTINCT FROM $1 OR is_active IS DISTINCT FROM $2 OR sort_order IS DISTINCT FROM $3 THEN NOW() ELSE updated_at END WHERE id=$4 AND workspace_id=$5 AND deleted_at IS NULL AND template_key IS NULL`, strings.TrimSpace(legacy.Description), active, legacy.SortOrder, current.id, access.WorkspaceID); queryErr != nil {
 					serverError(w, queryErr)
 					return
 				}
