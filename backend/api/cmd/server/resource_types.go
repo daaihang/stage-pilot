@@ -394,22 +394,27 @@ func (app *application) reorderResourceTypes(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), "SELECT id,system_key FROM "+definition.TableName+" WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE", access.WorkspaceID)
+	rows, err := tx.Query(r.Context(), "SELECT id,system_key,sort_order FROM "+definition.TableName+" WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE", access.WorkspaceID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	current := map[string]*string{}
+	type currentTypeOrder struct {
+		systemKey *string
+		sortOrder int
+	}
+	current := map[string]currentTypeOrder{}
 	otherID := ""
 	for rows.Next() {
 		var id string
 		var systemKey *string
-		if err := rows.Scan(&id, &systemKey); err != nil {
+		var sortOrder int
+		if err := rows.Scan(&id, &systemKey, &sortOrder); err != nil {
 			rows.Close()
 			serverError(w, err)
 			return
 		}
-		current[id] = systemKey
+		current[id] = currentTypeOrder{systemKey: systemKey, sortOrder: sortOrder}
 		if systemKey != nil && *systemKey == "other" {
 			otherID = id
 		}
@@ -442,7 +447,11 @@ func (app *application) reorderResourceTypes(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	for index, item := range in.Items {
-		if _, err = tx.Exec(r.Context(), "UPDATE "+definition.TableName+" SET sort_order=$1 WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL", index, item.ID, access.WorkspaceID); err != nil {
+		query := "UPDATE " + definition.TableName + " SET sort_order=$1 WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL"
+		if current[item.ID].sortOrder != index {
+			query = "UPDATE " + definition.TableName + " SET sort_order=$1,updated_at=NOW() WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL"
+		}
+		if _, err = tx.Exec(r.Context(), query, index, item.ID, access.WorkspaceID); err != nil {
 			serverError(w, err)
 			return
 		}
