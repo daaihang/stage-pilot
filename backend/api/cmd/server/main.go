@@ -132,6 +132,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/workspaces/{id}/resource-types/{resourceType}", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listResourceTypes))))
 	mux.Handle("POST /v1/workspaces/{id}/resource-types/{resourceType}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createResourceType))))
 	mux.Handle("PATCH /v1/workspaces/{id}/resource-types/{resourceType}/order", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.reorderResourceTypes))))
+	mux.Handle("POST /v1/workspaces/{id}/resource-types/{resourceType}/restore", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.restoreResourceTypes))))
 	mux.Handle("PATCH /v1/workspaces/{id}/resource-types/{resourceType}/{typeId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateResourceType))))
 	mux.Handle("POST /v1/workspaces/{id}/resource-types/{resourceType}/{typeId}/delete", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.deleteResourceType))))
 	mux.Handle("GET /v1/workspaces/{id}/file-types", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listFileTypes))))
