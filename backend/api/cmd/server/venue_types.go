@@ -95,12 +95,32 @@ func (app *application) legacyUpdateVenueType(w http.ResponseWriter, r *http.Req
 	}
 	a := resourceAccess(r)
 	id := r.PathValue("venueTypeId")
+	var isSystemDefault bool
+	err := app.db.QueryRow(r.Context(), `SELECT is_system_default FROM venue_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, id, a.WorkspaceID).Scan(&isSystemDefault)
+	if err == pgx.ErrNoRows {
+		resourceNotFound(w, "场地类型")
+		return
+	}
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if isSystemDefault {
+		if in.Name != nil || in.Color != nil || in.SortOrder != nil {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认场地类型不能修改")
+			return
+		}
+		if in.IsActive != nil && !*in.IsActive {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认场地类型不能停用，只能启用")
+			return
+		}
+	}
 	if in.Name != nil {
 		if _, ok := validName(w, *in.Name, "场地类型名称"); !ok {
 			return
 		}
 	}
-	_, err := app.db.Exec(r.Context(), `UPDATE venue_types SET name=COALESCE($1,name),color=COALESCE(NULLIF($2,''),color),is_active=COALESCE($3,is_active),sort_order=COALESCE($4,sort_order),updated_at=NOW() WHERE id=$5 AND workspace_id=$6 AND deleted_at IS NULL`, nullableTrimmed(in.Name), in.Color, in.IsActive, in.SortOrder, id, a.WorkspaceID)
+	_, err = app.db.Exec(r.Context(), `UPDATE venue_types SET name=COALESCE($1,name),color=COALESCE(NULLIF($2,''),color),is_active=COALESCE($3,is_active),sort_order=COALESCE($4,sort_order),updated_at=NOW() WHERE id=$5 AND workspace_id=$6 AND deleted_at IS NULL`, nullableTrimmed(in.Name), in.Color, in.IsActive, in.SortOrder, id, a.WorkspaceID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -133,20 +153,28 @@ func (app *application) legacyReorderVenueTypes(w http.ResponseWriter, r *http.R
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), `SELECT id FROM venue_types WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE`, a.WorkspaceID)
+	rows, err := tx.Query(r.Context(), `SELECT id,sort_order,is_system_default FROM venue_types WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE`, a.WorkspaceID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	current := map[string]bool{}
+	current := map[string]struct {
+		sortOrder     int
+		systemDefault bool
+	}{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var sortOrder int
+		var systemDefault bool
+		if err := rows.Scan(&id, &sortOrder, &systemDefault); err != nil {
 			rows.Close()
 			serverError(w, err)
 			return
 		}
-		current[id] = true
+		current[id] = struct {
+			sortOrder     int
+			systemDefault bool
+		}{sortOrder: sortOrder, systemDefault: systemDefault}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -158,8 +186,13 @@ func (app *application) legacyReorderVenueTypes(w http.ResponseWriter, r *http.R
 		return
 	}
 	for _, item := range in.Items {
-		if !current[item.ID] {
+		entry, exists := current[item.ID]
+		if !exists {
 			errorJSON(w, http.StatusBadRequest, "invalid_input", "排序列表包含未知场地类型")
+			return
+		}
+		if entry.systemDefault && entry.sortOrder != item.SortOrder {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认场地类型不能修改排序")
 			return
 		}
 	}

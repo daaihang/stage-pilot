@@ -92,6 +92,14 @@ func TestVenueTypesAndNoLegacyKindCompatibility(t *testing.T) {
 	if len(items) != 10 || total != 10 {
 		t.Fatalf("venue defaults = %d/%d, want 10/10", len(items), total)
 	}
+	protectedRename := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/venue-types/"+items[0]["id"].(string), map[string]any{"name": "不可修改"})
+	if protectedRename.Code != http.StatusConflict {
+		t.Fatalf("rename system venue type = %d, want 409: %s", protectedRename.Code, protectedRename.Body.String())
+	}
+	protectedDisable := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/venue-types/"+items[0]["id"].(string), map[string]any{"is_active": false})
+	if protectedDisable.Code != http.StatusConflict {
+		t.Fatalf("disable system venue type = %d, want 409: %s", protectedDisable.Code, protectedDisable.Body.String())
+	}
 	legacy := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "旧客户端场地", "kind": "hall"})
 	if legacy.Code != http.StatusBadRequest {
 		t.Fatalf("legacy venue kind = %d, want 400: %s", legacy.Code, legacy.Body.String())
@@ -120,11 +128,16 @@ func TestVenueTypesAndNoLegacyKindCompatibility(t *testing.T) {
 	if cross.Code != http.StatusBadRequest {
 		t.Fatalf("cross workspace venue type = %d: %s", cross.Code, cross.Body.String())
 	}
-	deactivate := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/venue-types/"+items[1]["id"].(string), map[string]any{"is_active": false})
+	customType := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venue-types", map[string]any{"name": "可停用场地类型", "color": "#123456"})
+	if customType.Code != http.StatusCreated {
+		t.Fatalf("create custom venue type = %d: %s", customType.Code, customType.Body.String())
+	}
+	customTypeID := resourceID(t, customType.Body.Bytes())
+	deactivate := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/venue-types/"+customTypeID, map[string]any{"is_active": false})
 	if deactivate.Code != http.StatusOK {
 		t.Fatalf("deactivate venue type = %d: %s", deactivate.Code, deactivate.Body.String())
 	}
-	blocked := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "停用类型场地", "venue_type_id": items[1]["id"]})
+	blocked := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "停用类型场地", "venue_type_id": customTypeID})
 	if blocked.Code != http.StatusBadRequest {
 		t.Fatalf("inactive venue type = %d: %s", blocked.Code, blocked.Body.String())
 	}
@@ -155,6 +168,14 @@ func TestPeopleOrganizationsAndEquipmentTypes(t *testing.T) {
 			t.Fatalf("%s defaults = %d/%d, want %d", test.name, len(types), total, test.defaults)
 		}
 		typeID := types[0]["id"].(string)
+		protectedRename := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/"+test.path+"/"+typeID, map[string]any{"name": "系统默认不可修改"})
+		if protectedRename.Code != http.StatusConflict {
+			t.Fatalf("rename system %s type = %d, want 409: %s", test.name, protectedRename.Code, protectedRename.Body.String())
+		}
+		protectedDisable := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/"+test.path+"/"+typeID, map[string]any{"is_active": false})
+		if protectedDisable.Code != http.StatusConflict {
+			t.Fatalf("disable system %s type = %d, want 409: %s", test.name, protectedDisable.Code, protectedDisable.Body.String())
+		}
 		body := map[string]any{}
 		for key, value := range test.body {
 			body[key] = value
@@ -237,6 +258,14 @@ func TestProgramTypeManagementAndFilters(t *testing.T) {
 	types, total := decodeResourceList(t, seeded.Body.Bytes())
 	if len(types) != 5 || total != 5 {
 		t.Fatalf("seeded types = %d items/%d total, want 5/5", len(types), total)
+	}
+	protectedRename := authedRequest(t, app, ownerToken, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/program-types/"+types[0]["id"].(string), map[string]any{"name": "系统默认不可修改"})
+	if protectedRename.Code != http.StatusConflict {
+		t.Fatalf("rename system program type = %d, want 409: %s", protectedRename.Code, protectedRename.Body.String())
+	}
+	protectedDisable := authedRequest(t, app, ownerToken, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/program-types/"+types[0]["id"].(string), map[string]any{"is_active": false})
+	if protectedDisable.Code != http.StatusConflict {
+		t.Fatalf("disable system program type = %d, want 409: %s", protectedDisable.Code, protectedDisable.Body.String())
 	}
 
 	created := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/workspaces/"+workspaceID+"/program-types", map[string]any{

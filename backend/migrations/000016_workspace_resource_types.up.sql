@@ -205,6 +205,10 @@ DROP INDEX IF EXISTS people_workspace_kind_status_idx;
 DROP INDEX IF EXISTS organizations_workspace_kind_status_idx;
 DROP INDEX IF EXISTS venues_workspace_kind_status_idx;
 DROP INDEX IF EXISTS equipment_items_workspace_category_status_idx;
+-- A previous interrupted attempt may have created the replacement venue
+-- index before the migration was marked dirty. Remove it before recreating so
+-- forcing the migration back to v15 and retrying remains safe.
+DROP INDEX IF EXISTS venues_workspace_type_status_idx;
 ALTER TABLE people DROP COLUMN kind;
 ALTER TABLE organizations DROP COLUMN kind;
 ALTER TABLE venues DROP COLUMN kind;

@@ -136,6 +136,7 @@ export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange
   const [form, setForm] = useState({ name: "", color: definition.initialColor, is_active: true, sort_order: 1 });
   const [busy, setBusy] = useState(false);
   const editing = Boolean(item);
+  const systemDefault = Boolean(item?.is_system_default);
 
   useEffect(() => {
     if (!open) return;
@@ -153,6 +154,13 @@ export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange
     if ([...name].length < 1 || [...name].length > 120) return notify.error(`${definition.title}名称必须为 1–120 个字符`);
     if (!/^#[0-9a-f]{6}$/i.test(color)) return notify.error("颜色必须是 #RRGGBB 格式");
     if (!Number.isInteger(displaySortOrder) || displaySortOrder < 1) return notify.error("排序位置必须是正整数");
+    if (systemDefault) {
+      const originalSortOrder = displayPosition(item.sort_order);
+      if (name !== item.name || color.toLowerCase() !== String(item.color || definition.initialColor).toLowerCase() || displaySortOrder !== originalSortOrder) {
+        return notify.error(`系统默认${definition.resourceLabel}类型不能修改`);
+      }
+      if (!form.is_active) return notify.error(`系统默认${definition.resourceLabel}类型不能停用，只能启用`);
+    }
 
     const toast = notify.loading(editing ? `正在保存${definition.title}…` : `正在创建${definition.title}…`);
     setBusy(true);
@@ -177,14 +185,14 @@ export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange
         <DialogHeader>
           <DialogTitle>{editing ? `编辑${definition.title}` : `新建${definition.title}`}</DialogTitle>
           <DialogDescription>
-            {definition.deletePolicy === "venue" ? `停用后不能用于新建${definition.resourceLabel}，已有${definition.resourceLabel}仍会保留其类型。` : `停用后不能用于新建${definition.resourceLabel}。`}
+            {systemDefault ? `系统默认${definition.resourceLabel}类型只能重新启用，不能修改名称、颜色、排序或停用。` : definition.deletePolicy === "venue" ? `停用后不能用于新建${definition.resourceLabel}，已有${definition.resourceLabel}仍会保留其类型。` : `停用后不能用于新建${definition.resourceLabel}。`}
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={submit}>
-          <label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus maxLength={120} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></label>
-          <label className="block space-y-1"><span className="text-sm font-medium">颜色</span><div className="flex items-center gap-2"><input aria-label={`${definition.title}颜色`} className="size-9 cursor-pointer border bg-background p-0.5" type="color" value={/^#[0-9a-f]{6}$/i.test(form.color) ? form.color : definition.initialColor} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} /><Input value={form.color} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} placeholder={definition.initialColor} /></div></label>
-          <label className="flex items-center justify-between gap-3 border-y py-3"><span><span className="block text-sm font-medium">启用</span><span className="text-xs text-muted-foreground">停用类型不会出现在新建{definition.resourceLabel}选项中。</span></span><Switch checked={Boolean(form.is_active)} onCheckedChange={(checked) => setForm((current) => ({ ...current, is_active: checked }))} /></label>
-          <label className="block space-y-1"><span className="text-sm font-medium">排序位置</span><Input type="number" min="1" step="1" value={form.sort_order} onChange={(event) => setForm((current) => ({ ...current, sort_order: event.target.value }))} /></label>
+          <label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus maxLength={120} disabled={systemDefault} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></label>
+          <label className="block space-y-1"><span className="text-sm font-medium">颜色</span><div className="flex items-center gap-2"><input aria-label={`${definition.title}颜色`} disabled={systemDefault} className="size-9 cursor-pointer border bg-background p-0.5" type="color" value={/^#[0-9a-f]{6}$/i.test(form.color) ? form.color : definition.initialColor} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} /><Input disabled={systemDefault} value={form.color} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} placeholder={definition.initialColor} /></div></label>
+          <label className="flex items-center justify-between gap-3 border-y py-3"><span><span className="block text-sm font-medium">启用</span><span className="text-xs text-muted-foreground">停用类型不会出现在新建{definition.resourceLabel}选项中。</span></span><Switch checked={Boolean(form.is_active)} disabled={systemDefault && Boolean(form.is_active)} onCheckedChange={(checked) => { if (systemDefault && !checked) return; setForm((current) => ({ ...current, is_active: checked })); }} /></label>
+          <label className="block space-y-1"><span className="text-sm font-medium">排序位置</span><Input disabled={systemDefault} type="number" min="1" step="1" value={form.sort_order} onChange={(event) => setForm((current) => ({ ...current, sort_order: event.target.value }))} /></label>
           <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "保存中…" : "保存"}</Button></DialogFooter>
         </form>
       </DialogContent>
@@ -251,9 +259,9 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>{isProgram ? `处理“${item?.name || definition.title}”` : `删除${definition.title}`}</DialogTitle><DialogDescription>{blockedBySystem ? `系统默认${definition.title}不能删除，但可以停用。` : usageCount > 0 && unassignOnDelete ? `删除后，${usageCount} 个${definition.resourceLabel}会保留并改为未分类。` : usageCount > 0 ? `“${item?.name}”仍有 ${usageCount} 个${definition.resourceLabel}使用，请先调整类型。` : `删除“${item?.name}”后不可恢复。`}</DialogDescription></DialogHeader>
-        {isProgram ? <form className="space-y-3" onSubmit={submit}><RadioGroup value={strategy} onValueChange={setStrategy} className="gap-2">
-          {blockedBySystem ? <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="deactivate" className="mt-0.5" /><span><span className="block text-sm font-medium">仅停用</span><span className="text-xs text-muted-foreground">系统默认类型不能删除，但可以停用。</span></span></label> : usageCount === 0 ? <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="delete" className="mt-0.5" /><span><span className="block text-sm font-medium">直接删除</span><span className="text-xs text-muted-foreground">类型会被软删除。</span></span></label> : <>
+        <DialogHeader><DialogTitle>{isProgram ? `处理“${item?.name || definition.title}”` : `删除${definition.title}`}</DialogTitle><DialogDescription>{blockedBySystem ? `系统默认${definition.title}只能重新启用，不能修改、停用或删除。` : usageCount > 0 && unassignOnDelete ? `删除后，${usageCount} 个${definition.resourceLabel}会保留并改为未分类。` : usageCount > 0 ? `“${item?.name}”仍有 ${usageCount} 个${definition.resourceLabel}使用，请先调整类型。` : `删除“${item?.name}”后不可恢复。`}</DialogDescription></DialogHeader>
+        {blockedBySystem ? <DialogFooter><Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>关闭</Button></DialogFooter> : isProgram ? <form className="space-y-3" onSubmit={submit}><RadioGroup value={strategy} onValueChange={setStrategy} className="gap-2">
+          {usageCount === 0 ? <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="delete" className="mt-0.5" /><span><span className="block text-sm font-medium">直接删除</span><span className="text-xs text-muted-foreground">类型会被软删除。</span></span></label> : <>
             {targets.length > 0 && <label className="block cursor-pointer border p-3"><span className="flex items-start gap-2"><RadioGroupItem value="move" className="mt-0.5" /><span><span className="block text-sm font-medium">移动到其他启用类型</span><span className="text-xs text-muted-foreground">现有节目会迁移到所选类型。</span></span></span>{strategy === "move" && <Select items={targets.map((type) => ({ value: type.id, label: type.name }))} value={replacementTypeId} onValueChange={setReplacementTypeId}><SelectTrigger className="mt-3 w-full" disabled={loadingTargets}><SelectValue placeholder="选择目标节目类型" /></SelectTrigger><SelectContent>{targets.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select>}</label>}
             <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="unassign" className="mt-0.5" /><span><span className="block text-sm font-medium">改为未分配</span><span className="text-xs text-muted-foreground">保留节目，但清空类型。</span></span></label>
             <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="deactivate" className="mt-0.5" /><span><span className="block text-sm font-medium">仅停用</span><span className="text-xs text-muted-foreground">保留类型和现有节目引用。</span></span></label>
@@ -270,16 +278,18 @@ function ManagementSkeleton() {
 
 export function ResourceTypeRow({ definition, item, timezone, canWrite, reorderable, pendingToggleId, onToggle, onEdit, onDelete }) {
   const Icon = definition.icon;
-  return <SortableItem value={item.id} disabled={!reorderable} className="border-b last:border-b-0"><div className={`${gridClassName(canWrite)} py-3 transition-colors hover:bg-muted/40`}>
-    <SortableItemHandle className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={reorderable ? `拖动${item.name}调整排序` : "排序仅在默认排序视图可用"} title={reorderable ? "拖动调整排序" : "清除筛选后可调整排序"}><GripVertical className="size-4" /></SortableItemHandle>
+  const systemDefault = Boolean(item.is_system_default);
+  const toggleDisabled = !canWrite || pendingToggleId === item.id || (systemDefault && item.is_active);
+  return <SortableItem value={item.id} disabled={!reorderable || systemDefault} className="border-b last:border-b-0"><div className={`${gridClassName(canWrite)} py-3 transition-colors hover:bg-muted/40`}>
+    <SortableItemHandle className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={systemDefault ? "系统默认类型不能调整排序" : reorderable ? `拖动${item.name}调整排序` : "排序仅在默认排序视图可用"} title={systemDefault ? "系统默认类型不能调整排序" : reorderable ? "拖动调整排序" : "清除筛选后可调整排序"}><GripVertical className="size-4" /></SortableItemHandle>
     <Badge variant="outline" className="hidden size-7 justify-center px-0 tabular-nums sm:inline-flex">{displayPosition(item.sort_order)}</Badge>
     <span className="size-3 rounded-full" style={{ backgroundColor: item.color }} aria-label={`颜色 ${item.color}`} title={item.color} />
     <div className="flex size-8 items-center justify-center bg-muted text-muted-foreground"><Icon className="size-4" /></div>
     <div className="flex min-w-0 flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">{item.name}</p>{item.is_system_default && <Badge variant="outline">系统默认</Badge>}{!item.is_active && <Badge variant="secondary">已停用</Badge>}</div>
     <div className="text-right text-sm tabular-nums"><span>{Number(item[definition.usageCountField] ?? 0)}</span><span className="ml-1 text-xs text-muted-foreground">个</span></div>
     <div className="hidden text-right text-xs tabular-nums text-muted-foreground lg:block">{formatDate(item.updated_at, timezone)}</div>
-    <div className="flex w-full items-center justify-center"><Switch checked={Boolean(item.is_active)} disabled={!canWrite || pendingToggleId === item.id} onCheckedChange={canWrite ? (checked) => onToggle(item, checked) : undefined} aria-label={`${item.is_active ? "停用" : "启用"}${item.name}`} /></div>
-    {canWrite && <div className="flex items-center justify-end gap-1"><Button variant="ghost" size="icon-sm" onClick={() => onEdit(item)} aria-label={`编辑${item.name}`} title={`编辑${item.name}`}><Pencil /></Button><Button variant="ghost" size="icon-sm" onClick={() => onDelete(item)} aria-label={`删除${item.name}`} title={`删除${item.name}`}><Trash2 /></Button></div>}
+    <div className="flex w-full items-center justify-center"><Switch checked={Boolean(item.is_active)} disabled={toggleDisabled} onCheckedChange={canWrite && (!systemDefault || !item.is_active) ? (checked) => onToggle(item, checked) : undefined} aria-label={`${item.is_active ? "停用" : "启用"}${item.name}`} /></div>
+    {canWrite && !systemDefault && <div className="flex items-center justify-end gap-1"><Button variant="ghost" size="icon-sm" onClick={() => onEdit(item)} aria-label={`编辑${item.name}`} title={`编辑${item.name}`}><Pencil /></Button><Button variant="ghost" size="icon-sm" onClick={() => onDelete(item)} aria-label={`删除${item.name}`} title={`删除${item.name}`}><Trash2 /></Button></div>}
   </div></SortableItem>;
 }
 

@@ -546,24 +546,28 @@ func (app *application) legacyUpdateProgramType(w http.ResponseWriter, r *http.R
 		return
 	}
 	access := resourceAccess(r)
-	if in.Name != nil {
-		var isSystemDefault bool
-		err := app.db.QueryRow(r.Context(), `SELECT is_system_default FROM program_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("programTypeId"), access.WorkspaceID).Scan(&isSystemDefault)
-		if err == pgx.ErrNoRows {
-			resourceNotFound(w, "节目类型")
+	var isSystemDefault bool
+	err := app.db.QueryRow(r.Context(), `SELECT is_system_default FROM program_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("programTypeId"), access.WorkspaceID).Scan(&isSystemDefault)
+	if err == pgx.ErrNoRows {
+		resourceNotFound(w, "节目类型")
+		return
+	}
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if isSystemDefault {
+		if in.Name != nil || in.Color != nil || in.SortOrder != nil {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能修改")
 			return
 		}
-		if err != nil {
-			serverError(w, err)
-			return
-		}
-		if isSystemDefault {
-			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能改名")
+		if in.IsActive != nil && !*in.IsActive {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能停用，只能启用")
 			return
 		}
 	}
 	var item programType
-	err := app.db.QueryRow(r.Context(), `UPDATE program_types SET name=COALESCE($1,name),color=COALESCE($2,color),sort_order=COALESCE($3,sort_order),is_active=COALESCE($4,is_active),updated_at=NOW() WHERE id=$5 AND workspace_id=$6 AND deleted_at IS NULL RETURNING id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_at,updated_at`, in.Name, in.Color, in.SortOrder, in.IsActive, r.PathValue("programTypeId"), access.WorkspaceID).Scan(&item.ID, &item.WorkspaceID, &item.SystemKey, &item.Name, &item.Color, &item.SortOrder, &item.IsSystemDefault, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
+	err = app.db.QueryRow(r.Context(), `UPDATE program_types SET name=COALESCE($1,name),color=COALESCE($2,color),sort_order=COALESCE($3,sort_order),is_active=COALESCE($4,is_active),updated_at=NOW() WHERE id=$5 AND workspace_id=$6 AND deleted_at IS NULL RETURNING id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_at,updated_at`, in.Name, in.Color, in.SortOrder, in.IsActive, r.PathValue("programTypeId"), access.WorkspaceID).Scan(&item.ID, &item.WorkspaceID, &item.SystemKey, &item.Name, &item.Color, &item.SortOrder, &item.IsSystemDefault, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
 	if err == pgx.ErrNoRows {
 		resourceNotFound(w, "节目类型")
 		return
@@ -601,20 +605,28 @@ func (app *application) legacyReorderProgramTypes(w http.ResponseWriter, r *http
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), `SELECT id FROM program_types WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE`, access.WorkspaceID)
+	rows, err := tx.Query(r.Context(), `SELECT id,sort_order,is_system_default FROM program_types WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE`, access.WorkspaceID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	current := map[string]bool{}
+	current := map[string]struct {
+		sortOrder     int
+		systemDefault bool
+	}{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var sortOrder int
+		var systemDefault bool
+		if err := rows.Scan(&id, &sortOrder, &systemDefault); err != nil {
 			rows.Close()
 			serverError(w, err)
 			return
 		}
-		current[id] = true
+		current[id] = struct {
+			sortOrder     int
+			systemDefault bool
+		}{sortOrder: sortOrder, systemDefault: systemDefault}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -626,8 +638,13 @@ func (app *application) legacyReorderProgramTypes(w http.ResponseWriter, r *http
 		return
 	}
 	for _, item := range in.Items {
-		if !current[item.ID] {
+		entry, exists := current[item.ID]
+		if !exists {
 			errorJSON(w, http.StatusBadRequest, "invalid_input", "排序列表包含未知节目类型")
+			return
+		}
+		if entry.systemDefault && entry.sortOrder != item.SortOrder {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能修改排序")
 			return
 		}
 	}

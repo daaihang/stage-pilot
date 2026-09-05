@@ -327,6 +327,24 @@ func (app *application) updateStandardResourceType(w http.ResponseWriter, r *htt
 	}
 	access := resourceAccess(r)
 	id := r.PathValue(definition.PathValueName)
+	var currentSystemDefault bool
+	if err := app.db.QueryRow(r.Context(), "SELECT is_system_default FROM "+definition.TableName+" WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL", id, access.WorkspaceID).Scan(&currentSystemDefault); err == pgx.ErrNoRows {
+		resourceNotFound(w, definition.ResourceLabel+"类型")
+		return
+	} else if err != nil {
+		serverError(w, err)
+		return
+	}
+	if currentSystemDefault {
+		if in.Name != nil || in.Color != nil || in.SortOrder != nil {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认"+definition.ResourceLabel+"类型不能修改")
+			return
+		}
+		if in.IsActive != nil && !*in.IsActive {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认"+definition.ResourceLabel+"类型不能停用，只能启用")
+			return
+		}
+	}
 	var idOut, ws, nameOut, colorOut string
 	var createdAt, updatedAt time.Time
 	var key *string
@@ -370,20 +388,28 @@ func (app *application) reorderStandardResourceTypes(w http.ResponseWriter, r *h
 		return
 	}
 	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), "SELECT id FROM "+definition.TableName+" WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE", access.WorkspaceID)
+	rows, err := tx.Query(r.Context(), "SELECT id,sort_order,is_system_default FROM "+definition.TableName+" WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE", access.WorkspaceID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	current := map[string]bool{}
+	current := map[string]struct {
+		sortOrder     int
+		systemDefault bool
+	}{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var sortOrder int
+		var systemDefault bool
+		if err := rows.Scan(&id, &sortOrder, &systemDefault); err != nil {
 			rows.Close()
 			serverError(w, err)
 			return
 		}
-		current[id] = true
+		current[id] = struct {
+			sortOrder     int
+			systemDefault bool
+		}{sortOrder: sortOrder, systemDefault: systemDefault}
 	}
 	rows.Close()
 	if len(current) != len(in.Items) {
@@ -391,8 +417,13 @@ func (app *application) reorderStandardResourceTypes(w http.ResponseWriter, r *h
 		return
 	}
 	for _, item := range in.Items {
-		if !current[item.ID] {
+		entry, exists := current[item.ID]
+		if !exists {
 			errorJSON(w, 400, "invalid_input", "排序列表包含未知类型")
+			return
+		}
+		if entry.systemDefault && entry.sortOrder != item.SortOrder {
+			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认"+definition.ResourceLabel+"类型不能修改排序")
 			return
 		}
 	}
