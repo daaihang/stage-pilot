@@ -356,6 +356,72 @@ func TestProductionPatchTimeStates(t *testing.T) {
 	}
 }
 
+func TestProductionMembershipWindowsAndWorkspaceBoundary(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "membership-window-owner-"+newID()+"@example.test")
+	member := createTestUser(t, app, "membership-window-member-"+newID()+"@example.test")
+	outsider := createTestUser(t, app, "membership-window-outsider-"+newID()+"@example.test")
+	ownerToken := issueTestToken(t, app, owner)
+	memberToken := issueTestToken(t, app, member)
+	workspaceID := createWorkspaceFor(t, app, ownerToken, "成员时间窗口")["id"].(string)
+	productionID := createProductionFor(t, app, ownerToken, workspaceID, "时间窗口活动", "", "")["id"].(string)
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO workspace_memberships (id,workspace_id,user_id,role,status) VALUES ($1,$2,$3,'member','active')`, newID(), workspaceID, member); err != nil {
+		t.Fatalf("insert workspace member: %v", err)
+	}
+	future := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	end := future.Add(2 * time.Hour)
+	added := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/productions/"+productionID+"/members", map[string]any{"user_id": member, "role_key": "viewer", "starts_at": future, "expires_at": end})
+	if added.Code != http.StatusCreated {
+		t.Fatalf("add scheduled member = %d: %s", added.Code, added.Body.String())
+	}
+	invalid := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/productions/"+productionID+"/members", map[string]any{"user_id": member, "role_key": "viewer", "starts_at": end, "expires_at": end})
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid member window = %d: %s", invalid.Code, invalid.Body.String())
+	}
+	if response := authedRequest(t, app, memberToken, http.MethodGet, "/v1/productions/"+productionID, nil); response.Code != http.StatusOK {
+		t.Fatalf("workspace member should retain inherited access before direct start = %d: %s", response.Code, response.Body.String())
+	}
+	denied := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/productions/"+productionID+"/members", map[string]any{"user_id": outsider, "role_key": "viewer"})
+	if denied.Code != http.StatusBadRequest {
+		t.Fatalf("external direct member = %d: %s", denied.Code, denied.Body.String())
+	}
+}
+
+func TestProductionInvitationWindowCarriesMemberWindow(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "invitation-window-owner-"+newID()+"@example.test")
+	outsiderEmail := "invitation-window-outsider-" + newID() + "@example.test"
+	outsider := createTestUser(t, app, outsiderEmail)
+	ownerToken := issueTestToken(t, app, owner)
+	outsiderToken := issueTestToken(t, app, outsider)
+	workspaceID := createWorkspaceFor(t, app, ownerToken, "邀请时间窗口")["id"].(string)
+	productionID := createProductionFor(t, app, ownerToken, workspaceID, "邀请活动", "", "")["id"].(string)
+	now := time.Now().UTC().Truncate(time.Second)
+	inviteEnd := now.Add(4 * time.Hour)
+	memberStart := now.Add(2 * time.Hour)
+	created := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/productions/"+productionID+"/invitations", map[string]any{
+		"role_key": "viewer", "target_email": outsiderEmail, "starts_at": now, "expires_at": inviteEnd, "member_starts_at": memberStart,
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create invitation = %d: %s", created.Code, created.Body.String())
+	}
+	var invitation map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &invitation); err != nil {
+		t.Fatalf("decode invitation: %v", err)
+	}
+	accepted := authedRequest(t, app, outsiderToken, http.MethodPost, "/v1/production-invitations/accept", map[string]any{"token": invitation["accept_token"]})
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("accept invitation = %d: %s", accepted.Code, accepted.Body.String())
+	}
+	var stored time.Time
+	if err := app.db.QueryRow(t.Context(), `SELECT starts_at FROM production_memberships WHERE production_id=$1 AND user_id=$2`, productionID, outsider).Scan(&stored); err != nil {
+		t.Fatalf("read member start: %v", err)
+	}
+	if !stored.Equal(memberStart) {
+		t.Fatalf("member starts_at = %s, want %s", stored, memberStart)
+	}
+}
+
 func TestProductionLocationsWorkspaceIsolationAndPrimary(t *testing.T) {
 	app := newIntegrationApp(t)
 	owner := createTestUser(t, app, "location-owner-"+newID()+"@example.test")

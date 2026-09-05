@@ -35,8 +35,8 @@ User / Account
 - `workspace_memberships`：workspace_id + user_id 唯一，role ∈ owner > admin > member，status ∈ active / invited / suspended
 - `user_preferences.last_workspace_id`：服务端持久化最近工作空间，恢复时重新校验 membership
 - `productions`：workspace_id（强制外键，CASCADE）/ name / status ∈ active|completed|archived / timezone（IANA）/ planned_start_at / planned_end_at / actual_completed_at / description / created_by / archived_at / 软删除；索引 workspace_id 与 workspace_id+status
-- `production_memberships`：指定活动的直接授权；角色为 producer / editor / stage_manager / contributor / viewer，状态为 active / suspended / revoked，过期时间在每次授权检查时即时生效。
-- `production_invitations`：只存邀请码 hash；支持指定邮箱单次邀请和 1–100 次通用邀请码，不接入邮件投递。
+- `production_memberships`：指定活动的直接授权；角色为 producer / editor / stage_manager / contributor / viewer，状态为 active / suspended / revoked，支持 `starts_at` / `expires_at` 时间窗口，访问状态在每次授权检查时即时计算。
+- `production_invitations`：只存邀请码 hash；支持邀请可用时间窗口、接受后的成员时间窗口、指定邮箱单次邀请和 1–100 次通用邀请码，不接入邮件投递。
 
 ## Workspace API
 
