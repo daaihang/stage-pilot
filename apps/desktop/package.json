@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test:timezone": "node --test src/lib/timezone.test.js",
+    "test:program-sheets": "node --test src/lib/program-sheet-utils.test.js",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

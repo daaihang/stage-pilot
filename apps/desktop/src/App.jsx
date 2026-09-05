@@ -23,6 +23,7 @@ import { ProductionSettingsPage } from "@/components/production-settings-page";
 import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
 import { ProductionInvitePage } from "@/components/production-invite-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
+import { ProgramSheetsPage } from "@/components/program-sheets-page";
 import { FileTypeManagementPage } from "@/components/file-type-management-page";
 import { WorkspaceResourcePage } from "@/components/workspace-resource-pages";
 import { FilesPage } from "@/components/files-page";
@@ -509,6 +510,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} />;
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;
   else if (route.mode === "production" && production?.isCreationSession) content = <NavigationFailure title="创建会话仅支持概览" description="提交第一个有效字段后，活动的其他模块会自动开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
+  else if (route.mode === "production" && route.page === "program-sheets") content = <ProgramSheetsPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route.page)) content = <ProductionPlanningPlaceholderPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
   else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage workspace={workspace} production={production} key={production.id} />;
@@ -517,7 +519,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
 
   const resourceDetailLayout = route?.mode === "workspace" && ["programs", "people", "organizations", "venues", "equipment"].includes(route?.page);
-  const planningDetailLayout = route?.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route?.page);
+  const planningDetailLayout = route?.mode === "production" && ["schedule", "occurrences", "rehearsals", "program-sheets"].includes(route?.page);
   const productionLocationDetailLayout = route?.mode === "production" && ["overview", "settings"].includes(route?.page);
   const contentLayout = resourceDetailLayout || planningDetailLayout || productionLocationDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
 

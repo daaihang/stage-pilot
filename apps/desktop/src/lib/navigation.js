@@ -19,6 +19,7 @@ export const productionPages = {
   overview: { title: "概览", description: "查看本场活动的状态、关键日期和待办事项。" },
   recruitment: { title: "征集与审核", description: "管理征集活动、报名申请和审核流程。" },
   programs: { title: "节目", description: "管理本场节目、演出者、技术需求和来源。" },
+  "program-sheets": { title: "节目单", description: "管理本场活动的节目单版本、场次关联和正式发布状态。" },
   people: { title: "人员", description: "配置本场参与人员、岗位、排班和职责。" },
   organizations: { title: "合作机构", description: "管理本场赞助商、合作方、供应商和合同关系。" },
   "venues-equipment": { title: "场地与设备", description: "配置本场使用的区域、时段、设备和技术条件。" },
