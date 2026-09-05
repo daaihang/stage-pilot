@@ -4,7 +4,6 @@ package main
 // they deliberately do not reference Production in this phase.
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -316,37 +315,35 @@ func normalizedTypeID(value *string) *string {
 	return &trimmed
 }
 
-func (app *application) validAssignedResourceType(ctx context.Context, workspaceID string, definition ResourceTypeDefinition, value *string, activeOnly bool) (*string, error) {
+func (app *application) requireActiveResourceType(w http.ResponseWriter, r *http.Request, workspaceID string, definition ResourceTypeDefinition, value *string) (*string, bool) {
 	value = normalizedTypeID(value)
 	if value == nil {
-		return nil, nil
+		errorJSON(w, http.StatusBadRequest, "invalid_input", "请选择启用中的"+definition.ResourceLabel+"类型")
+		return nil, false
 	}
-	exists, err := resourceTypeExists(ctx, app.db, definition, workspaceID, *value, activeOnly)
-	if err != nil || !exists {
-		return nil, err
+	exists, err := resourceTypeExists(r.Context(), app.db, definition, workspaceID, *value, true)
+	if err != nil {
+		serverError(w, err)
+		return nil, false
 	}
-	return value, nil
+	if !exists {
+		errorJSON(w, http.StatusBadRequest, "invalid_input", definition.ResourceLabel+"类型无效、未启用或不属于当前工作空间")
+		return nil, false
+	}
+	return value, true
 }
 
 func appendTypeFilter(where *[]string, args *[]any, column string, values []string) {
 	if len(values) == 0 {
 		return
 	}
-	hasUnassigned := false
 	ids := make([]string, 0, len(values))
 	for _, value := range values {
-		if value == "unassigned" {
-			hasUnassigned = true
-		} else if strings.TrimSpace(value) != "" {
+		if strings.TrimSpace(value) != "" {
 			ids = append(ids, value)
 		}
 	}
-	if hasUnassigned && len(ids) > 0 {
-		*args = append(*args, ids)
-		*where = append(*where, "("+column+" = ANY($"+strconv.Itoa(len(*args))+") OR "+column+" IS NULL)")
-	} else if hasUnassigned {
-		*where = append(*where, column+" IS NULL")
-	} else if len(ids) > 0 {
+	if len(ids) > 0 {
 		*args = append(*args, ids)
 		*where = append(*where, column+" = ANY($"+strconv.Itoa(len(*args))+")")
 	}
@@ -393,10 +390,6 @@ func arrayParam(r *http.Request, key string) []string {
 }
 func statuses(r *http.Request) []string { return arrayParam(r, "status") }
 
-type resourceQueryRower interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
-}
-
 func validProgramTypeColor(value string) bool {
 	if len(value) != 7 || value[0] != '#' {
 		return false
@@ -407,385 +400,6 @@ func validProgramTypeColor(value string) bool {
 		}
 	}
 	return true
-}
-
-func programTypeExists(ctx context.Context, query resourceQueryRower, workspaceID, typeID string, activeOnly bool) (bool, error) {
-	return resourceTypeExists(ctx, query, programResourceTypeDefinition, workspaceID, typeID, activeOnly)
-}
-
-// Program types
-func (app *application) legacyListProgramTypes(w http.ResponseWriter, r *http.Request) {
-	access := resourceAccess(r)
-	where := []string{"t.workspace_id=$1", "t.deleted_at IS NULL"}
-	args := []any{access.WorkspaceID}
-	if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
-		args = append(args, "%"+q+"%")
-		where = append(where, "t.name ILIKE $"+strconv.Itoa(len(args)))
-	}
-	if status := r.URL.Query().Get("status"); status == "active" {
-		where = append(where, "t.is_active=TRUE")
-	} else if status == "inactive" {
-		where = append(where, "t.is_active=FALSE")
-	} else if status != "" && status != "all" {
-		errorJSON(w, 400, "invalid_input", "节目类型状态无效")
-		return
-	}
-	if used := r.URL.Query().Get("has_programs"); used == "true" {
-		where = append(where, "EXISTS (SELECT 1 FROM programs p WHERE p.workspace_id=t.workspace_id AND p.program_type_id=t.id AND p.deleted_at IS NULL)")
-	} else if used == "false" {
-		where = append(where, "NOT EXISTS (SELECT 1 FROM programs p WHERE p.workspace_id=t.workspace_id AND p.program_type_id=t.id AND p.deleted_at IS NULL)")
-	} else if used != "" {
-		errorJSON(w, 400, "invalid_input", "使用情况筛选无效")
-		return
-	}
-	sortKey := strings.ToLower(r.URL.Query().Get("sort"))
-	if sortKey == "" {
-		sortKey = "sort_order"
-	}
-	sortColumn, validSort := map[string]string{"name": "t.name", "program_count": "program_count", "sort_order": "t.sort_order", "updated_at": "t.updated_at"}[sortKey]
-	if !validSort {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "节目类型排序字段无效")
-		return
-	}
-	directionKey := strings.ToLower(r.URL.Query().Get("direction"))
-	if directionKey == "" {
-		directionKey = "asc"
-	}
-	if directionKey != "asc" && directionKey != "desc" {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "节目类型排序方向无效")
-		return
-	}
-	direction := "ASC"
-	if directionKey == "desc" {
-		direction = "DESC"
-	}
-	rows, err := app.db.Query(r.Context(), `SELECT t.id,t.workspace_id,t.system_key,t.name,t.color,t.sort_order,t.is_system_default,t.is_active,t.created_at,t.updated_at,COUNT(p.id)::int AS program_count FROM program_types t LEFT JOIN programs p ON p.workspace_id=t.workspace_id AND p.program_type_id=t.id AND p.deleted_at IS NULL WHERE `+strings.Join(where, " AND ")+` GROUP BY t.id ORDER BY `+sortColumn+` `+direction+`,t.id`, args...)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	defer rows.Close()
-	items := []programType{}
-	for rows.Next() {
-		var item programType
-		if err := rows.Scan(&item.ID, &item.WorkspaceID, &item.SystemKey, &item.Name, &item.Color, &item.SortOrder, &item.IsSystemDefault, &item.IsActive, &item.CreatedAt, &item.UpdatedAt, &item.ProgramCount); err != nil {
-			serverError(w, err)
-			return
-		}
-		items = append(items, item)
-	}
-	if rows.Err() != nil {
-		serverError(w, rows.Err())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
-}
-func (app *application) legacyCreateProgramType(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Name      string `json:"name"`
-		Color     string `json:"color"`
-		SortOrder int    `json:"sort_order"`
-		IsActive  *bool  `json:"is_active"`
-	}
-	if !decodeJSON(w, r, &in) {
-		return
-	}
-	name, ok := validName(w, in.Name, "节目类型名称")
-	if !ok {
-		return
-	}
-	in.Color = strings.TrimSpace(in.Color)
-	if !validProgramTypeColor(in.Color) {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "颜色必须是 #RRGGBB 格式")
-		return
-	}
-	if in.SortOrder < 0 {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "排序值不能小于 0")
-		return
-	}
-	access := resourceAccess(r)
-	isActive := true
-	if in.IsActive != nil {
-		isActive = *in.IsActive
-	}
-	var item programType
-	err := app.db.QueryRow(r.Context(), `INSERT INTO program_types(id,workspace_id,name,color,sort_order,is_active,created_by) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_at,updated_at`, newID(), access.WorkspaceID, name, in.Color, in.SortOrder, isActive, access.UserID).Scan(&item.ID, &item.WorkspaceID, &item.SystemKey, &item.Name, &item.Color, &item.SortOrder, &item.IsSystemDefault, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
-	if err != nil {
-		errorJSON(w, 400, "invalid_input", "节目类型名称已存在或无效")
-		return
-	}
-	writeJSON(w, 201, item)
-}
-func (app *application) legacyUpdateProgramType(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Name      *string `json:"name"`
-		Color     *string `json:"color"`
-		SortOrder *int    `json:"sort_order"`
-		IsActive  *bool   `json:"is_active"`
-	}
-	if !decodeJSON(w, r, &in) {
-		return
-	}
-	if in.Name != nil {
-		trimmed, ok := validName(w, *in.Name, "节目类型名称")
-		if !ok {
-			return
-		}
-		in.Name = &trimmed
-	}
-	if in.Color != nil {
-		trimmed := strings.TrimSpace(*in.Color)
-		if !validProgramTypeColor(trimmed) {
-			errorJSON(w, http.StatusBadRequest, "invalid_input", "颜色必须是 #RRGGBB 格式")
-			return
-		}
-		in.Color = &trimmed
-	}
-	if in.SortOrder != nil && *in.SortOrder < 0 {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "排序值不能小于 0")
-		return
-	}
-	access := resourceAccess(r)
-	var isSystemDefault bool
-	err := app.db.QueryRow(r.Context(), `SELECT is_system_default FROM program_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("programTypeId"), access.WorkspaceID).Scan(&isSystemDefault)
-	if err == pgx.ErrNoRows {
-		resourceNotFound(w, "节目类型")
-		return
-	}
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	if isSystemDefault {
-		if in.Name != nil || in.Color != nil || in.SortOrder != nil {
-			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能修改")
-			return
-		}
-		if in.IsActive != nil && !*in.IsActive {
-			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能停用，只能启用")
-			return
-		}
-	}
-	var item programType
-	err = app.db.QueryRow(r.Context(), `UPDATE program_types SET name=COALESCE($1,name),color=COALESCE($2,color),sort_order=COALESCE($3,sort_order),is_active=COALESCE($4,is_active),updated_at=NOW() WHERE id=$5 AND workspace_id=$6 AND deleted_at IS NULL RETURNING id,workspace_id,system_key,name,color,sort_order,is_system_default,is_active,created_at,updated_at`, in.Name, in.Color, in.SortOrder, in.IsActive, r.PathValue("programTypeId"), access.WorkspaceID).Scan(&item.ID, &item.WorkspaceID, &item.SystemKey, &item.Name, &item.Color, &item.SortOrder, &item.IsSystemDefault, &item.IsActive, &item.CreatedAt, &item.UpdatedAt)
-	if err == pgx.ErrNoRows {
-		resourceNotFound(w, "节目类型")
-		return
-	}
-	if err != nil {
-		errorJSON(w, 400, "invalid_input", "节目类型名称已存在或无效")
-		return
-	}
-	writeJSON(w, 200, item)
-}
-
-func (app *application) legacyReorderProgramTypes(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Items []struct {
-			ID        string `json:"id"`
-			SortOrder int    `json:"sort_order"`
-		} `json:"items"`
-	}
-	if !decodeJSON(w, r, &in) || len(in.Items) == 0 {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "排序列表不能为空")
-		return
-	}
-	access := resourceAccess(r)
-	seen := map[string]bool{}
-	for _, item := range in.Items {
-		if item.ID == "" || seen[item.ID] || item.SortOrder < 0 {
-			errorJSON(w, http.StatusBadRequest, "invalid_input", "节目类型排序列表无效")
-			return
-		}
-		seen[item.ID] = true
-	}
-	tx, err := app.db.Begin(r.Context())
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	defer tx.Rollback(r.Context())
-	rows, err := tx.Query(r.Context(), `SELECT id,sort_order,is_system_default FROM program_types WHERE workspace_id=$1 AND deleted_at IS NULL FOR UPDATE`, access.WorkspaceID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	current := map[string]struct {
-		sortOrder     int
-		systemDefault bool
-	}{}
-	for rows.Next() {
-		var id string
-		var sortOrder int
-		var systemDefault bool
-		if err := rows.Scan(&id, &sortOrder, &systemDefault); err != nil {
-			rows.Close()
-			serverError(w, err)
-			return
-		}
-		current[id] = struct {
-			sortOrder     int
-			systemDefault bool
-		}{sortOrder: sortOrder, systemDefault: systemDefault}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		serverError(w, err)
-		return
-	}
-	if len(current) != len(in.Items) {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "排序列表必须包含当前工作空间的全部节目类型")
-		return
-	}
-	for _, item := range in.Items {
-		entry, exists := current[item.ID]
-		if !exists {
-			errorJSON(w, http.StatusBadRequest, "invalid_input", "排序列表包含未知节目类型")
-			return
-		}
-		if entry.systemDefault && entry.sortOrder != item.SortOrder {
-			errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能修改排序")
-			return
-		}
-	}
-	for _, item := range in.Items {
-		if _, err = tx.Exec(r.Context(), `UPDATE program_types SET sort_order=$1,updated_at=NOW() WHERE id=$2 AND workspace_id=$3 AND deleted_at IS NULL AND sort_order IS DISTINCT FROM $1`, item.SortOrder, item.ID, access.WorkspaceID); err != nil {
-			serverError(w, err)
-			return
-		}
-	}
-	if err = tx.Commit(r.Context()); err != nil {
-		serverError(w, err)
-		return
-	}
-	app.legacyListProgramTypes(w, r)
-}
-
-func (app *application) legacyDeleteProgramType(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Strategy          string `json:"strategy"`
-		ReplacementTypeID string `json:"replacement_type_id"`
-	}
-	if !decodeJSON(w, r, &in) {
-		return
-	}
-	if !validOne(in.Strategy, "delete", "move", "unassign") {
-		errorJSON(w, http.StatusBadRequest, "invalid_input", "删除策略无效")
-		return
-	}
-	access := resourceAccess(r)
-	typeID := r.PathValue("programTypeId")
-	var isSystemDefault bool
-	if err := app.db.QueryRow(r.Context(), `SELECT is_system_default FROM program_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, typeID, access.WorkspaceID).Scan(&isSystemDefault); err == pgx.ErrNoRows {
-		resourceNotFound(w, "节目类型")
-		return
-	} else if err != nil {
-		serverError(w, err)
-		return
-	} else if isSystemDefault {
-		errorJSON(w, http.StatusConflict, "system_default_protected", "系统默认节目类型不能删除")
-		return
-	}
-	tx, err := app.db.Begin(r.Context())
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	defer tx.Rollback(r.Context())
-	var sourceActive bool
-	if in.Strategy == "move" {
-		// A move touches two type rows. Lock both in a stable order so concurrent
-		// moves in opposite directions cannot deadlock on source/target order.
-		rows, queryErr := tx.Query(r.Context(), `SELECT id,is_active FROM program_types WHERE workspace_id=$1 AND deleted_at IS NULL AND id=ANY($2) ORDER BY id FOR UPDATE`, access.WorkspaceID, []string{typeID, in.ReplacementTypeID})
-		if queryErr != nil {
-			serverError(w, queryErr)
-			return
-		}
-		lockedTypes := map[string]bool{}
-		for rows.Next() {
-			var id string
-			var active bool
-			if queryErr = rows.Scan(&id, &active); queryErr != nil {
-				rows.Close()
-				serverError(w, queryErr)
-				return
-			}
-			lockedTypes[id] = active
-		}
-		if queryErr = rows.Err(); queryErr != nil {
-			rows.Close()
-			serverError(w, queryErr)
-			return
-		}
-		rows.Close()
-		var ok bool
-		sourceActive, ok = lockedTypes[typeID]
-		if !ok {
-			resourceNotFound(w, "节目类型")
-			return
-		}
-		if in.ReplacementTypeID == "" || in.ReplacementTypeID == typeID || !lockedTypes[in.ReplacementTypeID] {
-			errorJSON(w, http.StatusBadRequest, "invalid_input", "请选择其他启用中的目标类型")
-			return
-		}
-	} else if err = tx.QueryRow(r.Context(), `SELECT is_active FROM program_types WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL FOR UPDATE`, typeID, access.WorkspaceID).Scan(&sourceActive); err == pgx.ErrNoRows {
-		resourceNotFound(w, "节目类型")
-		return
-	} else if err != nil {
-		serverError(w, err)
-		return
-	}
-	// Lock live references before counting or changing them. This keeps the
-	// count, migration/unassignment, and soft delete in one consistent view.
-	programRows, err := tx.Query(r.Context(), `SELECT id FROM programs WHERE workspace_id=$1 AND program_type_id=$2 AND deleted_at IS NULL FOR UPDATE`, access.WorkspaceID, typeID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	for programRows.Next() {
-		var programID string
-		if err = programRows.Scan(&programID); err != nil {
-			programRows.Close()
-			serverError(w, err)
-			return
-		}
-	}
-	if err = programRows.Err(); err != nil {
-		programRows.Close()
-		serverError(w, err)
-		return
-	}
-	programRows.Close()
-	var count int
-	if err = tx.QueryRow(r.Context(), `SELECT COUNT(*)::int FROM programs WHERE workspace_id=$1 AND program_type_id=$2 AND deleted_at IS NULL`, access.WorkspaceID, typeID).Scan(&count); err != nil {
-		serverError(w, err)
-		return
-	}
-	if in.Strategy == "delete" && count > 0 {
-		errorJSONWithFields(w, http.StatusConflict, "program_type_in_use", "该节目类型仍被节目使用", map[string]any{"program_count": count})
-		return
-	}
-	if in.Strategy == "move" {
-		if _, err = tx.Exec(r.Context(), `UPDATE programs SET program_type_id=$1,updated_at=NOW() WHERE workspace_id=$2 AND program_type_id=$3 AND deleted_at IS NULL`, in.ReplacementTypeID, access.WorkspaceID, typeID); err != nil {
-			serverError(w, err)
-			return
-		}
-	}
-	if in.Strategy == "unassign" {
-		if _, err = tx.Exec(r.Context(), `UPDATE programs SET program_type_id=NULL,updated_at=NOW() WHERE workspace_id=$1 AND program_type_id=$2 AND deleted_at IS NULL`, access.WorkspaceID, typeID); err != nil {
-			serverError(w, err)
-			return
-		}
-	}
-	if _, err = tx.Exec(r.Context(), `UPDATE program_types SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, typeID, access.WorkspaceID); err != nil {
-		serverError(w, err)
-		return
-	}
-	if err = tx.Commit(r.Context()); err != nil {
-		serverError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "strategy": in.Strategy, "program_count": count})
 }
 
 func (app *application) listPrograms(w http.ResponseWriter, r *http.Request) {
@@ -815,23 +429,7 @@ func (app *application) listPrograms(w http.ResponseWriter, r *http.Request) {
 		where = append(where, "(name ILIKE $"+strconv.Itoa(len(args))+" OR description ILIKE $"+strconv.Itoa(len(args))+")")
 	}
 	if len(types) > 0 {
-		hasUnassigned := false
-		typeIDs := make([]string, 0, len(types))
-		for _, typeID := range types {
-			if typeID == "unassigned" {
-				hasUnassigned = true
-			} else {
-				typeIDs = append(typeIDs, typeID)
-			}
-		}
-		if hasUnassigned && len(typeIDs) > 0 {
-			args = append(args, typeIDs)
-			where = append(where, "(program_type_id = ANY($"+strconv.Itoa(len(args)+0)+") OR program_type_id IS NULL)")
-		} else if hasUnassigned {
-			where = append(where, "program_type_id IS NULL")
-		} else if len(typeIDs) > 0 {
-			add("program_type_id = ANY", typeIDs)
-		}
+		add("program_type_id = ANY", types)
 	}
 	if len(ss) > 0 {
 		add("status = ANY", ss)
@@ -899,19 +497,12 @@ func (app *application) createProgram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access := resourceAccess(r)
-	if in.ProgramTypeID != nil {
-		exists, err := programTypeExists(r.Context(), app.db, access.WorkspaceID, *in.ProgramTypeID, true)
-		if err != nil {
-			serverError(w, err)
-			return
-		}
-		if !exists {
-			errorJSON(w, http.StatusBadRequest, "invalid_input", "节目类型无效、未启用或不属于当前工作空间")
-			return
-		}
+	typeID, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, programResourceTypeDefinition, in.ProgramTypeID)
+	if !valid {
+		return
 	}
 	var item program
-	err := app.db.QueryRow(r.Context(), `INSERT INTO programs(id,workspace_id,name,program_type_id,default_duration_seconds,tags,description,technical_notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,workspace_id,name,program_type_id,default_duration_seconds,tags,description,technical_notes,origin,status,created_at,updated_at`, newID(), access.WorkspaceID, name, in.ProgramTypeID, in.DefaultDurationSeconds, normalizedStrings(in.Tags, 40), strings.TrimSpace(in.Description), strings.TrimSpace(in.TechnicalNotes), access.UserID).Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.ProgramTypeID, &item.DefaultDurationSeconds, &item.Tags, &item.Description, &item.TechnicalNotes, &item.Origin, &item.Status, &item.CreatedAt, &item.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `INSERT INTO programs(id,workspace_id,name,program_type_id,default_duration_seconds,tags,description,technical_notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,workspace_id,name,program_type_id,default_duration_seconds,tags,description,technical_notes,origin,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, in.DefaultDurationSeconds, normalizedStrings(in.Tags, 40), strings.TrimSpace(in.Description), strings.TrimSpace(in.TechnicalNotes), access.UserID).Scan(&item.ID, &item.WorkspaceID, &item.Name, &item.ProgramTypeID, &item.DefaultDurationSeconds, &item.Tags, &item.Description, &item.TechnicalNotes, &item.Origin, &item.Status, &item.CreatedAt, &item.UpdatedAt)
 	if err != nil {
 		errorJSON(w, 400, "invalid_input", "节目类型无效或不属于当前工作空间")
 		return
@@ -951,16 +542,12 @@ func (app *application) updateProgram(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access := resourceAccess(r)
-	if in.ProgramTypeIDPresent && in.ProgramTypeID != nil {
-		exists, err := programTypeExists(r.Context(), app.db, access.WorkspaceID, *in.ProgramTypeID, false)
-		if err != nil {
-			serverError(w, err)
+	if in.ProgramTypeIDPresent {
+		resolved, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, programResourceTypeDefinition, in.ProgramTypeID)
+		if !valid {
 			return
 		}
-		if !exists {
-			errorJSON(w, http.StatusBadRequest, "invalid_input", "节目类型无效或不属于当前工作空间")
-			return
-		}
+		in.ProgramTypeID = resolved
 	}
 	var tags any
 	if in.Tags != nil {
@@ -1070,13 +657,12 @@ func (app *application) createPerson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access := resourceAccess(r)
-	typeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, personResourceTypeDefinition, in.PersonTypeID, true)
-	if err != nil || (in.PersonTypeID != nil && typeID == nil) {
-		errorJSON(w, 400, "invalid_input", "人员类型无效、未启用或不属于当前工作空间")
+	typeID, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, personResourceTypeDefinition, in.PersonTypeID)
+	if !valid {
 		return
 	}
 	var x person
-	err = app.db.QueryRow(r.Context(), `INSERT INTO people(id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, strings.TrimSpace(in.PrimaryEmail), strings.TrimSpace(in.PrimaryPhone), strings.TrimSpace(in.Bio), normalizedStrings(in.Skills, 40), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.PersonTypeID, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `INSERT INTO people(id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,workspace_id,display_name,person_type_id,primary_email,primary_phone,bio,skills,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, strings.TrimSpace(in.PrimaryEmail), strings.TrimSpace(in.PrimaryPhone), strings.TrimSpace(in.Bio), normalizedStrings(in.Skills, 40), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.DisplayName, &x.PersonTypeID, &x.PrimaryEmail, &x.PrimaryPhone, &x.Bio, &x.Skills, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1120,10 +706,8 @@ func (app *application) updatePerson(w http.ResponseWriter, r *http.Request) {
 	}
 	access := resourceAccess(r)
 	if in.PersonTypePresent {
-		requested := in.PersonTypeID
-		resolved, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, personResourceTypeDefinition, requested, true)
-		if err != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
-			errorJSON(w, 400, "invalid_input", "人员类型无效、未启用或不属于当前工作空间")
+		resolved, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, personResourceTypeDefinition, in.PersonTypeID)
+		if !valid {
 			return
 		}
 		in.PersonTypeID = resolved
@@ -1228,13 +812,12 @@ func (app *application) createOrganization(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	access := resourceAccess(r)
-	typeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, organizationResourceTypeDefinition, in.OrganizationTypeID, true)
-	if err != nil || (in.OrganizationTypeID != nil && typeID == nil) {
-		errorJSON(w, 400, "invalid_input", "机构类型无效、未启用或不属于当前工作空间")
+	typeID, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, organizationResourceTypeDefinition, in.OrganizationTypeID)
+	if !valid {
 		return
 	}
 	var x organization
-	err = app.db.QueryRow(r.Context(), `INSERT INTO organizations(id,workspace_id,name,organization_type_id,city,address,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,workspace_id,name,organization_type_id,city,address,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.OrganizationTypeID, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `INSERT INTO organizations(id,workspace_id,name,organization_type_id,city,address,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id,workspace_id,name,organization_type_id,city,address,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.OrganizationTypeID, &x.City, &x.Address, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1275,10 +858,8 @@ func (app *application) updateOrganization(w http.ResponseWriter, r *http.Reques
 	}
 	access := resourceAccess(r)
 	if in.OrganizationTypePresent {
-		requested := in.OrganizationTypeID
-		resolved, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, organizationResourceTypeDefinition, requested, true)
-		if err != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
-			errorJSON(w, 400, "invalid_input", "机构类型无效、未启用或不属于当前工作空间")
+		resolved, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, organizationResourceTypeDefinition, in.OrganizationTypeID)
+		if !valid {
 			return
 		}
 		in.OrganizationTypeID = resolved
@@ -1388,13 +969,12 @@ func (app *application) createVenue(w http.ResponseWriter, r *http.Request) {
 		in.Timezone = "Asia/Shanghai"
 	}
 	access := resourceAccess(r)
-	venueTypeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, venueResourceTypeDefinition, in.VenueTypeID, true)
-	if err != nil || (in.VenueTypeID != nil && venueTypeID == nil) {
-		errorJSON(w, 400, "invalid_input", "场地类型无效、未启用或不属于当前工作空间")
+	venueTypeID, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, venueResourceTypeDefinition, in.VenueTypeID)
+	if !valid {
 		return
 	}
 	var x venue
-	err = app.db.QueryRow(r.Context(), `INSERT INTO venues(id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, venueTypeID, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), in.Timezone, strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `INSERT INTO venues(id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id,workspace_id,name,venue_type_id,city,address,timezone,description,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, venueTypeID, strings.TrimSpace(in.City), strings.TrimSpace(in.Address), in.Timezone, strings.TrimSpace(in.Description), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.VenueTypeID, &x.City, &x.Address, &x.Timezone, &x.Description, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1439,10 +1019,8 @@ func (app *application) updateVenue(w http.ResponseWriter, r *http.Request) {
 	}
 	access := resourceAccess(r)
 	if in.VenueTypePresent {
-		requested := in.VenueTypeID
-		resolved, resolveErr := app.validAssignedResourceType(r.Context(), access.WorkspaceID, venueResourceTypeDefinition, requested, true)
-		if resolveErr != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
-			errorJSON(w, 400, "invalid_input", "场地类型无效、未启用或不属于当前工作空间")
+		resolved, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, venueResourceTypeDefinition, in.VenueTypeID)
+		if !valid {
 			return
 		}
 		in.VenueTypeID = resolved
@@ -1553,13 +1131,12 @@ func (app *application) createEquipment(w http.ResponseWriter, r *http.Request) 
 		in.Unit = "件"
 	}
 	access := resourceAccess(r)
-	typeID, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, equipmentResourceTypeDefinition, in.EquipmentTypeID, true)
-	if err != nil || (in.EquipmentTypeID != nil && typeID == nil) {
-		errorJSON(w, 400, "invalid_input", "设备类型无效、未启用或不属于当前工作空间")
+	typeID, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, equipmentResourceTypeDefinition, in.EquipmentTypeID)
+	if !valid {
 		return
 	}
 	var x equipmentItem
-	err = app.db.QueryRow(r.Context(), `INSERT INTO equipment_items(id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, in.QuantityTotal, strings.TrimSpace(in.Unit), in.Ownership, strings.TrimSpace(in.StorageLocation), strings.TrimSpace(in.TechnicalNotes), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.EquipmentTypeID, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `INSERT INTO equipment_items(id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id,workspace_id,name,equipment_type_id,quantity_total,unit,ownership,storage_location,technical_notes,tags,status,created_at,updated_at`, newID(), access.WorkspaceID, name, typeID, in.QuantityTotal, strings.TrimSpace(in.Unit), in.Ownership, strings.TrimSpace(in.StorageLocation), strings.TrimSpace(in.TechnicalNotes), normalizedStrings(in.Tags, 40), access.UserID).Scan(&x.ID, &x.WorkspaceID, &x.Name, &x.EquipmentTypeID, &x.QuantityTotal, &x.Unit, &x.Ownership, &x.StorageLocation, &x.TechnicalNotes, &x.Tags, &x.Status, &x.CreatedAt, &x.UpdatedAt)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -1608,10 +1185,8 @@ func (app *application) updateEquipment(w http.ResponseWriter, r *http.Request) 
 	}
 	access := resourceAccess(r)
 	if in.EquipmentTypePresent {
-		requested := in.EquipmentTypeID
-		resolved, err := app.validAssignedResourceType(r.Context(), access.WorkspaceID, equipmentResourceTypeDefinition, requested, true)
-		if err != nil || (normalizedTypeID(requested) != nil && resolved == nil) {
-			errorJSON(w, 400, "invalid_input", "设备类型无效、未启用或不属于当前工作空间")
+		resolved, valid := app.requireActiveResourceType(w, r, access.WorkspaceID, equipmentResourceTypeDefinition, in.EquipmentTypeID)
+		if !valid {
 			return
 		}
 		in.EquipmentTypeID = resolved

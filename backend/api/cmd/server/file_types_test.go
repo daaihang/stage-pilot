@@ -182,13 +182,13 @@ func TestProgramAndVenueTypeNoopOrderKeepsUpdatedAt(t *testing.T) {
 		}
 	}
 
-	programItems := fileTypeItems(t, authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/program-types?sort=sort_order&direction=asc", nil))
-	checkNoop("/program-types/order", "program_types", programItems)
-	venueItems := fileTypeItems(t, authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/venue-types", nil))
-	checkNoop("/venue-types/order", "venue_types", venueItems)
+	programItems := fileTypeItems(t, authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/resource-types/programs?sort=sort_order&direction=asc", nil))
+	checkNoop("/resource-types/programs/order", "program_types", programItems)
+	venueItems := fileTypeItems(t, authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/resource-types/venues", nil))
+	checkNoop("/resource-types/venues/order", "venue_types", venueItems)
 
 	duplicate := []map[string]any{{"id": venueItems[0]["id"], "sort_order": 0}, {"id": venueItems[0]["id"], "sort_order": 1}}
-	if response := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/venue-types/order", map[string]any{"items": duplicate}); response.Code != http.StatusBadRequest {
+	if response := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/resource-types/venues/order", map[string]any{"items": duplicate}); response.Code != http.StatusBadRequest {
 		t.Fatalf("duplicate venue order = %d, want 400", response.Code)
 	}
 }

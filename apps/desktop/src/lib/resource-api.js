@@ -33,17 +33,10 @@ export function getResource(workspaceId, type, id) { return request(`${base(work
 export function createResource(workspaceId, type, payload) { return request(base(workspaceId, resourceDefinitions[type].path), { method: "POST", body: JSON.stringify(payload) }); }
 export function updateResource(workspaceId, type, id, payload) { return request(base(workspaceId, `${resourceDefinitions[type].path}/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
 export function deleteResource(workspaceId, type, id) { return request(base(workspaceId, `${resourceDefinitions[type].path}/${id}`), { method: "DELETE" }); }
-const resourceTypePaths = Object.freeze({
-  programs: "program-types",
-  people: "person-types",
-  organizations: "organization-types",
-  venues: "venue-types",
-  equipment: "equipment-types",
-});
+const supportedResourceTypes = new Set(["programs", "people", "organizations", "venues", "equipment"]);
 function resourceTypePath(resourceType) {
-  const path = resourceTypePaths[resourceType];
-  if (!path) throw new Error(`Unsupported resource type: ${resourceType}`);
-  return path;
+  if (!supportedResourceTypes.has(resourceType)) throw new Error(`Unsupported resource type: ${resourceType}`);
+  return `resource-types/${resourceType}`;
 }
 export async function listResourceTypes(workspaceId, resourceType, filters) {
   return normalizeResourceList(await request(`${base(workspaceId, resourceTypePath(resourceType))}${queryString(filters)}`));
@@ -52,24 +45,8 @@ export function createResourceType(workspaceId, resourceType, payload) { return 
 export function updateResourceType(workspaceId, resourceType, id, payload) { return request(base(workspaceId, `${resourceTypePath(resourceType)}/${id}`), { method: "PATCH", body: JSON.stringify(payload) }); }
 export function reorderResourceTypes(workspaceId, resourceType, items) { return request(base(workspaceId, `${resourceTypePath(resourceType)}/order`), { method: "PATCH", body: JSON.stringify({ items }) }); }
 export function deleteResourceType(workspaceId, resourceType, id, options = {}) {
-  return request(base(workspaceId, `${resourceTypePath(resourceType)}/${id}/delete`), { method: "POST", body: JSON.stringify(resourceType === "programs" ? options : {}) });
+  return request(base(workspaceId, `${resourceTypePath(resourceType)}/${id}/delete`), { method: "POST", body: JSON.stringify(options) });
 }
-
-// Compatibility aliases for callers that still use resource-specific names.
-export function listProgramTypes(workspaceId, filters) { return listResourceTypes(workspaceId, "programs", filters); }
-export function createProgramType(workspaceId, payload) { return createResourceType(workspaceId, "programs", payload); }
-export function updateProgramType(workspaceId, id, payload) { return updateResourceType(workspaceId, "programs", id, payload); }
-export function reorderProgramTypes(workspaceId, items) { return reorderResourceTypes(workspaceId, "programs", items); }
-export function deleteProgramType(workspaceId, id, strategy = "delete", replacementTypeId) {
-  const options = { strategy };
-  if (replacementTypeId) options.replacement_type_id = replacementTypeId;
-  return deleteResourceType(workspaceId, "programs", id, options);
-}
-export function listVenueTypes(workspaceId, filters) { return listResourceTypes(workspaceId, "venues", filters); }
-export function createVenueType(workspaceId, payload) { return createResourceType(workspaceId, "venues", payload); }
-export function updateVenueType(workspaceId, id, payload) { return updateResourceType(workspaceId, "venues", id, payload); }
-export function reorderVenueTypes(workspaceId, items) { return reorderResourceTypes(workspaceId, "venues", items); }
-export function deleteVenueType(workspaceId, id) { return deleteResourceType(workspaceId, "venues", id); }
 async function fileTypeRequest(path, options) {
   try {
     return await request(path, options);

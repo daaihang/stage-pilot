@@ -31,14 +31,15 @@ const fieldLabels = { name: "名称", display_name: "姓名", program_type_id: "
 const canManage = (workspace) => ["owner", "admin"].includes(workspace?.role);
 const textValue = (item, key) => Array.isArray(item[key]) ? item[key].join(", ") : item[key] ?? "";
 const typeFields = new Set(Object.values(configs).map((config) => config.kind));
-const apiValue = (key, value) => typeFields.has(key) ? (value || null) : ["tags", "skills"].includes(key) ? value.split(",").map((x) => x.trim()).filter(Boolean) : ["default_duration_seconds", "quantity_total"].includes(key) ? Number(value || 0) : value;
+const apiValue = (key, value) => typeFields.has(key) ? value : ["tags", "skills"].includes(key) ? value.split(",").map((x) => x.trim()).filter(Boolean) : ["default_duration_seconds", "quantity_total"].includes(key) ? Number(value || 0) : value;
 const statusField = { id: "status", label: "状态", type: "select", defaultOperator: "is_any_of", options: [{ value: "active", label: "可用" }, { value: "maintenance", label: "维护中" }, { value: "archived", label: "已归档" }] };
-const filterFields = (type, types) => [{ id: type === "programs" ? "type_id" : configs[type].kind, label: configs[type].label, type: "select", defaultOperator: "is_any_of", options: [{ value: "unassigned", label: type === "programs" ? "未分配" : "未分类" }, ...types.map((x) => ({ value: x.id, label: x.name }))] }, statusField];
+const filterFields = (type, types) => [{ id: type === "programs" ? "type_id" : configs[type].kind, label: configs[type].label, type: "select", defaultOperator: "is_any_of", options: types.map((x) => ({ value: x.id, label: `${x.name}${x.is_active ? "" : "（已停用）"}` })) }, statusField];
 function filtersToParams(query) { const result = {}; for (const condition of getResourceFilterConditions(query)) { if (condition.operator === "is_any_of" && condition.values?.length) result[condition.field] = condition.values; } return result; }
 
-function selectOptions(type, types) { return [["", type === "programs" ? "未分配" : "未分类"], ...types.filter((x) => x.is_active).map((x) => [x.id, x.name])]; }
+function selectOptions(type, types) { return types.filter((x) => x.is_active).map((x) => [x.id, x.name]); }
+function defaultTypeID(types) { return types.find((item) => item.system_key === "other" && item.is_active)?.id || types.find((item) => item.is_active)?.id || ""; }
 function resourceTypeFor(type, item, types) { return types.find((entry) => entry.id === item[configs[type].kind]) || null; }
-function subtitle(type, item, types) { const resourceType = resourceTypeFor(type, item, types); const kind = resourceType?.name || (type === "programs" ? "未分配" : "未分类"); if (type === "equipment") return `${kind} · ${item.quantity_total} ${item.unit} · ${labels[item.ownership]}`; if (type === "people") return `${kind} · ${item.primary_email || item.primary_phone || "联系方式待补充"}`; return `${kind} · ${item.city || (item.default_duration_seconds ? `${Math.round(item.default_duration_seconds / 60)} 分钟` : "资料待补充")}`; }
+function subtitle(type, item, types) { const resourceType = resourceTypeFor(type, item, types); const kind = resourceType?.name || "其他"; if (type === "equipment") return `${kind} · ${item.quantity_total} ${item.unit} · ${labels[item.ownership]}`; if (type === "people") return `${kind} · ${item.primary_email || item.primary_phone || "联系方式待补充"}`; return `${kind} · ${item.city || (item.default_duration_seconds ? `${Math.round(item.default_duration_seconds / 60)} 分钟` : "资料待补充")}`; }
 
 function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTypes, onCreated }) {
   const cfg = configs[type];
@@ -50,19 +51,20 @@ function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTyp
   useEffect(() => {
     if (!open) return;
     setName("");
-    setTypeId("");
+    setTypeId(defaultTypeID(resourceTypes));
   }, [open, type]);
 
   useEffect(() => {
-    if (open && typeId && !resourceTypes.some((item) => item.id === typeId && item.is_active)) setTypeId("");
+    if (open && (!typeId || !resourceTypes.some((item) => item.id === typeId && item.is_active))) setTypeId(defaultTypeID(resourceTypes));
   }, [open, resourceTypes, typeId]);
 
   const submit = async (event) => {
     event.preventDefault();
     if (!name.trim()) return notify.error(`请输入${resourceDefinitions[type].singular}名称`);
+    if (!typeId) return notify.error(`请先启用至少一个${cfg.label}`);
     const body = type === "equipment"
-      ? { name: name.trim(), equipment_type_id: typeId || null, quantity_total: 1, ownership: "owned" }
-      : { [cfg.primary]: name.trim(), [cfg.kind]: typeId || null };
+      ? { name: name.trim(), equipment_type_id: typeId, quantity_total: 1, ownership: "owned" }
+      : { [cfg.primary]: name.trim(), [cfg.kind]: typeId };
     setBusy(true);
     const toast = notify.loading(`正在创建${resourceDefinitions[type].singular}…`);
     try {
@@ -77,7 +79,7 @@ function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTyp
     }
   };
 
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={submit}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={options.map(([value, label]) => ({ value: value || "unassigned", label }))} value={typeId || "unassigned"} onValueChange={(value) => setTypeId(value === "unassigned" ? "" : value)}><SelectTrigger className="h-9 w-full"><SelectValue placeholder={`选择${cfg.label}`} /></SelectTrigger><SelectContent>{options.map(([value, label]) => <SelectItem key={value || "unassigned"} value={value || "unassigned"}>{label}</SelectItem>)}</SelectContent></Select></div><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "创建中…" : "创建"}</Button></div></form></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={submit}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={options.map(([value, label]) => ({ value, label }))} value={typeId} onValueChange={setTypeId}><SelectTrigger className="h-9 w-full"><SelectValue placeholder={options.length ? `选择${cfg.label}` : `请先启用${cfg.label}`} /></SelectTrigger><SelectContent>{options.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>{options.length === 0 && <p className="text-xs text-destructive">没有启用的{cfg.label}，请先在类型管理中启用一个类型。</p>}</div><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy || !typeId}>{busy ? "创建中…" : "创建"}</Button></div></form></DialogContent></Dialog>;
 }
 
 export function WorkspaceResourcePage({ workspace, resourceType, selectedResourceId, panel }) {
@@ -331,7 +333,7 @@ function ResourceRelations({ workspace, type, resourceId }) {
 }
 
 const detailSelectOptions = (key, cfg, types) => typeFields.has(key)
-  ? [["unassigned", key === "program_type_id" ? "未分配" : "未分类"], ...types.map((x) => [x.id, `${x.name}${x.is_active ? "" : "（已停用）"}`])]
+  ? types.map((x) => [x.id, `${x.name}${x.is_active ? "" : "（已停用）"}`])
   : key === "status"
     ? [["active", "可用"], ["maintenance", "维护中"], ["archived", "已归档"]]
     : key === "ownership"
@@ -420,9 +422,9 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
             {["ownership", "status", ...typeFields].includes(key)
               ? <Select
                 items={detailSelectOptions(key, cfg, types).map(([value, label]) => ({ value, label }))}
-                value={typeFields.has(key) ? (item[key] || "unassigned") : (item[key] || "")}
+                value={typeFields.has(key) ? (item[key] || defaultTypeID(types)) : (item[key] || "")}
                 disabled={!canManage(workspace)}
-                onValueChange={(value) => save(key, typeFields.has(key) && value === "unassigned" ? "" : value)}
+                onValueChange={(value) => save(key, value)}
               >
                 <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>{detailSelectOptions(key, cfg, types).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>

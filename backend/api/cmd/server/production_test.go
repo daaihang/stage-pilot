@@ -428,7 +428,7 @@ func TestProductionLocationsWorkspaceIsolationAndPrimary(t *testing.T) {
 	token := issueTestToken(t, app, owner)
 	workspaceID := createWorkspaceFor(t, app, token, "活动地点测试")["id"].(string)
 	productionID := createProductionFor(t, app, token, workspaceID, "地点活动", "", "")["id"].(string)
-	types := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/venue-types", nil)
+	types := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/resource-types/venues", nil)
 	venueTypeItems, _ := decodeResourceList(t, types.Body.Bytes())
 	venue := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "主会场", "venue_type_id": venueTypeItems[0]["id"]})
 	if venue.Code != http.StatusCreated {
@@ -460,7 +460,7 @@ func TestProductionLocationCanClearSpaceAndRejectReferencedRemoval(t *testing.T)
 	token := issueTestToken(t, app, uid)
 	workspaceID := createWorkspaceFor(t, app, token, "地点引用测试")["id"].(string)
 	productionID := createProductionFor(t, app, token, workspaceID, "地点引用活动", "", "")["id"].(string)
-	types := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/venue-types", nil)
+	types := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/resource-types/venues", nil)
 	venueTypeItems, _ := decodeResourceList(t, types.Body.Bytes())
 	venue := authedRequest(t, app, token, http.MethodPost, "/v1/workspaces/"+workspaceID+"/venues", map[string]any{"name": "引用测试场地", "venue_type_id": venueTypeItems[0]["id"]})
 	if venue.Code != http.StatusCreated {
