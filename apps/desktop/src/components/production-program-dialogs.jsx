@@ -46,8 +46,13 @@ export function ProductionProgramFormDialog({ open, onOpenChange, program, progr
 }
 
 function ProgramChoice({ program, checked, onCheckedChange, sourceLabel }) {
-  const missing = getProductionProgramMissingInfo(program);
-  return <label className="flex cursor-pointer items-start gap-3 border p-3 hover:bg-muted/40"><Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(Boolean(value))} /><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{program.name}</span><Badge variant="outline">{sourceLabel}</Badge>{program.programTypeName || program.programType ? <Badge variant="secondary">{program.programTypeName || program.programType}</Badge> : null}</span><span className="mt-1 block text-xs text-muted-foreground">{program.durationSeconds ? `${Math.round(program.durationSeconds / 60)} 分钟` : "时长待补充"}{program.performers?.length ? ` · ${program.performers.join("、")}` : " · 演出者待补充"}</span>{missing.length ? <span className="mt-1 block text-xs text-amber-600 dark:text-amber-300">待补：{missing.join("、")}</span> : null}</span></label>;
+  const durationSeconds = Number(program.durationSeconds ?? program.default_duration_seconds ?? 0) || 0;
+  const performers = Array.isArray(program.performers) ? program.performers : [];
+  const technicalNotes = program.technicalNotes || program.technical_notes || "";
+  const normalized = { ...program, durationSeconds, performers, technicalNotes };
+  const missing = getProductionProgramMissingInfo(normalized);
+  const typeName = program.programTypeName || program.program_type_name || program.programType || "";
+  return <label className="flex cursor-pointer items-start gap-3 border p-3 hover:bg-muted/40"><Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(Boolean(value))} /><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{program.name}</span><Badge variant="outline">{sourceLabel}</Badge>{typeName ? <Badge variant="secondary">{typeName}</Badge> : null}</span><span className="mt-1 block text-xs text-muted-foreground">{durationSeconds ? `${Math.round(durationSeconds / 60)} 分钟` : "时长待补充"}{performers.length ? ` · ${performers.join("、")}` : " · 演出者待补充"}</span>{program.description ? <span className="mt-1 block truncate text-xs text-muted-foreground">{program.description}</span> : null}{technicalNotes ? <span className="mt-1 block truncate text-xs text-muted-foreground">技术：{technicalNotes}</span> : null}{missing.length ? <span className="mt-1 block text-xs text-amber-600 dark:text-amber-300">待补：{missing.join("、")}</span> : null}</span></label>;
 }
 
 export function AddProgramToSheetsDialog({ open, onOpenChange, program, sheets = [], onConfirm }) {
