@@ -1,18 +1,19 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import { MapPin, Pencil } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { notify } from "@/components/ui/sonner";
 import { listProductionLocations } from "@/lib/production-api";
 import { cn } from "@/lib/utils";
-import { useProductionLocationDetail } from "@/components/production-location-management-panel";
+import { productionPath } from "@/lib/navigation";
 
 export function ProductionLocationPopover({ workspace, production, onRequestEdit, onChanged, disabled = false, className, refreshKey }) {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const triggerRef = useRef(null);
+  const navigate = useNavigate();
   const canWrite = !production.isCreationSession && (["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit"));
-  const { open } = useProductionLocationDetail({ workspace, production, triggerRef, onChanged });
 
   useEffect(() => {
     let active = true;
@@ -62,7 +63,7 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
         disabled={disabled || !canWrite}
         aria-label="编辑地点"
         title="编辑活动地点"
-        onClick={onRequestEdit || open}
+        onClick={onRequestEdit || (() => navigate(productionPath(workspace.id, production.id, "locations")))}
       >
         <Pencil />
       </Button>

@@ -27,7 +27,7 @@ const workspaceGroups = [
 
 const productionGroups = [
   { label: null, items: [["overview", "概览", Gauge]] },
-  { label: "筹备", items: [["recruitment", "征集与审核", ClipboardCheck], ["programs", "节目", Mic2], ["program-sheets", "节目单", ListMusic], ["people", "人员", UsersRound]] },
+  { label: "筹备", items: [["recruitment", "征集与审核", ClipboardCheck], ["programs", "节目", Mic2], ["program-sheets", "节目单", ListMusic], ["locations", "场地与空间", MapPin], ["people", "人员", UsersRound]] },
   { label: "排程", items: [["schedule", "总日程", CalendarRange], ["occurrences", "场次", ListTree], ["rehearsals", "彩排", ClipboardList]] },
   { label: "制作与现场", items: [["rundown", "流程编排", Workflow], ["stage", "舞台执行", Theater]] },
   { label: "协作与权限", items: [["members", "成员", UsersRound], ["roles", "角色与权限", KeyRound]] },

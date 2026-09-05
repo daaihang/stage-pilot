@@ -20,6 +20,7 @@ import { UnifiedWorkContextPage } from "@/components/unified-work-context-page";
 import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
 import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
+import { ProductionLocationsPage } from "@/components/production-locations-page";
 import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
 import { ProductionInvitePage } from "@/components/production-invite-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
@@ -370,7 +371,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
               plannedStartAt: latest.plannedStartAt || null, plannedEndAt: latest.plannedEndAt || null,
             });
             const latestSession = getCreationSession() || latest;
-            const summary = { ...toProductionSummary(created), venue: latestSession.venue || "" };
+            const summary = toProductionSummary(created);
             setProductionsByWorkspaceEntry(workspace.id, summary);
             discardCreationSession(production.id);
             creationRouteIdRef.current = null;
@@ -395,17 +396,11 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
       if (Object.prototype.hasOwnProperty.call(patch, "timezoneChangeStrategy")) body.timezone_change_strategy = patch.timezoneChangeStrategy;
       if (Object.prototype.hasOwnProperty.call(patch, "plannedStartAt")) body.planned_start_at = patch.plannedStartAt || null;
       if (Object.prototype.hasOwnProperty.call(patch, "plannedEndAt")) body.planned_end_at = patch.plannedEndAt || null;
-      const hasVenuePatch = Object.prototype.hasOwnProperty.call(patch, "venue");
-      const localVenue = hasVenuePatch ? String(patch.venue ?? "").trim() : (production.venue || "");
       if (!Object.keys(body).length) {
-        if (hasVenuePatch) {
-          setProductionsByWorkspaceEntry(workspace.id, { ...production, venue: localVenue });
-          notify.info("地点已更新", { description: "地点目前只在当前窗口展示，不会保存到服务端。" });
-        }
         return true;
       }
       const updated = route?.direct ? await updateAccessibleProduction(production.id, body) : await updateProduction(workspace.id, production.id, body);
-      const summary = { ...toProductionSummary(updated), venue: localVenue };
+      const summary = toProductionSummary(updated);
       if (route?.direct) setDirectProductionState({ id: production.id, loading: false, value: summary, failed: false });
       else setProductionsByWorkspaceEntry(workspace.id, summary);
       notify.success("活动信息已保存");
@@ -418,7 +413,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const updateProductionSettings = async (patch) => {
     if (!workspace || !production || production.isCreationSession) throw new Error("创建会话只能在活动概览中完善基础信息。");
     const updated = route?.direct ? await updateAccessibleProduction(production.id, patch) : await updateProduction(workspace.id, production.id, patch);
-    const summary = { ...toProductionSummary(updated), venue: production.venue || "" };
+    const summary = toProductionSummary(updated);
     setProductionsByWorkspaceEntry(workspace.id, summary);
     return summary;
   };
@@ -513,6 +508,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "production" && route.page === "program-sheets") content = <ProgramSheetsPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route.page)) content = <ProductionPlanningPlaceholderPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
+  else if (route.mode === "production" && route.page === "locations") content = <ProductionLocationsPage workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "roles") content = <ProductionRolesPage workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;

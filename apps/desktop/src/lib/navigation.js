@@ -33,6 +33,7 @@ export const productionPages = {
   members: { title: "成员", description: "管理本场活动的协作成员与访问期限。" },
   roles: { title: "角色与权限", description: "查看固定活动角色及其权限范围。" },
   settings: { title: "活动设置", description: "管理活动信息、权限、功能模块和归档。" },
+  locations: { title: "场地与空间", description: "配置本活动使用的场地、空间和地点顺序。" },
 };
 
 export const accountPages = {

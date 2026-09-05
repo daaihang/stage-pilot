@@ -165,7 +165,7 @@ NavigationRepository {
 
 - 列表缓存：`NavigationProvider.productionsByWorkspace`，按 workspaceId 分桶；进入 workspace 路由时惰性加载。
 - 深链恢复：URL 指向列表缓存中没有的 production 时，`App.jsx` 单独调用 `getProduction(workspaceId, productionId)` 并把结果合并回列表缓存（`setProductionsByWorkspaceEntry`），保证单一事实源；404/403 统一渲染「活动不可访问」。
-- 前端创建会话：`ProductionsPage` 的“新建活动”只在当前 React 窗口创建内存中的 `creation-session-*` 会话，不调用 API，也不会进入活动列表、侧栏预览或统计。默认名称 `活动-<时间戳>` 只是占位展示，不算有效字段；用户首次提交名称、描述、时区或任一时间字段时才调用 `POST`。创建成功后使用服务端真实 ID 替换临时路由并进入正式 `active` 活动；后续字段修改使用 `PATCH` 自动保存。地点目前只保留在当前窗口展示，不提交到 Production API。未提交时离开会话或刷新页面会静默丢弃内容，不提供恢复提示。
+- 前端创建会话：`ProductionsPage` 的“新建活动”只在当前 React 窗口创建内存中的 `creation-session-*` 会话，不调用 API，也不会进入活动列表、侧栏预览或统计。默认名称 `活动-<时间戳>` 只是占位展示，不算有效字段；用户首次提交名称、描述、时区或任一时间字段时才调用 `POST`。创建成功后使用服务端真实 ID 替换临时路由并进入正式 `active` 活动；后续字段修改使用 `PATCH` 自动保存。正式活动的地点通过 `production_locations` API 管理，活动侧栏“场地与空间”页面复用资源页面布局，关联工作空间中的场地和空间资源。未提交的创建会话离开或刷新页面会静默丢弃内容，不提供恢复提示。
 - 视图偏好（列表 / 网格 / 甘特）经 `appStore` 按 `productionsView:<workspaceId>` 持久化。
 
 ## 状态、权限与错误
