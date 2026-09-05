@@ -76,6 +76,10 @@ export function productionPath(workspaceId, productionId, page = "overview") {
   return `/w/${workspaceId}/p/${productionId}/${productionPages[page] ? page : "overview"}`;
 }
 
+export function programSheetSegmentTypePanelPath(workspaceId, productionId) {
+  return `${productionPath(workspaceId, productionId, "program-sheets")}?panel=segment-types`;
+}
+
 export function directProductionPath(productionId, page = "overview") {
   return `/p/${productionId}/${productionPages[page] ? page : "overview"}`;
 }
@@ -139,7 +143,9 @@ export function matchStagePilotRoute(pathname, search = "") {
   const productionMatch = pathname.match(/^\/w\/([^/]+)\/p\/([^/]+)\/([^/]+)\/?$/);
   if (productionMatch) {
     const [, workspaceId, productionId, page] = productionMatch;
-    return productionPages[page] ? { mode: "production", workspaceId, productionId, page, meta: productionPages[page] } : null;
+    const panelValue = new URLSearchParams(search).get("panel");
+    const panel = page === "program-sheets" && panelValue === "segment-types" ? panelValue : null;
+    return productionPages[page] ? { mode: "production", workspaceId, productionId, page, panel, meta: productionPages[page] } : null;
   }
   const directProductionMatch = pathname.match(/^\/p\/([^/]+)(?:\/([^/]+))?\/?$/);
   if (directProductionMatch) {

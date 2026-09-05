@@ -7,10 +7,32 @@ export const programSheetStatusLabels = {
 
 export const programSheetItemKindLabels = {
   program: "节目",
+  segment: "环节",
   section: "章节",
   interval: "休息",
   note: "备注",
 };
+
+export function getSheetItems(sheet) {
+  return sheet?.status === "published" && sheet?.publishedSnapshot?.items ? sheet.publishedSnapshot.items : (sheet?.items || []);
+}
+
+export function getItemEffectiveTitle(item) {
+  return item?.titleOverride != null && String(item.titleOverride).trim() ? String(item.titleOverride) : String(item?.title || "未命名条目");
+}
+
+export function getItemEffectiveDurationSeconds(item) {
+  return Math.max(0, Number(item?.durationSecondsOverride ?? item?.durationSeconds) || 0);
+}
+
+export function getItemCountsTowardDuration(item) {
+  if (item?.countsTowardDuration != null) return item.countsTowardDuration !== false;
+  return item?.kind === "program" || item?.kind === "interval";
+}
+
+export function getItemBehaviorBadges(item) {
+  return [item?.countsTowardDuration ? "计时" : "不计时", item?.audienceVisible ? "观众可见" : "内部", item?.requiresExecution ? "需执行" : "资料项"];
+}
 
 export function formatDuration(totalSeconds = 0) {
   const seconds = Math.max(0, Math.round(Number(totalSeconds) || 0));
@@ -27,11 +49,11 @@ export function formatMinutesInput(totalSeconds = 0) {
 }
 
 export function getTotalDurationSeconds(sheet) {
-  return (sheet?.items || []).reduce((total, item) => item.kind === "program" || item.kind === "interval" ? total + Math.max(0, Number(item.durationSeconds) || 0) : total, 0);
+  return getSheetItems(sheet).reduce((total, item) => getItemCountsTowardDuration(item) ? total + getItemEffectiveDurationSeconds(item) : total, 0);
 }
 
 export function getProgramItemCount(sheet) {
-  return (sheet?.items || []).filter((item) => item.kind === "program").length;
+  return getSheetItems(sheet).filter((item) => item.kind === "program" || item.kind === "segment").length;
 }
 
 export function assignedOccurrenceIds(sheet) {
@@ -51,8 +73,8 @@ export function calculateSheetTiming(sheet, occurrence) {
   const end = occurrence?.scheduledEndAt ? new Date(occurrence.scheduledEndAt) : null;
   if (!start || Number.isNaN(start.getTime())) return { rows: [], totalSeconds: getTotalDurationSeconds(sheet), expectedEnd: null, availableSeconds: null, deltaSeconds: null };
   let cursor = start.getTime();
-  const rows = (sheet?.items || []).map((item) => {
-    const duration = item.kind === "program" || item.kind === "interval" ? Math.max(0, Number(item.durationSeconds) || 0) : 0;
+  const rows = getSheetItems(sheet).map((item) => {
+    const duration = getItemCountsTowardDuration(item) ? getItemEffectiveDurationSeconds(item) : 0;
     const row = { item, start: new Date(cursor), end: new Date(cursor + duration * 1000) };
     cursor += duration * 1000;
     return row;
