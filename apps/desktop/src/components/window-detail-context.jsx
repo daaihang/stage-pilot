@@ -118,6 +118,18 @@ export function useWindowDetail() {
   return context;
 }
 
+/**
+ * Optional counterpart for small presentational adapters that can also be
+ * rendered in an isolated preview or fallback tree. Detail registrations
+ * should still use useWindowDetailRegistration (and therefore require the
+ * provider), but callers can use this hook to avoid crashing when the
+ * surrounding shell is not mounted yet (for example during HMR or a
+ * standalone preview).
+ */
+export function useOptionalWindowDetail() {
+  return useContext(WindowDetailContext);
+}
+
 export function WindowDetailHost({ children }) {
   const { registration, detailRevision, contentWidth, detailOpen, detailOpenMode, setDetailOpen, handlePresentationChange, setDetailWidth } = useWindowDetail();
   void detailRevision;

@@ -6,8 +6,32 @@ import { Button } from "@/components/ui/button";
 import { notify } from "@/components/ui/sonner";
 import { listProductionLocations } from "@/lib/production-api";
 import { cn } from "@/lib/utils";
-import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
+import { useOptionalWindowDetail, useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { ProductionLocationsPage } from "@/components/production-locations-page";
+
+function ProductionLocationDetailBridge({ workspace, production, onChanged, triggerRef, routerLocation, navigate }) {
+  const { setDetailOpen } = useWindowDetail();
+  const getDetail = useCallback(
+    () => <ProductionLocationsPage workspace={workspace} production={production} onChanged={() => onChanged?.()} key={production.id} />,
+    [onChanged, production, workspace],
+  );
+
+  useWindowDetailRegistration({
+    key: `production-locations:${production.id}`,
+    storageKey: `detailPane:production-locations:${production.id}:v2`,
+    detailLabel: "活动地点",
+    triggerRef,
+    getDetail,
+  });
+
+  useEffect(() => {
+    if (!routerLocation.state?.openProductionLocations) return;
+    setDetailOpen(true, { announce: false });
+    navigate(routerLocation.pathname + routerLocation.search, { replace: true, state: null });
+  }, [navigate, routerLocation.pathname, routerLocation.search, routerLocation.state, setDetailOpen]);
+
+  return null;
+}
 
 export function ProductionLocationPopover({ workspace, production, onRequestEdit, onChanged, disabled = false, className, refreshKey }) {
   const [locations, setLocations] = useState([]);
@@ -15,17 +39,8 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
   const triggerRef = useRef(null);
   const navigate = useNavigate();
   const routerLocation = useLocation();
-  const { setDetailOpen } = useWindowDetail();
+  const windowDetail = useOptionalWindowDetail();
   const canWrite = !production.isCreationSession && (["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit"));
-
-  const getDetail = useCallback(() => <ProductionLocationsPage workspace={workspace} production={production} onChanged={() => onChanged?.()} key={production.id} />, [onChanged, production, workspace]);
-  useWindowDetailRegistration({ key: `production-locations:${production.id}`, storageKey: `detailPane:production-locations:${production.id}:v2`, detailLabel: "活动地点", triggerRef, getDetail });
-
-  useEffect(() => {
-    if (!routerLocation.state?.openProductionLocations) return;
-    setDetailOpen(true, { announce: false });
-    navigate(routerLocation.pathname + routerLocation.search, { replace: true, state: null });
-  }, [navigate, routerLocation.pathname, routerLocation.search, routerLocation.state, setDetailOpen]);
 
   useEffect(() => {
     let active = true;
@@ -60,9 +75,18 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
   const display = primary
     ? `${primary.venueName}${primary.spaceName ? ` · ${primary.spaceName}` : ""}`
     : "地点待定";
+  const openDetails = onRequestEdit || (() => {
+    if (windowDetail) {
+      windowDetail.setDetailOpen(true);
+      return;
+    }
+    notify.info("活动地点详情暂不可用");
+  });
 
   return (
-    <div className={cn("flex min-w-0 items-center gap-2 text-sm", className)}>
+    <>
+      {windowDetail ? <ProductionLocationDetailBridge workspace={workspace} production={production} onChanged={onChanged} triggerRef={triggerRef} routerLocation={routerLocation} navigate={navigate} /> : null}
+      <div className={cn("flex min-w-0 items-center gap-2 text-sm", className)}>
       <MapPin className="size-4 shrink-0 text-muted-foreground" />
       <span className={cn("min-w-0 flex-1 truncate", !primary && "text-muted-foreground")}>
         {loading ? "地点加载中…" : display}
@@ -75,10 +99,11 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
         disabled={disabled || !canWrite}
         aria-label="编辑地点"
         title="编辑活动地点"
-        onClick={onRequestEdit || (() => setDetailOpen(true))}
+        onClick={openDetails}
       >
         <Pencil />
       </Button>
-    </div>
+      </div>
+    </>
   );
 }
