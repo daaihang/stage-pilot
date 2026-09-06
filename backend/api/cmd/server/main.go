@@ -460,7 +460,7 @@ func (app *application) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 func (app *application) preferences(w http.ResponseWriter, r *http.Request) {
 	var raw []byte
-	err := app.db.QueryRow(r.Context(), "SELECT json_build_object('theme',theme,'language',language,'timezone',timezone,'notifications_enabled',notifications_enabled,'titlebar_title_mode',titlebar_title_mode)::text FROM user_preferences WHERE user_id=$1", claims(r).Subject).Scan(&raw)
+	err := app.db.QueryRow(r.Context(), "SELECT json_build_object('theme',theme,'language',language,'timezone',timezone,'notifications_enabled',notifications_enabled,'titlebar_title_mode',titlebar_title_mode,'detail_open_mode',detail_open_mode)::text FROM user_preferences WHERE user_id=$1", claims(r).Subject).Scan(&raw)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -476,6 +476,7 @@ func (app *application) updatePreferences(w http.ResponseWriter, r *http.Request
 		Timezone             string `json:"timezone"`
 		NotificationsEnabled *bool  `json:"notifications_enabled"`
 		TitlebarTitleMode    string `json:"titlebar_title_mode"`
+		DetailOpenMode       string `json:"detail_open_mode"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -488,11 +489,15 @@ func (app *application) updatePreferences(w http.ResponseWriter, r *http.Request
 		errorJSON(w, 400, "invalid_input", "标题栏模式无效")
 		return
 	}
+	if in.DetailOpenMode != "" && in.DetailOpenMode != "inline" && in.DetailOpenMode != "overlay" {
+		errorJSON(w, 400, "invalid_input", "详情打开方式无效，需要 inline 或 overlay")
+		return
+	}
 	if in.Timezone != "" && !validProductionTimezone(in.Timezone) {
 		errorJSON(w, 400, "invalid_input", "时区无效，需要 IANA 时区名称，例如 Asia/Shanghai")
 		return
 	}
-	_, err := app.db.Exec(r.Context(), "UPDATE user_preferences SET theme=COALESCE(NULLIF($1,''),theme),language=COALESCE(NULLIF($2,''),language),timezone=COALESCE(NULLIF($3,''),timezone),notifications_enabled=COALESCE($4,notifications_enabled),titlebar_title_mode=COALESCE(NULLIF($5,''),titlebar_title_mode),updated_at=NOW() WHERE user_id=$6", in.Theme, in.Language, in.Timezone, in.NotificationsEnabled, in.TitlebarTitleMode, claims(r).Subject)
+	_, err := app.db.Exec(r.Context(), "UPDATE user_preferences SET theme=COALESCE(NULLIF($1,''),theme),language=COALESCE(NULLIF($2,''),language),timezone=COALESCE(NULLIF($3,''),timezone),notifications_enabled=COALESCE($4,notifications_enabled),titlebar_title_mode=COALESCE(NULLIF($5,''),titlebar_title_mode),detail_open_mode=COALESCE(NULLIF($6,''),detail_open_mode),updated_at=NOW() WHERE user_id=$7", in.Theme, in.Language, in.Timezone, in.NotificationsEnabled, in.TitlebarTitleMode, in.DetailOpenMode, claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
 		return

@@ -1,10 +1,12 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { notify } from "@/components/ui/sonner";
 import { DetailSplitPane } from "@/components/detail-split-pane";
+import { normalizeDetailOpenMode } from "@/lib/detail-open-mode";
 
 const WindowDetailContext = createContext(null);
 
-export function WindowDetailProvider({ children, contentWidth = "standard", onModalActiveChange }) {
+export function WindowDetailProvider({ children, contentWidth = "standard", detailOpenMode = "inline", onModalActiveChange }) {
+  const normalizedDetailOpenMode = normalizeDetailOpenMode(detailOpenMode);
   const [registration, setRegistration] = useState(null);
   const registrationRef = useRef(null);
   const [detailOpen, setDetailOpenState] = useState(false);
@@ -52,6 +54,7 @@ export function WindowDetailProvider({ children, contentWidth = "standard", onMo
 
   const value = useMemo(() => ({
     contentWidth,
+    detailOpenMode: normalizedDetailOpenMode,
     registration,
     detailOpen,
     detailPresentation,
@@ -62,7 +65,7 @@ export function WindowDetailProvider({ children, contentWidth = "standard", onMo
     handlePresentationChange,
     setDetailPresentation,
     setDetailWidth,
-  }), [contentWidth, detailModalActive, detailOpen, detailPresentation, detailWidth, handlePresentationChange, registerDetail, setDetailOpen, registration]);
+  }), [contentWidth, detailModalActive, detailOpen, detailOpenMode, detailPresentation, detailWidth, handlePresentationChange, normalizedDetailOpenMode, registerDetail, setDetailOpen, registration]);
 
   return <WindowDetailContext.Provider value={value}>{children}</WindowDetailContext.Provider>;
 }
@@ -74,7 +77,7 @@ export function useWindowDetail() {
 }
 
 export function WindowDetailHost({ children }) {
-  const { registration, contentWidth, detailOpen, setDetailOpen, handlePresentationChange, setDetailWidth } = useWindowDetail();
+  const { registration, contentWidth, detailOpen, detailOpenMode, setDetailOpen, handlePresentationChange, setDetailWidth } = useWindowDetail();
   return <DetailSplitPane
     open={detailOpen}
     onOpenChange={setDetailOpen}
@@ -85,5 +88,6 @@ export function WindowDetailHost({ children }) {
     onPresentationChange={handlePresentationChange}
     detailLabel={registration?.detailLabel || "详情"}
     contentWidth={contentWidth}
+    detailOpenMode={detailOpenMode}
   >{children}</DetailSplitPane>;
 }

@@ -3,6 +3,7 @@ import { notify } from "@/components/ui/sonner";
 import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { usePageChrome } from "@/components/page-chrome";
+import { normalizeDetailOpenMode, resolveDetailPresentation } from "@/lib/detail-open-mode";
 
 const MIN_DETAIL_WIDTH = 280;
 const DEFAULT_DETAIL_WIDTH = 420;
@@ -68,6 +69,7 @@ export function DetailSplitPane({
   onDetailWidthChange,
   onPresentationChange,
   contentWidth = "standard",
+  detailOpenMode = "inline",
   className,
 }) {
   const containerRef = useRef(null);
@@ -81,6 +83,8 @@ export function DetailSplitPane({
   const surfacePhaseRef = useRef("idle");
   const restoreExclusiveFocusRef = useRef(false);
   const closeFocusToTriggerRef = useRef(false);
+  const activeOpenModeRef = useRef(null);
+  const previousOpenForModeRef = useRef(open);
   const [containerWidth, setContainerWidth] = useState(0);
   const [detailWidth, setDetailWidth] = useState(DEFAULT_DETAIL_WIDTH);
   const [exclusive, setExclusive] = useState(false);
@@ -127,10 +131,17 @@ export function DetailSplitPane({
   // switch to the inline geometry once ResizeObserver reports the width,
   // which makes the panel appear to enter from the wrong edge.
   const hasMeasuredContainer = containerWidth > 0;
+  const preferredMode = normalizeDetailOpenMode(detailOpenMode);
+  const activeOpenMode = open ? (activeOpenModeRef.current || preferredMode) : preferredMode;
   const canInline = open && hasMeasuredContainer && containerWidth >= INLINE_MIN_WIDTH;
-  const desiredMode = open && hasMeasuredContainer
-    ? (canInline ? (exclusive ? "exclusive" : "inline") : "overlay")
-    : null;
+  const desiredMode = resolveDetailPresentation({
+    open,
+    measured: hasMeasuredContainer,
+    containerWidth,
+    preferredMode: activeOpenMode,
+    exclusive,
+    inlineMinWidth: INLINE_MIN_WIDTH,
+  });
   const isInline = open && desiredMode === "inline";
   const isOverlay = open && desiredMode === "overlay";
   const constrainedWidth = clampDetailWidth(detailWidth, containerWidth || INLINE_MIN_WIDTH);
@@ -145,6 +156,13 @@ export function DetailSplitPane({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    const previousOpen = previousOpenForModeRef.current;
+    if (open && !previousOpen) activeOpenModeRef.current = preferredMode;
+    if (!open && previousOpen) activeOpenModeRef.current = null;
+    previousOpenForModeRef.current = open;
+  }, [open, preferredMode]);
 
   useEffect(() => {
     let active = true;
