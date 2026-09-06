@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, GripVertical, MapPin, Pencil, Plus, Star, Trash2 } from "@/components/ui/icons";
+import { ArrowDown, ArrowUp, GripVertical, MapPin, Pencil, Plus, Trash2 } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -74,7 +74,7 @@ function LocationDetail({ workspace, production, location, venues, locationCount
   </form>;
 }
 
-function ProductionLocationRow({ location, index, count, canWrite, reorderable, onEdit, onRemove, onMove }) {
+function ProductionLocationRow({ location, index, count, canWrite, reorderable, pendingPrimaryId, onEdit, onRemove, onMove, onPrimaryToggle }) {
   const grid = locationGridClassName(canWrite);
   return <SortableItem value={location.id} disabled={!reorderable} className="border-b last:border-b-0"><div className={`${grid} py-3 transition-colors hover:bg-muted/40`}>
     {reorderable ? <SortableItemHandle className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`拖动${locationName(location)}调整排序`} title="拖动调整排序"><GripVertical className="size-4" /></SortableItemHandle> : <span className="size-7" aria-hidden="true" />}
@@ -82,7 +82,7 @@ function ProductionLocationRow({ location, index, count, canWrite, reorderable, 
     <MapPin className="hidden size-4 text-muted-foreground sm:block" />
     <div className="min-w-0"><p className="truncate text-sm font-medium">{locationName(location)}</p><p className="mt-1 truncate text-xs text-muted-foreground md:hidden">{location.notes || "地点关联"}</p></div>
     <Badge variant="outline" className="justify-self-start">{purposeLabel(location.purpose)}</Badge>
-    <div className="justify-self-start">{location.isPrimary ? <Badge variant="secondary"><Star className="mr-1 size-3" />默认地点</Badge> : <span className="text-xs text-muted-foreground">—</span>}</div>
+    <div className="flex w-full items-center justify-center"><Switch checked={Boolean(location.isPrimary)} disabled={!canWrite || pendingPrimaryId === location.id} onCheckedChange={(checked) => onPrimaryToggle(location, checked)} aria-label={`${location.isPrimary ? "取消" : "设为"}默认地点：${locationName(location)}`} /></div>
     <p className="hidden truncate text-xs text-muted-foreground md:block">{location.notes || "—"}</p>
     {canWrite && <div className="flex items-center justify-end gap-1"><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === 0} onClick={() => onMove(index, -1)} aria-label="上移地点" title="上移地点"><ArrowUp /></Button><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === count - 1} onClick={() => onMove(index, 1)} aria-label="下移地点" title="下移地点"><ArrowDown /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onEdit(location)} aria-label="编辑活动地点" title="编辑活动地点"><Pencil /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onRemove(location)} aria-label="移除活动地点" title="移除活动地点"><Trash2 /></Button></div>}
   </div></SortableItem>;
@@ -103,6 +103,7 @@ export function ProductionLocationsPage({ workspace, production }) {
   const [error, setError] = useState(null);
   const [editor, setEditor] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [pendingPrimaryId, setPendingPrimaryId] = useState(null);
   const load = useCallback(async () => {
     setLoading(true);
     try { setLocations(await listProductionLocations(production.id)); setError(null); }
@@ -138,6 +139,21 @@ export function ProductionLocationsPage({ workspace, production }) {
     catch (nextError) { notify.error("移除活动地点失败", { id: toast, description: nextError?.message || String(nextError) }); }
     finally { setBusy(false); }
   };
+  const setPrimary = async (location, checked) => {
+    if (!canWrite || busy || pendingPrimaryId) return;
+    const previous = locations;
+    setPendingPrimaryId(location.id);
+    setLocations((current) => current.map((item) => ({ ...item, isPrimary: checked ? item.id === location.id : item.id === location.id ? false : item.isPrimary })));
+    const toast = notify.loading(checked ? "正在设置默认地点…" : "正在取消默认地点…");
+    try {
+      await updateProductionLocation(production.id, location.id, { is_primary: checked });
+      notify.success(checked ? "默认地点已更新" : "已取消默认地点", { id: toast });
+      await load();
+    } catch (nextError) {
+      setLocations(previous);
+      notify.error(checked ? "设置默认地点失败" : "取消默认地点失败", { id: toast, description: nextError?.message || String(nextError) });
+    } finally { setPendingPrimaryId(null); }
+  };
   const move = async (index, delta) => {
     const target = index + delta; if (!reorderable || target < 0 || target >= sortedLocations.length || busy) return;
     const next = [...locations]; [next[index], next[target]] = [next[target], next[index]]; setLocations(next);
@@ -145,7 +161,7 @@ export function ProductionLocationsPage({ workspace, production }) {
     catch (nextError) { setLocations(locations); notify.error("地点排序失败", { description: nextError?.message || String(nextError) }); }
   };
   const empty = error ? { icon: MapPin, title: "无法加载活动地点", description: error.message || String(error), action: <Button variant="outline" onClick={load}>重试</Button> } : { icon: MapPin, title: search || getResourceFilterConditions(filterQuery).length ? "没有匹配的活动地点" : "尚未添加活动地点", description: "从工作空间场地资源中选择本活动会使用的场地或空间。", action: canWrite ? <Button onClick={() => openEditor(null)}><Plus />添加地点</Button> : null };
-  const content = <Card variant="flush"><CardContent className="p-0"><div className={`${locationGridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}><span aria-hidden="true" /><span className="text-center">位置</span><span aria-hidden="true" /><span>地点与空间</span><span>使用场景</span><span>默认地点</span><span>备注</span>{canWrite && <span aria-hidden="true" />}</div><Sortable value={sortedLocations} onValueChange={(next) => reorderable && setLocations(next)} onValueCommit={async (next, meta) => { if (!reorderable) return; try { await reorderProductionLocations(production.id, next.map((item, order) => ({ id: item.id, sort_order: order }))); notify.success("地点顺序已保存"); await load(); } catch (nextError) { setLocations(meta.previousValue); notify.error("地点排序失败", { description: nextError?.message || String(nextError) }); } }} getItemValue={(item) => item.id} strategy="vertical" className="divide-y-0">{sortedLocations.map((location, index) => <ProductionLocationRow key={location.id} location={location} index={index} count={sortedLocations.length} canWrite={canWrite} reorderable={reorderable} onEdit={openEditor} onRemove={remove} onMove={move} />)}</Sortable></CardContent></Card>;
+  const content = <Card variant="flush"><CardContent className="p-0"><div className={`${locationGridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}><span aria-hidden="true" /><span className="text-center">位置</span><span aria-hidden="true" /><span>地点与空间</span><span>使用场景</span><span>默认地点</span><span>备注</span>{canWrite && <span aria-hidden="true" />}</div><Sortable value={sortedLocations} onValueChange={(next) => reorderable && setLocations(next)} onValueCommit={async (next, meta) => { if (!reorderable) return; try { await reorderProductionLocations(production.id, next.map((item, order) => ({ id: item.id, sort_order: order }))); notify.success("地点顺序已保存"); await load(); } catch (nextError) { setLocations(meta.previousValue); notify.error("地点排序失败", { description: nextError?.message || String(nextError) }); } }} getItemValue={(item) => item.id} strategy="vertical" className="divide-y-0">{sortedLocations.map((location, index) => <ProductionLocationRow key={location.id} location={location} index={index} count={sortedLocations.length} canWrite={canWrite} reorderable={reorderable} pendingPrimaryId={pendingPrimaryId} onEdit={openEditor} onRemove={remove} onMove={move} onPrimaryToggle={setPrimary} />)}</Sortable></CardContent></Card>;
   const filterFields = [purposeFilter, primaryFilter];
   const sortControls = <div className="flex min-w-0 flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">排序</span><Select items={[["sort_order", "排序位置"], ["name", "地点名称"], ["updated_at", "更新时间"]].map(([value, label]) => ({ value, label }))} value={sort} onValueChange={setSort}><SelectTrigger className="w-28" aria-label="排序字段"><SelectValue /></SelectTrigger><SelectContent>{[["sort_order", "排序位置"], ["name", "地点名称"], ["updated_at", "更新时间"]].map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button type="button" variant="outline" size="sm" onClick={() => setDirection((current) => current === "asc" ? "desc" : "asc")} aria-label={direction === "asc" ? "切换为降序" : "切换为升序"}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}<span>{direction === "asc" ? "升序" : "降序"}</span></Button></div>;
   return <><ResourcePage title="场地与空间" description="配置本活动使用的场地、空间和地点顺序。" count={sortedLocations.length} search={{ value: search, onChange: setSearch, placeholder: "搜索场地、空间或备注…" }} filters={<><ResourceFilters fields={filterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />{sortControls}</>} showViewToggle={false} headerActions={canWrite ? <Button onClick={() => openEditor(null)}><Plus />添加地点</Button> : undefined} loading={loading} loadingContent={<LocationManagementSkeleton canWrite={canWrite} />} empty={sortedLocations.length ? null : empty} summary={reorderable ? <span className="inline-flex items-center gap-1"><GripVertical className="size-3" />可拖动调整地点顺序</span> : null}>{content}</ResourcePage><Dialog open={Boolean(editor)} onOpenChange={(open) => { if (!open && !busy) setEditor(null); }}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{editor?.id ? "编辑活动地点" : "添加活动地点"}</DialogTitle><DialogDescription>选择工作空间场地资源，并配置使用场景和默认地点状态。</DialogDescription></DialogHeader><LocationDetail key={editor?.id || "new"} workspace={workspace} production={production} location={editor?.id ? locations.find((item) => item.id === editor.id) : null} venues={venues} locationCount={locations.length} busy={busy} onCancel={() => setEditor(null)} onSaved={async () => { setEditor(null); await load(); }} /></DialogContent></Dialog></>;
