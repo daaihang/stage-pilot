@@ -17,16 +17,26 @@ const settingGroups = [["general", "常规", Settings2], ["notifications", "通�
 function PlanningSettings({ workspaceId, canManage }) { const [value, setValue] = useState(true); const [loaded, setLoaded] = useState(false); useEffect(() => { getWorkspacePlanningSettings(workspaceId).then((data) => { setValue(data.require_actual_start_before_completion !== false); setLoaded(true); }).catch(() => setLoaded(true)); }, [workspaceId]); const save = async (checked) => { setValue(checked); const toast = notify.loading("正在保存排程规则…"); try { await updateWorkspacePlanningSettings(workspaceId, { require_actual_start_before_completion: checked }); notify.success("排程规则已保存", { id: toast }); } catch (error) { setValue(!checked); notify.error("排程规则保存失败", { id: toast, description: error?.message || String(error) }); } }; return <Card><CardHeader><CardTitle>排程规则</CardTitle><CardDescription>设置场次和彩排是否必须先开始，才能标记为已结束。</CardDescription></CardHeader><CardContent><div className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium">必须先开始才能结束</p><p className="mt-1 text-xs text-muted-foreground">Production 未单独覆盖时继承此默认值。</p></div><Switch checked={value} disabled={!canManage || !loaded} onCheckedChange={save} /></div></CardContent></Card>; }
 
 function DefaultActivityTimezone({ workspaceId, timezone, canManage, onSaved }) {
-  const [value, setValue] = useState(timezone || "Asia/Shanghai");
-  const [saving, setSaving] = useState(false);
-  useEffect(() => { setValue(timezone || "Asia/Shanghai"); }, [timezone]);
-  const save = async (nextTimezone) => {
-    setValue(nextTimezone);
-    setSaving(true);
-    try {
-      const settings = await updateWorkspacePlanningSettings(workspaceId, { default_timezone: nextTimezone });
-      setValue(settings.default_timezone || nextTimezone);
-      onSaved?.(settings.default_timezone || nextTimezone);
+    const [value, setValue] = useState(timezone || "Asia/Shanghai");
+    const [saving, setSaving] = useState(false);
+    useEffect(() => { setValue(timezone || "Asia/Shanghai"); }, [timezone]);
+    const save = async (nextTimezone) => {
+      // Base UI may return either the option object or its raw value depending
+      // on the trigger path. Normalize it before updating local state or
+      // serializing the PATCH body; JSON.stringify drops undefined fields.
+      const resolvedTimezone = typeof nextTimezone === "string"
+        ? nextTimezone.trim()
+        : nextTimezone?.value?.trim?.() || "";
+      if (!resolvedTimezone) {
+        notify.error("默认活动时区保存失败", { description: "请选择一个有效的时区。" });
+        return;
+      }
+      setValue(resolvedTimezone);
+      setSaving(true);
+      try {
+        const settings = await updateWorkspacePlanningSettings(workspaceId, { default_timezone: resolvedTimezone });
+        setValue(settings.default_timezone || resolvedTimezone);
+        onSaved?.(settings.default_timezone || resolvedTimezone);
       notify.success("默认活动时区已保存");
     } catch (error) {
       setValue(timezone || "Asia/Shanghai");
