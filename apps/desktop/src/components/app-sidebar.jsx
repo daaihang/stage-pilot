@@ -55,9 +55,13 @@ function WorkspaceSwitcher({ workspace, production, recentContexts, onOpenRecent
   const { isMobile } = useSidebar();
   const [open, setOpen] = useState(false);
   const closeMenu = () => setOpen(false);
+  const primaryContextName = production ? production.name : workspace?.name;
+  const secondaryContextName = production
+    ? (workspace?.name || production.workspaceName || "所属工作空间")
+    : (workspace?.plan || "进入后解锁导航");
   return <SidebarMenu><SidebarMenuItem><DropdownMenu open={open} onOpenChange={setOpen}><DropdownMenuTrigger render={<SidebarMenuButton size="lg" tooltip="工作上下文" className="data-open:bg-sidebar-accent group-data-[collapsible=icon]:justify-center" />}>
     <div className="flex size-8 shrink-0 items-center justify-center bg-sidebar-primary text-xs font-semibold text-sidebar-primary-foreground">{workspace?.logo || <Sparkles className="size-4" />}</div>
-    <div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden"><span className="truncate text-sm font-medium">{workspace?.name || "选择工作空间"}</span><span className="truncate text-xs text-muted-foreground">{production ? production.name : workspace?.plan || "进入后解锁导航"}</span></div>
+    <div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden"><span className="truncate text-sm font-medium">{primaryContextName || "选择工作空间"}</span><span className="truncate text-xs text-muted-foreground">{secondaryContextName}</span></div>
     <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
   </DropdownMenuTrigger><DropdownMenuContent className="min-w-80" side={isMobile ? "bottom" : "right"} align="start" sideOffset={4}>
     <DropdownMenuGroup><DropdownMenuLabel>最近访问</DropdownMenuLabel>
