@@ -28,24 +28,29 @@ func TestPreferencesDetailOpenMode(t *testing.T) {
 		t.Fatalf("default detail_open_mode = %v, want inline", got)
 	}
 
-	response := authedRequest(t, app, token, http.MethodPatch, "/me/preferences", map[string]string{"detail_open_mode": "overlay"})
+	response := authedRequest(t, app, token, http.MethodPatch, "/me/preferences", map[string]string{"detail_open_mode": "exclusive"})
 	if response.Code != http.StatusOK {
-		t.Fatalf("patch overlay status = %d body = %s", response.Code, response.Body.String())
+		t.Fatalf("patch exclusive status = %d body = %s", response.Code, response.Body.String())
 	}
-	if got := get()["detail_open_mode"]; got != "overlay" {
-		t.Fatalf("saved detail_open_mode = %v, want overlay", got)
+	if got := get()["detail_open_mode"]; got != "exclusive" {
+		t.Fatalf("saved detail_open_mode = %v, want exclusive", got)
 	}
 
 	response = authedRequest(t, app, token, http.MethodPatch, "/me/preferences", map[string]string{})
 	if response.Code != http.StatusOK {
 		t.Fatalf("patch omitted status = %d body = %s", response.Code, response.Body.String())
 	}
-	if got := get()["detail_open_mode"]; got != "overlay" {
+	if got := get()["detail_open_mode"]; got != "exclusive" {
 		t.Fatalf("omitted detail_open_mode changed to %v", got)
 	}
 
 	response = authedRequest(t, app, token, http.MethodPatch, "/me/preferences", map[string]string{"detail_open_mode": "invalid"})
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid detail_open_mode status = %d body = %s", response.Code, response.Body.String())
+	}
+
+	response = authedRequest(t, app, token, http.MethodPatch, "/me/preferences", map[string]string{"detail_open_mode": "overlay"})
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("legacy overlay detail_open_mode status = %d body = %s", response.Code, response.Body.String())
 	}
 }

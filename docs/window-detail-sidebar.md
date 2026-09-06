@@ -62,7 +62,7 @@ useEffect(() => registerDetail({
 
 页面不得再自行维护以下状态：`open`、详情宽度、嵌入/覆盖/独占模式。页面只读取 `detailOpen` 或 `detailPresentation` 来更新入口文案、详情说明等页面特有文本。
 
-宽屏详情的默认打开方式由账户偏好 `detail_open_mode` 控制，取值为 `inline`（分栏侧栏，默认）或 `overlay`（覆盖中间工作区）。该偏好只决定下一次打开详情时的初始呈现；详情已经打开时修改偏好不会让当前 surface 跳变。容器宽度不足时仍强制使用 overlay，标题栏和左侧 `AppSidebar` 不受影响。
+宽屏详情的默认打开方式由账户偏好 `detail_open_mode` 控制，取值为 `inline`（分栏侧栏，默认）或 `exclusive`（带边距的大模态详情窗口）。该偏好只决定下一次打开详情时的初始呈现；详情已经打开时修改偏好不会让当前 surface 跳变。容器宽度不足时无论偏好为何都强制使用运行时的 `overlay`，标题栏和左侧 `AppSidebar` 不受影响。历史偏好值 `overlay` 读取时按 `exclusive` 兼容处理。
 
 ## 工作空间资源库适配
 

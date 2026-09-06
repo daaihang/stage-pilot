@@ -12,16 +12,17 @@ test("defaults missing or invalid preferences to inline", () => {
 
 test("wide containers honor the configured mode", () => {
   assert.equal(resolve({ preferredMode: "inline" }), "inline");
-  assert.equal(resolve({ preferredMode: "overlay" }), "overlay");
+  assert.equal(resolve({ preferredMode: "exclusive" }), "exclusive");
+  assert.equal(normalizeDetailOpenMode("overlay"), "exclusive");
 });
 
 test("narrow containers always use overlay", () => {
   assert.equal(resolve({ containerWidth: 959, preferredMode: "inline" }), "overlay");
-  assert.equal(resolve({ containerWidth: 959, preferredMode: "overlay" }), "overlay");
+  assert.equal(resolve({ containerWidth: 959, preferredMode: "exclusive" }), "overlay");
 });
 
 test("exclusive presentation takes precedence on wide containers", () => {
-  assert.equal(resolve({ preferredMode: "overlay", exclusive: true }), "exclusive");
+  assert.equal(resolve({ preferredMode: "inline", exclusive: true }), "exclusive");
   assert.equal(resolve({ preferredMode: "inline", exclusive: true, containerWidth: 959 }), "overlay");
 });
 

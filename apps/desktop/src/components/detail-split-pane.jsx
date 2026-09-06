@@ -108,6 +108,7 @@ export function DetailSplitPane({
   const enterExclusive = useCallback(() => {
     if (!exclusiveRef.current) openFocusRef.current = document.activeElement;
     restoreExclusiveFocusRef.current = false;
+    activeOpenModeRef.current = "exclusive";
     setExclusiveMode(true);
     notify.info("详情已独占工作区");
   }, [setExclusiveMode]);
@@ -115,6 +116,7 @@ export function DetailSplitPane({
   const exitExclusive = useCallback(() => {
     if (!exclusiveRef.current) return;
     restoreExclusiveFocusRef.current = true;
+    activeOpenModeRef.current = "inline";
     setExclusiveMode(false);
     notify.info("已退出独占详情");
   }, [setExclusiveMode]);
@@ -144,6 +146,7 @@ export function DetailSplitPane({
   });
   const isInline = open && desiredMode === "inline";
   const isOverlay = open && desiredMode === "overlay";
+  const isExclusivePresentation = open && desiredMode === "exclusive";
   const constrainedWidth = clampDetailWidth(detailWidth, containerWidth || INLINE_MIN_WIDTH);
   const exclusiveInset = containerWidth >= 1280 ? "32px" : containerWidth >= 1080 ? "24px" : "16px";
 
@@ -161,8 +164,9 @@ export function DetailSplitPane({
     const previousOpen = previousOpenForModeRef.current;
     if (open && !previousOpen) activeOpenModeRef.current = preferredMode;
     if (!open && previousOpen) activeOpenModeRef.current = null;
+    if (open && canInline && activeOpenModeRef.current === "exclusive" && !exclusive) setExclusiveMode(true);
     previousOpenForModeRef.current = open;
-  }, [open, preferredMode]);
+  }, [canInline, exclusive, open, preferredMode, setExclusiveMode]);
 
   useEffect(() => {
     let active = true;
@@ -181,8 +185,11 @@ export function DetailSplitPane({
   }, [storageKey]);
 
   useEffect(() => {
-    if ((!open || !canInline) && exclusive) setExclusiveMode(false);
-  }, [canInline, exclusive, open, setExclusiveMode]);
+    if ((!open || !canInline) && exclusive) {
+      if (open && !canInline) activeOpenModeRef.current = preferredMode;
+      setExclusiveMode(false);
+    }
+  }, [canInline, exclusive, open, preferredMode, setExclusiveMode]);
 
   useEffect(() => { onDetailWidthChange?.(constrainedWidth); }, [constrainedWidth, onDetailWidthChange]);
 
@@ -244,22 +251,22 @@ export function DetailSplitPane({
     }
     setDetailAction({
       label: "关闭详情",
-      exclusive,
+      exclusive: isExclusivePresentation,
       onClose: closeDetail,
-      onToggleExclusive: canInline ? (exclusive ? exitExclusive : enterExclusive) : undefined,
+      onToggleExclusive: canInline ? (isExclusivePresentation ? exitExclusive : enterExclusive) : undefined,
     });
     return () => setDetailAction(null);
-  }, [canInline, closeDetail, enterExclusive, exclusive, exitExclusive, open, setDetailAction]);
+  }, [canInline, closeDetail, enterExclusive, exitExclusive, isExclusivePresentation, open, setDetailAction]);
 
   // Focus the surface on entering either exclusive or narrow page mode.
   useEffect(() => {
     if (!open || !surfaceMounted || !isSurfaceOpen) return undefined;
-    const enteringExclusive = exclusive && surfaceMode === "exclusive";
+    const enteringExclusive = isExclusivePresentation && surfaceMode === "exclusive";
     const enteringOverlay = isOverlay && surfaceMode === "overlay";
     if (!enteringExclusive && !enteringOverlay) return undefined;
     const frame = requestAnimationFrame(() => surfaceRef.current?.focus?.());
     return () => cancelAnimationFrame(frame);
-  }, [exclusive, isOverlay, isSurfaceOpen, open, surfaceMode, surfaceMounted]);
+  }, [isExclusivePresentation, isOverlay, isSurfaceOpen, open, surfaceMode, surfaceMounted]);
 
   // Explicit exclusive exit restores the focus that was active before entry.
   useEffect(() => {
@@ -288,19 +295,19 @@ export function DetailSplitPane({
   }, [open, triggerRef]);
 
   useEffect(() => {
-    if (!open || (!exclusive && !isOverlay)) return undefined;
+    if (!open || (!isExclusivePresentation && !isOverlay)) return undefined;
     const handleEscape = (event) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       event.preventDefault();
-      if (exclusive) exitExclusive();
+      if (isExclusivePresentation) exitExclusive();
       else closeDetail();
     };
     window.addEventListener("keydown", handleEscape);
     return () => window.removeEventListener("keydown", handleEscape);
-  }, [closeDetail, exitExclusive, exclusive, isOverlay, open]);
+  }, [closeDetail, exitExclusive, isExclusivePresentation, isOverlay, open]);
 
   useEffect(() => {
-    if (!open || !exclusive) return undefined;
+    if (!open || !isExclusivePresentation) return undefined;
     const getFocusable = () => {
       const titlebarControls = [...document.querySelectorAll("[data-detail-titlebar-control]")];
       const surfaceControls = surfaceRef.current ? [...surfaceRef.current.querySelectorAll(FOCUSABLE_SELECTOR)] : [];
@@ -338,7 +345,7 @@ export function DetailSplitPane({
       document.removeEventListener("keydown", handleKeyDown, true);
       document.removeEventListener("focusin", handleFocusIn, true);
     };
-  }, [exclusive, open]);
+  }, [isExclusivePresentation, open]);
 
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -391,7 +398,7 @@ export function DetailSplitPane({
     if (surfacePhaseRef.current === "closing") finishClose();
   };
 
-  const mainInert = exclusive || isOverlay;
+  const mainInert = isExclusivePresentation || isOverlay;
   const mainWidth = isInline ? `calc(100% - ${constrainedWidth}px)` : "100%";
   const surfaceStyle = surfaceMode === "inline"
     ? {

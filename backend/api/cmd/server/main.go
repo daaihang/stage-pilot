@@ -495,8 +495,8 @@ func (app *application) updatePreferences(w http.ResponseWriter, r *http.Request
 		errorJSON(w, 400, "invalid_input", "标题栏模式无效")
 		return
 	}
-	if in.DetailOpenMode != "" && in.DetailOpenMode != "inline" && in.DetailOpenMode != "overlay" {
-		errorJSON(w, 400, "invalid_input", "详情打开方式无效，需要 inline 或 overlay")
+	if in.DetailOpenMode != "" && in.DetailOpenMode != "inline" && in.DetailOpenMode != "exclusive" {
+		errorJSON(w, 400, "invalid_input", "详情打开方式无效，需要 inline 或 exclusive")
 		return
 	}
 	if in.Timezone != "" && !validProductionTimezone(in.Timezone) {

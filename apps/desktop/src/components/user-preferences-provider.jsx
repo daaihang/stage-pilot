@@ -56,7 +56,7 @@ export function UserPreferencesProvider({ authStatus, user, children }) {
 
   const updateDetailOpenMode = useCallback(async (nextMode) => {
     if (!DETAIL_OPEN_MODES.includes(nextMode)) {
-      notify.error("详情打开方式设置失败", { description: "请选择分栏侧栏或覆盖工作区。" });
+      notify.error("详情打开方式设置失败", { description: "请选择分栏侧栏或大模态窗。" });
       return;
     }
     const normalized = normalizeDetailOpenMode(nextMode);
