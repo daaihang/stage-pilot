@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical, MapPin, Pencil, Plus, Star, Trash2 } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ResourcePage, resourceGridClassName } from "@/components/resource-page";
+import { ResourcePage } from "@/components/resource-page";
+import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
+import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { notify } from "@/components/ui/sonner";
 import { Switch } from "@/components/ui/switch";
 import { Sortable, SortableItem, SortableItemHandle } from "@/components/reui/sortable";
@@ -18,6 +21,12 @@ export const productionLocationPurposes = [["performance", "演出"], ["rehearsa
 const purposeLabel = (value) => value === "primary" ? "其他" : productionLocationPurposes.find(([key]) => key === value)?.[1] || value || "其他";
 const locationName = (location) => (location.venueName || "未命名场地") + (location.spaceName ? " · " + location.spaceName : " · 整个场地");
 const canManageLocations = (workspace, production) => ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
+const locationGridClassName = (canWrite) => canWrite
+  ? "grid min-w-0 items-center gap-2 px-3 sm:gap-3 sm:px-4 grid-cols-[1.75rem_minmax(0,1fr)_5rem_5rem_4.5rem] sm:grid-cols-[1.75rem_1.75rem_1.25rem_minmax(0,1fr)_5rem_6rem_minmax(6rem,1fr)_4.5rem]"
+  : "grid min-w-0 items-center gap-2 px-3 sm:gap-3 sm:px-4 grid-cols-[1.75rem_minmax(0,1fr)_5rem_5rem] sm:grid-cols-[1.75rem_1.75rem_1.25rem_minmax(0,1fr)_5rem_6rem_minmax(6rem,1fr)]";
+const purposeFilter = { id: "purpose", label: "使用场景", type: "select", defaultOperator: "is_any_of", options: productionLocationPurposes.map(([value, label]) => ({ value, label })) };
+const primaryFilter = { id: "primary", label: "默认地点", type: "select", defaultOperator: "is_any_of", options: [{ value: "default", label: "默认地点" }, { value: "other", label: "其他地点" }] };
+const filterValues = (query, field) => getResourceFilterConditions(query).find((item) => item.field === field && item.operator === "is_any_of")?.values?.filter(Boolean) || [];
 
 function initialForm(location) {
   return { id: location?.id || null, venueId: location?.venueId || "", venueSpaceId: location?.venueSpaceId || "", purpose: location?.purpose === "primary" ? "other" : location?.purpose || "other", isPrimary: Boolean(location?.isPrimary), notes: location?.notes || "" };
@@ -65,17 +74,31 @@ function LocationDetail({ workspace, production, location, venues, locationCount
   </form>;
 }
 
-function LocationListItem({ location, index, count, canWrite, reorderable, onEdit, onRemove, onMove }) {
-  return <SortableItem value={location.id} disabled={!reorderable} className="border-b last:border-b-0"><div className="flex min-w-0 items-center gap-3 px-3 py-3 transition-colors hover:bg-muted/40 sm:px-4"><SortableItemHandle className="flex size-7 shrink-0 items-center justify-center text-muted-foreground hover:bg-muted" disabled={!reorderable} aria-label={reorderable ? "拖动" + locationName(location) + "调整排序" : "清除筛选后可调整排序"}><GripVertical className="size-4" /></SortableItemHandle><MapPin className="size-4 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">{locationName(location)}</p>{location.isPrimary && <Badge variant="secondary"><Star className="mr-1 size-3" />主地点</Badge>}<Badge variant="outline">{purposeLabel(location.purpose)}</Badge></div>{location.notes && <p className="mt-1 truncate text-xs text-muted-foreground">{location.notes}</p>}</div>{canWrite && <div className="flex shrink-0 items-center gap-1"><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === 0} onClick={() => onMove(index, -1)} aria-label="上移地点"><ArrowUp /></Button><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === count - 1} onClick={() => onMove(index, 1)} aria-label="下移地点"><ArrowDown /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onEdit(location)} aria-label="编辑活动地点"><Pencil /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onRemove(location)} aria-label="移除活动地点"><Trash2 /></Button></div>}</div></SortableItem>;
+function ProductionLocationRow({ location, index, count, canWrite, reorderable, onEdit, onRemove, onMove }) {
+  const grid = locationGridClassName(canWrite);
+  return <SortableItem value={location.id} disabled={!reorderable} className="border-b last:border-b-0"><div className={`${grid} py-3 transition-colors hover:bg-muted/40`}>
+    {reorderable ? <SortableItemHandle className="flex size-7 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`拖动${locationName(location)}调整排序`} title="拖动调整排序"><GripVertical className="size-4" /></SortableItemHandle> : <span className="size-7" aria-hidden="true" />}
+    <Badge variant="outline" className="hidden size-7 justify-center px-0 tabular-nums sm:inline-flex">{index + 1}</Badge>
+    <MapPin className="hidden size-4 text-muted-foreground sm:block" />
+    <div className="min-w-0"><p className="truncate text-sm font-medium">{locationName(location)}</p><p className="mt-1 truncate text-xs text-muted-foreground md:hidden">{location.notes || "地点关联"}</p></div>
+    <Badge variant="outline" className="justify-self-start">{purposeLabel(location.purpose)}</Badge>
+    <div className="justify-self-start">{location.isPrimary ? <Badge variant="secondary"><Star className="mr-1 size-3" />默认地点</Badge> : <span className="text-xs text-muted-foreground">—</span>}</div>
+    <p className="hidden truncate text-xs text-muted-foreground md:block">{location.notes || "—"}</p>
+    {canWrite && <div className="flex items-center justify-end gap-1"><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === 0} onClick={() => onMove(index, -1)} aria-label="上移地点" title="上移地点"><ArrowUp /></Button><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === count - 1} onClick={() => onMove(index, 1)} aria-label="下移地点" title="下移地点"><ArrowDown /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onEdit(location)} aria-label="编辑活动地点" title="编辑活动地点"><Pencil /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onRemove(location)} aria-label="移除活动地点" title="移除活动地点"><Trash2 /></Button></div>}
+  </div></SortableItem>;
+}
+
+function LocationManagementSkeleton({ canWrite }) {
+  return <Card variant="flush"><CardContent className="divide-y p-0">{Array.from({ length: 5 }, (_, index) => <div key={index} className={`${locationGridClassName(canWrite)} min-h-16 py-3`}><Skeleton className="size-7" /><Skeleton className="hidden size-7 sm:block" /><Skeleton className="hidden size-4 sm:block" /><div className="space-y-2"><Skeleton className="h-4 w-44" /><Skeleton className="h-3 w-28" /></div><Skeleton className="h-5 w-14" /><Skeleton className="h-5 w-16" /><Skeleton className="hidden h-4 w-28 md:block" />{canWrite && <Skeleton className="h-8 w-24" />}</div>)}</CardContent></Card>;
 }
 
 export function ProductionLocationsPage({ workspace, production }) {
   const [locations, setLocations] = useState([]);
   const [venues, setVenues] = useState([]);
   const [search, setSearch] = useState("");
-  const [purpose, setPurpose] = useState("all");
-  const [primaryOnly, setPrimaryOnly] = useState("all");
-  const [view, setView] = useState("list");
+  const [filterQuery, setFilterQuery] = useState(() => createFilterQuery());
+  const [sort, setSort] = useState("sort_order");
+  const [direction, setDirection] = useState("asc");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [editor, setEditor] = useState(null);
@@ -94,12 +117,19 @@ export function ProductionLocationsPage({ workspace, production }) {
     return () => { active = false; };
   }, [production, workspace]);
   const canWrite = canManageLocations(workspace, production);
+  const filterState = useMemo(() => ({ purpose: filterValues(filterQuery, "purpose"), primary: filterValues(filterQuery, "primary") }), [filterQuery]);
   const visible = useMemo(() => locations.filter((location) => {
     const needle = search.trim().toLowerCase();
     const matchesSearch = !needle || [location.venueName, location.spaceName, location.notes].some((value) => String(value || "").toLowerCase().includes(needle));
-    return matchesSearch && (purpose === "all" || location.purpose === purpose) && (primaryOnly === "all" || (primaryOnly === "primary" ? location.isPrimary : !location.isPrimary));
-  }), [locations, primaryOnly, purpose, search]);
-  const reorderable = canWrite && !search.trim() && purpose === "all" && primaryOnly === "all";
+    const matchesPurpose = !filterState.purpose.length || filterState.purpose.includes(location.purpose === "primary" ? "other" : location.purpose);
+    const matchesPrimary = !filterState.primary.length || filterState.primary.includes(location.isPrimary ? "default" : "other");
+    return matchesSearch && matchesPurpose && matchesPrimary;
+  }), [filterState, locations, search]);
+  const sortedLocations = useMemo(() => [...visible].sort((left, right) => {
+    const result = sort === "name" ? locationName(left).localeCompare(locationName(right), "zh-CN") : sort === "updated_at" ? new Date(left.updatedAt || 0).getTime() - new Date(right.updatedAt || 0).getTime() : Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+    return direction === "asc" ? result || String(left.id).localeCompare(String(right.id)) : -(result || String(left.id).localeCompare(String(right.id)));
+  }), [direction, sort, visible]);
+  const reorderable = canWrite && !search.trim() && getResourceFilterConditions(filterQuery).length === 0 && sort === "sort_order" && direction === "asc";
   const openEditor = (location) => setEditor(location ? { id: location.id } : { id: null });
   const remove = async (location) => {
     if (!canWrite || busy || !window.confirm("确定移除“" + locationName(location) + "”吗？")) return;
@@ -109,12 +139,14 @@ export function ProductionLocationsPage({ workspace, production }) {
     finally { setBusy(false); }
   };
   const move = async (index, delta) => {
-    const target = index + delta; if (!reorderable || target < 0 || target >= locations.length || busy) return;
+    const target = index + delta; if (!reorderable || target < 0 || target >= sortedLocations.length || busy) return;
     const next = [...locations]; [next[index], next[target]] = [next[target], next[index]]; setLocations(next);
     try { await reorderProductionLocations(production.id, next.map((item, order) => ({ id: item.id, sort_order: order }))); notify.success("地点顺序已保存"); }
     catch (nextError) { setLocations(locations); notify.error("地点排序失败", { description: nextError?.message || String(nextError) }); }
   };
-  const empty = error ? { icon: MapPin, title: "无法加载活动地点", description: error.message || String(error), action: <Button variant="outline" onClick={load}>重试</Button> } : { icon: MapPin, title: search || purpose !== "all" || primaryOnly !== "all" ? "没有匹配的活动地点" : "尚未添加活动地点", description: "从工作空间场地资源中选择本活动会使用的场地或空间。", action: canWrite ? <Button onClick={() => openEditor(null)}><Plus />添加地点</Button> : null };
-  const content = <Sortable value={visible} onValueChange={(next) => reorderable && setLocations(next)} onValueCommit={async (next, meta) => { if (!reorderable) return; try { await reorderProductionLocations(production.id, next.map((item, order) => ({ id: item.id, sort_order: order }))); notify.success("地点顺序已保存"); await load(); } catch (nextError) { setLocations(meta.previousValue); notify.error("地点排序失败", { description: nextError?.message || String(nextError) }); } }} getItemValue={(item) => item.id} strategy="vertical" className={view === "grid" ? resourceGridClassName : "divide-y"}>{visible.map((location, index) => view === "grid" ? <SortableItem key={location.id} value={location.id} disabled={!reorderable}><Card><CardHeader><div className="flex items-start justify-between gap-3"><MapPin className="size-5 text-muted-foreground" />{location.isPrimary && <Badge variant="secondary"><Star className="mr-1 size-3" />主地点</Badge>}</div><CardTitle className="truncate text-base">{locationName(location)}</CardTitle></CardHeader><CardContent className="flex items-center justify-between gap-2"><Badge variant="outline">{purposeLabel(location.purpose)}</Badge>{canWrite && <Button variant="ghost" size="icon-sm" onClick={() => openEditor(location)} aria-label="编辑活动地点"><Pencil /></Button>}</CardContent></Card></SortableItem> : <LocationListItem key={location.id} location={location} index={index} count={visible.length} canWrite={canWrite} reorderable={reorderable} onEdit={openEditor} onRemove={remove} onMove={move} />)}</Sortable>;
-  return <><ResourcePage title="场地与空间" description="配置本活动使用的场地、空间和地点顺序。" count={visible.length} search={{ value: search, onChange: setSearch, placeholder: "搜索场地、空间或备注…" }} filters={<><Select value={purpose} onValueChange={setPurpose}><SelectTrigger className="w-32" aria-label="按使用场景筛选"><SelectValue placeholder="使用场景" /></SelectTrigger><SelectContent><SelectItem value="all">全部场景</SelectItem>{productionLocationPurposes.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Select value={primaryOnly} onValueChange={setPrimaryOnly}><SelectTrigger className="w-32" aria-label="按默认地点筛选"><SelectValue placeholder="默认地点" /></SelectTrigger><SelectContent><SelectItem value="all">全部地点</SelectItem><SelectItem value="primary">仅默认地点</SelectItem><SelectItem value="secondary">其他地点</SelectItem></SelectContent></Select></>} view={view} onViewChange={setView} headerActions={canWrite ? <Button onClick={() => openEditor(null)}><Plus />添加地点</Button> : undefined} loading={loading} empty={visible.length ? null : empty} summary={reorderable ? <span>可拖动调整地点顺序</span> : null}>{content}</ResourcePage><Dialog open={Boolean(editor)} onOpenChange={(open) => { if (!open && !busy) setEditor(null); }}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{editor?.id ? "编辑活动地点" : "添加活动地点"}</DialogTitle><DialogDescription>选择工作空间场地资源，并配置使用场景和默认地点状态。</DialogDescription></DialogHeader><LocationDetail key={editor?.id || "new"} workspace={workspace} production={production} location={editor?.id ? locations.find((item) => item.id === editor.id) : null} venues={venues} locationCount={locations.length} busy={busy} onCancel={() => setEditor(null)} onSaved={async () => { setEditor(null); await load(); }} /></DialogContent></Dialog></>;
+  const empty = error ? { icon: MapPin, title: "无法加载活动地点", description: error.message || String(error), action: <Button variant="outline" onClick={load}>重试</Button> } : { icon: MapPin, title: search || getResourceFilterConditions(filterQuery).length ? "没有匹配的活动地点" : "尚未添加活动地点", description: "从工作空间场地资源中选择本活动会使用的场地或空间。", action: canWrite ? <Button onClick={() => openEditor(null)}><Plus />添加地点</Button> : null };
+  const content = <Card variant="flush"><CardContent className="p-0"><div className={`${locationGridClassName(canWrite)} hidden border-b bg-muted/30 py-2 text-xs text-muted-foreground md:grid`}><span aria-hidden="true" /><span className="text-center">位置</span><span aria-hidden="true" /><span>地点与空间</span><span>使用场景</span><span>默认地点</span><span>备注</span>{canWrite && <span aria-hidden="true" />}</div><Sortable value={sortedLocations} onValueChange={(next) => reorderable && setLocations(next)} onValueCommit={async (next, meta) => { if (!reorderable) return; try { await reorderProductionLocations(production.id, next.map((item, order) => ({ id: item.id, sort_order: order }))); notify.success("地点顺序已保存"); await load(); } catch (nextError) { setLocations(meta.previousValue); notify.error("地点排序失败", { description: nextError?.message || String(nextError) }); } }} getItemValue={(item) => item.id} strategy="vertical" className="divide-y-0">{sortedLocations.map((location, index) => <ProductionLocationRow key={location.id} location={location} index={index} count={sortedLocations.length} canWrite={canWrite} reorderable={reorderable} onEdit={openEditor} onRemove={remove} onMove={move} />)}</Sortable></CardContent></Card>;
+  const filterFields = [purposeFilter, primaryFilter];
+  const sortControls = <div className="flex min-w-0 flex-wrap items-center gap-2"><span className="text-xs text-muted-foreground">排序</span><Select items={[["sort_order", "排序位置"], ["name", "地点名称"], ["updated_at", "更新时间"]].map(([value, label]) => ({ value, label }))} value={sort} onValueChange={setSort}><SelectTrigger className="w-28" aria-label="排序字段"><SelectValue /></SelectTrigger><SelectContent>{[["sort_order", "排序位置"], ["name", "地点名称"], ["updated_at", "更新时间"]].map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Button type="button" variant="outline" size="sm" onClick={() => setDirection((current) => current === "asc" ? "desc" : "asc")} aria-label={direction === "asc" ? "切换为降序" : "切换为升序"}>{direction === "asc" ? <ArrowUp /> : <ArrowDown />}<span>{direction === "asc" ? "升序" : "降序"}</span></Button></div>;
+  return <><ResourcePage title="场地与空间" description="配置本活动使用的场地、空间和地点顺序。" count={sortedLocations.length} search={{ value: search, onChange: setSearch, placeholder: "搜索场地、空间或备注…" }} filters={<><ResourceFilters fields={filterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />{sortControls}</>} showViewToggle={false} headerActions={canWrite ? <Button onClick={() => openEditor(null)}><Plus />添加地点</Button> : undefined} loading={loading} loadingContent={<LocationManagementSkeleton canWrite={canWrite} />} empty={sortedLocations.length ? null : empty} summary={reorderable ? <span className="inline-flex items-center gap-1"><GripVertical className="size-3" />可拖动调整地点顺序</span> : null}>{content}</ResourcePage><Dialog open={Boolean(editor)} onOpenChange={(open) => { if (!open && !busy) setEditor(null); }}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{editor?.id ? "编辑活动地点" : "添加活动地点"}</DialogTitle><DialogDescription>选择工作空间场地资源，并配置使用场景和默认地点状态。</DialogDescription></DialogHeader><LocationDetail key={editor?.id || "new"} workspace={workspace} production={production} location={editor?.id ? locations.find((item) => item.id === editor.id) : null} venues={venues} locationCount={locations.length} busy={busy} onCancel={() => setEditor(null)} onSaved={async () => { setEditor(null); await load(); }} /></DialogContent></Dialog></>;
 }
