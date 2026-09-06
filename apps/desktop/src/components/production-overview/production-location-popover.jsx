@@ -1,19 +1,36 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { MapPin, Pencil } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { notify } from "@/components/ui/sonner";
 import { listProductionLocations } from "@/lib/production-api";
 import { cn } from "@/lib/utils";
-import { productionPath } from "@/lib/navigation";
+import { useWindowDetail } from "@/components/window-detail-context";
+import { ProductionLocationsPage } from "@/components/production-locations-page";
 
 export function ProductionLocationPopover({ workspace, production, onRequestEdit, onChanged, disabled = false, className, refreshKey }) {
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const triggerRef = useRef(null);
   const navigate = useNavigate();
+  const routerLocation = useLocation();
+  const { registerDetail, setDetailOpen } = useWindowDetail();
   const canWrite = !production.isCreationSession && (["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit"));
+
+  useEffect(() => registerDetail({
+    key: `production-locations:${production.id}`,
+    storageKey: `detailPane:production-locations:${production.id}:v2`,
+    detailLabel: "活动地点",
+    triggerRef,
+    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} key={production.id} />,
+  }), [production, registerDetail, workspace]);
+
+  useEffect(() => {
+    if (!routerLocation.state?.openProductionLocations) return;
+    setDetailOpen(true, { announce: false });
+    navigate(routerLocation.pathname + routerLocation.search, { replace: true, state: null });
+  }, [navigate, routerLocation.pathname, routerLocation.search, routerLocation.state, setDetailOpen]);
 
   useEffect(() => {
     let active = true;
@@ -63,7 +80,7 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
         disabled={disabled || !canWrite}
         aria-label="编辑地点"
         title="编辑活动地点"
-        onClick={onRequestEdit || (() => navigate(productionPath(workspace.id, production.id, "locations")))}
+        onClick={onRequestEdit || (() => setDetailOpen(true))}
       >
         <Pencil />
       </Button>

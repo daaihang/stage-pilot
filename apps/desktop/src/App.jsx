@@ -20,7 +20,6 @@ import { UnifiedWorkContextPage } from "@/components/unified-work-context-page";
 import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
 import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
-import { ProductionLocationsPage } from "@/components/production-locations-page";
 import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
 import { ProductionInvitePage } from "@/components/production-invite-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
@@ -84,6 +83,14 @@ function TitlebarMenu({ menu, onAction }) {
 
 function AppLoading() {
   return <main className="flex h-full min-h-0 items-center justify-center bg-muted/20 p-6"><div className="w-full max-w-2xl space-y-4"><div className="h-8 w-48 animate-pulse bg-muted" /><div className="h-4 w-80 animate-pulse bg-muted" /><div className="grid gap-4 md:grid-cols-2"><div className="h-36 animate-pulse bg-muted" /><div className="h-36 animate-pulse bg-muted" /></div><div className="h-48 animate-pulse bg-muted" /></div></main>;
+}
+
+function ProductionLocationsRouteRedirect({ workspace, production }) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    navigate(productionPath(workspace.id, production.id, "overview"), { replace: true, state: { openProductionLocations: true } });
+  }, [navigate, production.id, workspace.id]);
+  return <AppLoading />;
 }
 
 function UnauthenticatedHome({ onOpenAuth }) {
@@ -510,7 +517,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "production" && route.page === "programs") content = <ProductionProgramsPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route.page)) content = <ProductionPlanningPlaceholderPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
-  else if (route.mode === "production" && route.page === "locations") content = <ProductionLocationsPage workspace={workspace} production={production} key={production.id} />;
+  else if (route.mode === "production" && route.page === "locations") content = <ProductionLocationsRouteRedirect workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "roles") content = <ProductionRolesPage workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;

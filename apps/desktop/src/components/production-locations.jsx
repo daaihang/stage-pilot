@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-
 import { MapPin, Pencil, Star } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { notify } from "@/components/ui/sonner";
 import { listProductionLocations } from "@/lib/production-api";
-import { productionPath } from "@/lib/navigation";
+import { useWindowDetail } from "@/components/window-detail-context";
+import { ProductionLocationsPage } from "@/components/production-locations-page";
 
 const locationName = (location) => `${location.venueName || "未命名场地"}${location.spaceName ? ` · ${location.spaceName}` : " · 整个场地"}`;
 
@@ -15,8 +14,16 @@ export function ProductionLocations({ workspace, production, compact = false }) 
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const triggerRef = useRef(null);
-  const navigate = useNavigate();
+  const { registerDetail, setDetailOpen } = useWindowDetail();
   const canWrite = ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
+
+  useEffect(() => registerDetail({
+    key: `production-locations:${production.id}`,
+    storageKey: `detailPane:production-locations:${production.id}:v2`,
+    detailLabel: "活动地点",
+    triggerRef,
+    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} key={production.id} />,
+  }), [production, registerDetail, workspace]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -31,7 +38,7 @@ export function ProductionLocations({ workspace, production, compact = false }) 
   }, [production.id]);
 
   useEffect(() => { load(); }, [load]);
-  const open = () => navigate(productionPath(workspace.id, production.id, "locations"));
+  const open = () => setDetailOpen(true);
   const primary = locations.find((location) => location.isPrimary);
 
   if (compact) {
