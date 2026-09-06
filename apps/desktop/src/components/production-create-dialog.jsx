@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -20,10 +20,19 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
     description: "",
   })
   const [creating, setCreating] = useState(false)
+  const initializedWorkspaceRef = useRef("")
 
   useEffect(() => {
-    if (open && preferredTimezone) setForm((current) => current.timezone === "Asia/Shanghai" ? { ...current, timezone: preferredTimezone } : current)
-  }, [open, preferredTimezone])
+    if (!open) {
+      initializedWorkspaceRef.current = ""
+      return
+    }
+    const workspaceKey = workspace?.id || ""
+    if (initializedWorkspaceRef.current !== workspaceKey) {
+      setForm((current) => ({ ...current, timezone: workspace?.defaultTimezone || preferredTimezone || "Asia/Shanghai" }))
+      initializedWorkspaceRef.current = workspaceKey
+    }
+  }, [open, preferredTimezone, workspace?.defaultTimezone, workspace?.id])
 
   const set = (key) => (event) => {
     setForm((current) => ({ ...current, [key]: event.target.value }))

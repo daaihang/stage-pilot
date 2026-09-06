@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,29 @@ func TestCreateWorkspaceBecomesOwner(t *testing.T) {
 	second := createWorkspaceFor(t, app, token, "隔离测试工作空间2")
 	if second["slug"] == created["slug"] {
 		t.Fatalf("duplicate slug not avoided: %v", second["slug"])
+	}
+}
+
+func TestWorkspaceDefaultActivityTimezone(t *testing.T) {
+	app := newIntegrationApp(t)
+	uid := createTestUser(t, app, "workspace-timezone-"+newID()+"@example.test")
+	token := issueTestToken(t, app, uid)
+	workspace := createWorkspaceFor(t, app, token, "默认活动时区")
+	workspaceID := workspace["id"].(string)
+	if workspace["default_timezone"] != "Asia/Shanghai" {
+		t.Fatalf("created workspace default timezone = %v, want Asia/Shanghai", workspace["default_timezone"])
+	}
+	settings := authedRequest(t, app, token, http.MethodGet, "/v1/workspaces/"+workspaceID+"/settings", nil)
+	if settings.Code != http.StatusOK || !strings.Contains(settings.Body.String(), `"default_timezone":"Asia/Shanghai"`) {
+		t.Fatalf("default timezone settings status = %d body = %s", settings.Code, settings.Body.String())
+	}
+	updated := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/settings", map[string]string{"default_timezone": "Europe/London"})
+	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"default_timezone":"Europe/London"`) {
+		t.Fatalf("updated default timezone status = %d body = %s", updated.Code, updated.Body.String())
+	}
+	invalid := authedRequest(t, app, token, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/settings", map[string]string{"default_timezone": "Mars/Olympus"})
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid default timezone status = %d, want 400", invalid.Code)
 	}
 }
 

@@ -16,6 +16,17 @@ export function normalizeTimeZone(timezone) {
   return isValidTimeZone(timezone) ? timezone : DEFAULT_TIMEZONE;
 }
 
+export function resolveTimeZoneDetails({ activityTimezone, userTimezone, deviceTimezone } = {}) {
+  const activity = normalizeTimeZone(activityTimezone);
+  const preference = normalizeTimeZone(userTimezone || activity);
+  const device = normalizeTimeZone(deviceTimezone || preference);
+  const showPopover = new Set([activity, preference, device]).size > 1;
+  const rows = [];
+  if (preference !== activity) rows.push({ label: preference === device ? "我的时区" : "我的偏好时区", timezone: preference });
+  if (device !== activity && device !== preference) rows.push({ label: "当前设备时区", timezone: device });
+  return { activityTimezone: activity, showPopover, rows };
+}
+
 export function getSupportedTimeZones() {
   const values = typeof Intl.supportedValuesOf === "function"
     ? Intl.supportedValuesOf("timeZone")

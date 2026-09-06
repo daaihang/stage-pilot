@@ -1,34 +1,39 @@
 package main
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
 type planningSettings struct {
 	RequireActualStartBeforeCompletion *bool   `json:"require_actual_start_before_completion"`
 	ScheduleConflictPolicy             *string `json:"schedule_conflict_policy"`
+	DefaultTimezone                    *string `json:"default_timezone"`
 }
 
 func (app *application) getWorkspacePlanningSettings(w http.ResponseWriter, r *http.Request) {
 	a := currentWorkspaceAccess(r)
 	var required bool
-	var policy string
-	err := app.db.QueryRow(r.Context(), `SELECT COALESCE(require_actual_start_before_completion,TRUE),COALESCE(schedule_conflict_policy,'block') FROM workspace_settings WHERE workspace_id=$1`, a.WorkspaceID).Scan(&required, &policy)
+	var policy, defaultTimezone string
+	err := app.db.QueryRow(r.Context(), `SELECT COALESCE(require_actual_start_before_completion,TRUE),COALESCE(schedule_conflict_policy,'block'),COALESCE(default_timezone,'Asia/Shanghai') FROM workspace_settings WHERE workspace_id=$1`, a.WorkspaceID).Scan(&required, &policy, &defaultTimezone)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy})
+	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy, DefaultTimezone: &defaultTimezone})
 }
 
 func (app *application) updateWorkspacePlanningSettings(w http.ResponseWriter, r *http.Request) {
 	a := currentWorkspaceAccess(r)
 	var in struct {
-		Require *bool   `json:"require_actual_start_before_completion"`
-		Policy  *string `json:"schedule_conflict_policy"`
+		Require         *bool   `json:"require_actual_start_before_completion"`
+		Policy          *string `json:"schedule_conflict_policy"`
+		DefaultTimezone *string `json:"default_timezone"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if in.Require == nil && in.Policy == nil {
+	if in.Require == nil && in.Policy == nil && in.DefaultTimezone == nil {
 		errorJSON(w, 400, "invalid_input", "缺少配置值")
 		return
 	}
@@ -36,14 +41,22 @@ func (app *application) updateWorkspacePlanningSettings(w http.ResponseWriter, r
 		errorJSON(w, 400, "invalid_input", "冲突策略无效")
 		return
 	}
+	if in.DefaultTimezone != nil {
+		value := strings.TrimSpace(*in.DefaultTimezone)
+		if value == "" || !validProductionTimezone(value) {
+			errorJSON(w, http.StatusBadRequest, "invalid_input", "默认活动时区无效，需要合法的 IANA 时区名称")
+			return
+		}
+		in.DefaultTimezone = &value
+	}
 	var required bool
-	var policy string
-	err := app.db.QueryRow(r.Context(), `INSERT INTO workspace_settings(workspace_id,require_actual_start_before_completion,schedule_conflict_policy,updated_at) VALUES($1,COALESCE($2,TRUE),COALESCE($3,'block'),NOW()) ON CONFLICT(workspace_id) DO UPDATE SET require_actual_start_before_completion=COALESCE($2,workspace_settings.require_actual_start_before_completion),schedule_conflict_policy=COALESCE($3,workspace_settings.schedule_conflict_policy),updated_at=NOW() RETURNING require_actual_start_before_completion,schedule_conflict_policy`, a.WorkspaceID, in.Require, in.Policy).Scan(&required, &policy)
+	var policy, defaultTimezone string
+	err := app.db.QueryRow(r.Context(), `INSERT INTO workspace_settings(workspace_id,require_actual_start_before_completion,schedule_conflict_policy,default_timezone,updated_at) VALUES($1,COALESCE($2,TRUE),COALESCE($3,'block'),COALESCE($4,'Asia/Shanghai'),NOW()) ON CONFLICT(workspace_id) DO UPDATE SET require_actual_start_before_completion=COALESCE($2,workspace_settings.require_actual_start_before_completion),schedule_conflict_policy=COALESCE($3,workspace_settings.schedule_conflict_policy),default_timezone=COALESCE($4,workspace_settings.default_timezone),updated_at=NOW() RETURNING require_actual_start_before_completion,schedule_conflict_policy,default_timezone`, a.WorkspaceID, in.Require, in.Policy, in.DefaultTimezone).Scan(&required, &policy, &defaultTimezone)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy})
+	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy, DefaultTimezone: &defaultTimezone})
 }
 
 func (app *application) getProductionPlanningSettings(w http.ResponseWriter, r *http.Request) {

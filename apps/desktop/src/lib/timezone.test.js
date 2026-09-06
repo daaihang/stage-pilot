@@ -8,6 +8,7 @@ import {
   getTimeZoneOptions,
   isValidTimeZone,
   resolveWallClockTime,
+  resolveTimeZoneDetails,
   timeZoneOffsetLabel,
 } from "./timezone.js";
 
@@ -46,6 +47,24 @@ test("timezone options expose stable grouping and offset metadata", () => {
   assert.equal(shanghai.group, "Asia");
   assert.equal(shanghai.offset, "UTC+08:00");
   assert.ok(shanghai.label.includes("Asia/Shanghai"));
+});
+
+test("timezone details show any mismatch and deduplicate viewer zones", () => {
+  assert.deepEqual(resolveTimeZoneDetails({ activityTimezone: "Asia/Shanghai", userTimezone: "Asia/Shanghai", deviceTimezone: "Asia/Shanghai" }), {
+    activityTimezone: "Asia/Shanghai",
+    showPopover: false,
+    rows: [],
+  });
+  assert.deepEqual(resolveTimeZoneDetails({ activityTimezone: "Asia/Shanghai", userTimezone: "Asia/Shanghai", deviceTimezone: "America/Los_Angeles" }).rows, [
+    { label: "当前设备时区", timezone: "America/Los_Angeles" },
+  ]);
+  assert.deepEqual(resolveTimeZoneDetails({ activityTimezone: "Asia/Shanghai", userTimezone: "America/Los_Angeles", deviceTimezone: "America/Los_Angeles" }).rows, [
+    { label: "我的时区", timezone: "America/Los_Angeles" },
+  ]);
+  assert.deepEqual(resolveTimeZoneDetails({ activityTimezone: "Asia/Shanghai", userTimezone: "America/Los_Angeles", deviceTimezone: "Europe/London" }).rows, [
+    { label: "我的偏好时区", timezone: "America/Los_Angeles" },
+    { label: "当前设备时区", timezone: "Europe/London" },
+  ]);
 });
 
 test("DST gap is rejected and overlap exposes both offsets", () => {

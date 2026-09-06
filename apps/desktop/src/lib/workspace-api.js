@@ -63,6 +63,7 @@ export function toWorkspaceSummary(workspace) {
     logo: [...name][0] || "W",
     description: workspace.description || "",
     avatarUrl: workspace.avatar_url || "",
+    defaultTimezone: workspace.default_timezone || "Asia/Shanghai",
   };
 }
 

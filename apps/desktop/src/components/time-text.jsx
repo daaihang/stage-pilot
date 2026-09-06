@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { formatInstantInTimeZone, normalizeTimeZone, timeZoneOffsetLabel } from "@/lib/timezone"
+import { formatInstantInTimeZone, normalizeTimeZone, resolveTimeZoneDetails, timeZoneOffsetLabel } from "@/lib/timezone"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useUserPreferences } from "@/components/user-preferences-provider"
 
@@ -14,14 +14,10 @@ export function TimeDetailsPopover({ instant, timezone, userTimezone, children }
   const date = instant instanceof Date ? instant : new Date(instant)
   if (Number.isNaN(date.getTime())) return children || <TimeText instant={instant} timezone={timezone} />
   const zone = normalizeTimeZone(timezone)
-  const preferenceZone = normalizeTimeZone(userTimezone || zone)
-  const deviceZone = normalizeTimeZone(typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : preferenceZone)
-  const hasTimezoneDifference = new Set([zone, preferenceZone, deviceZone]).size > 1
-  if (!hasTimezoneDifference) return children || <TimeText instant={instant} timezone={zone} />
-  const viewerRows = []
-  if (preferenceZone !== zone) viewerRows.push([preferenceZone === deviceZone ? "我的时区" : "我的偏好时区", preferenceZone])
-  if (deviceZone !== zone && deviceZone !== preferenceZone) viewerRows.push(["当前设备时区", deviceZone])
-  return <TimeDetailsPopoverInteractive instant={instant} zone={zone} viewerRows={viewerRows} children={children} />
+  const deviceTimezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : userTimezone
+  const details = resolveTimeZoneDetails({ activityTimezone: zone, userTimezone, deviceTimezone })
+  if (!details.showPopover) return children || <TimeText instant={instant} timezone={zone} />
+  return <TimeDetailsPopoverInteractive instant={instant} zone={details.activityTimezone} viewerRows={details.rows.map(({ label, timezone: viewerZone }) => [label, viewerZone])} children={children} />
 }
 
 function TimeDetailsPopoverInteractive({ instant, zone, viewerRows, children }) {

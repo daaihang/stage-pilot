@@ -34,14 +34,15 @@ var roleRank = map[string]int{
 }
 
 type workspace struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`
-	Description string    `json:"description"`
-	AvatarURL   string    `json:"avatar_url"`
-	Role        string    `json:"role,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID              string    `json:"id"`
+	Name            string    `json:"name"`
+	Slug            string    `json:"slug"`
+	Description     string    `json:"description"`
+	AvatarURL       string    `json:"avatar_url"`
+	DefaultTimezone string    `json:"default_timezone"`
+	Role            string    `json:"role,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type workspaceMember struct {
@@ -187,9 +188,10 @@ func seedFileTypesForScope(ctx context.Context, tx pgx.Tx, workspaceID, createdB
 // listWorkspaces 返回当前用户拥有 active membership 的工作空间（含角色）。
 // 响应永远按 authenticated user 过滤，天然满足租户隔离。
 func (app *application) listWorkspaces(w http.ResponseWriter, r *http.Request) {
-	rows, err := app.db.Query(r.Context(), `SELECT w.id,w.name,w.slug,w.description,w.avatar_url,m.role,w.created_at,w.updated_at
+	rows, err := app.db.Query(r.Context(), `SELECT w.id,w.name,w.slug,w.description,w.avatar_url,COALESCE(s.default_timezone,'Asia/Shanghai'),m.role,w.created_at,w.updated_at
 		FROM workspaces w
 		JOIN workspace_memberships m ON m.workspace_id = w.id
+		LEFT JOIN workspace_settings s ON s.workspace_id = w.id
 		WHERE m.user_id=$1 AND m.status='active' AND w.deleted_at IS NULL
 		ORDER BY w.created_at, w.id`, claims(r).Subject)
 	if err != nil {
@@ -200,7 +202,7 @@ func (app *application) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 	workspaces := []workspace{}
 	for rows.Next() {
 		var ws workspace
-		if err := rows.Scan(&ws.ID, &ws.Name, &ws.Slug, &ws.Description, &ws.AvatarURL, &ws.Role, &ws.CreatedAt, &ws.UpdatedAt); err != nil {
+		if err := rows.Scan(&ws.ID, &ws.Name, &ws.Slug, &ws.Description, &ws.AvatarURL, &ws.DefaultTimezone, &ws.Role, &ws.CreatedAt, &ws.UpdatedAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -367,11 +369,12 @@ func (app *application) lastWorkspaceID(ctx context.Context, userID string) (str
 
 func (app *application) findWorkspace(ctx context.Context, workspaceID, userID string) (workspace, error) {
 	var ws workspace
-	err := app.db.QueryRow(ctx, `SELECT w.id,w.name,w.slug,w.description,w.avatar_url,m.role,w.created_at,w.updated_at
+	err := app.db.QueryRow(ctx, `SELECT w.id,w.name,w.slug,w.description,w.avatar_url,COALESCE(s.default_timezone,'Asia/Shanghai'),m.role,w.created_at,w.updated_at
 		FROM workspaces w
 		JOIN workspace_memberships m ON m.workspace_id = w.id AND m.user_id = $2
+		LEFT JOIN workspace_settings s ON s.workspace_id = w.id
 		WHERE w.id=$1 AND w.deleted_at IS NULL`, workspaceID, userID).Scan(
-		&ws.ID, &ws.Name, &ws.Slug, &ws.Description, &ws.AvatarURL, &ws.Role, &ws.CreatedAt, &ws.UpdatedAt)
+		&ws.ID, &ws.Name, &ws.Slug, &ws.Description, &ws.AvatarURL, &ws.DefaultTimezone, &ws.Role, &ws.CreatedAt, &ws.UpdatedAt)
 	return ws, err
 }
 
