@@ -17,14 +17,6 @@ export function ProductionLocations({ workspace, production, compact = false }) 
   const { registerDetail, setDetailOpen } = useWindowDetail();
   const canWrite = ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
 
-  useEffect(() => registerDetail({
-    key: `production-locations:${production.id}`,
-    storageKey: `detailPane:production-locations:${production.id}:v2`,
-    detailLabel: "活动地点",
-    triggerRef,
-    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} key={production.id} />,
-  }), [production, registerDetail, workspace]);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -38,6 +30,13 @@ export function ProductionLocations({ workspace, production, compact = false }) 
   }, [production.id]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => registerDetail({
+    key: `production-locations:${production.id}`,
+    storageKey: `detailPane:production-locations:${production.id}:v2`,
+    detailLabel: "活动地点",
+    triggerRef,
+    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} onChanged={load} key={production.id} />,
+  }), [load, production, registerDetail, workspace]);
   const open = () => setDetailOpen(true);
   const primary = locations.find((location) => location.isPrimary);
 

@@ -23,7 +23,7 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
     storageKey: `detailPane:production-locations:${production.id}:v2`,
     detailLabel: "活动地点",
     triggerRef,
-    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} key={production.id} />,
+    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} onChanged={() => onChanged?.()} key={production.id} />,
   }), [production, registerDetail, workspace]);
 
   useEffect(() => {
