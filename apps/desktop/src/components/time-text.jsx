@@ -11,6 +11,8 @@ export function TimeText({ instant, timezone, className, withTimezone = false, .
 
 export function TimeDetailsPopover({ instant, timezone, userTimezone, children }) {
   if (!instant) return null
+  const date = instant instanceof Date ? instant : new Date(instant)
+  if (Number.isNaN(date.getTime())) return children || <TimeText instant={instant} timezone={timezone} />
   const zone = normalizeTimeZone(timezone)
   const preferenceZone = normalizeTimeZone(userTimezone || zone)
   const deviceZone = normalizeTimeZone(typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : preferenceZone)

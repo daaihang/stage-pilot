@@ -8,6 +8,7 @@ import {
   getTimeZoneOptions,
   isValidTimeZone,
   resolveWallClockTime,
+  timeZoneOffsetLabel,
 } from "./timezone.js";
 
 test("supported timezone list includes UTC and canonical runtime zones", () => {
@@ -21,6 +22,10 @@ test("timezone validation and fallback are deterministic", () => {
   assert.equal(isValidTimeZone("America/New_York"), true);
   assert.equal(isValidTimeZone("Mars/Olympus"), false);
   assert.equal(DEFAULT_TIMEZONE, "Asia/Shanghai");
+});
+
+test("invalid instants never reach Intl offset formatting", () => {
+  assert.equal(timeZoneOffsetLabel("not-a-date", "Asia/Shanghai"), "");
 });
 
 test("the same instant is formatted in the requested timezone", () => {

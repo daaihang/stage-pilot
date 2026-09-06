@@ -33,10 +33,12 @@ export function getTimeZoneOptions({ locale = "zh-CN", at = new Date() } = {}) {
 }
 
 export function timeZoneOffsetLabel(instant = new Date(), timezone = DEFAULT_TIMEZONE) {
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return "";
   const value = new Intl.DateTimeFormat("en-US", {
     timeZone: normalizeTimeZone(timezone),
     timeZoneName: "longOffset",
-  }).formatToParts(instant).find((part) => part.type === "timeZoneName")?.value;
+  }).formatToParts(date).find((part) => part.type === "timeZoneName")?.value;
   if (!value || value === "GMT") return "UTC+00:00";
   return value.replace(/^GMT/, "UTC");
 }
