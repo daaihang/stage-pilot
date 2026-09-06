@@ -32,6 +32,7 @@ import { FilesPage } from "@/components/files-page";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
 import { NavigationFailure, PlaceholderPage, ProductionsPage, WorkspaceHome } from "@/components/stagepilot-pages";
 import { ProductionPlanningPlaceholderPage } from "@/components/production-planning-placeholder-page";
+import { ProductionActivityInfoPage, ProductionCampaignDetailPage, ProductionCollectionWorkflowsPage, ProductionFormTemplatesPage, ProductionFormsPage } from "@/components/production-collection-pages";
 import { WorkspaceMembersPage, WorkspaceRolesPage } from "@/components/workspace-access-pages";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -518,6 +519,12 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} />;
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;
   else if (route.mode === "production" && production?.isCreationSession) content = <NavigationFailure title="创建会话仅支持概览" description="提交第一个有效字段后，活动的其他模块会自动开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
+  else if (route.mode === "production" && route.page === "activity-info") content = <ProductionActivityInfoPage route={route} workspace={workspace} production={production} />;
+  else if (route.mode === "production" && route.page === "form-templates") content = <ProductionFormTemplatesPage route={route} workspace={workspace} production={production} />;
+  else if (route.mode === "production" && route.page === "forms" && route.campaignId) content = <ProductionCampaignDetailPage route={route} workspace={workspace} production={production} />;
+  else if (route.mode === "production" && route.page === "forms") content = <ProductionFormsPage route={route} workspace={workspace} production={production} />;
+  else if (route.mode === "production" && route.page === "recruitment") content = <ProductionFormsPage route={route} workspace={workspace} production={production} />;
+  else if (route.mode === "production" && route.page === "collection-workflows") content = <ProductionCollectionWorkflowsPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "program-sheets") content = <ProgramSheetsPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "programs") content = <ProductionProgramsPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route.page)) content = <ProductionPlanningPlaceholderPage route={route} workspace={workspace} production={production} />;
@@ -531,8 +538,9 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const resourceDetailLayout = route?.mode === "workspace" && ["programs", "people", "organizations", "venues", "equipment"].includes(route?.page);
   const planningDetailLayout = route?.mode === "production" && ["schedule", "occurrences", "rehearsals", "programs", "program-sheets"].includes(route?.page);
   const productionLocationDetailLayout = route?.mode === "production" && ["overview", "settings"].includes(route?.page);
+  const collectionDetailLayout = route?.mode === "production" && route?.page === "forms" && Boolean(route?.campaignId);
   const membersDetailLayout = (route?.mode === "workspace" && route?.page === "members") || (route?.mode === "production" && route?.page === "members");
-  const contentLayout = resourceDetailLayout || planningDetailLayout || productionLocationDetailLayout || membersDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
+  const contentLayout = resourceDetailLayout || planningDetailLayout || productionLocationDetailLayout || collectionDetailLayout || membersDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
 
   const handleWorkspaceCreated = async (created) => {
     await adoptCreatedWorkspace(created);

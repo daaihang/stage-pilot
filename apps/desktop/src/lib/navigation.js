@@ -18,7 +18,12 @@ export const workspacePages = {
 
 export const productionPages = {
   overview: { title: "概览", description: "查看本场活动的状态、关键日期和待办事项。" },
-  recruitment: { title: "征集与审核", description: "管理征集活动、报名申请和审核流程。" },
+  "activity-info": { title: "活动信息", description: "维护活动对内与对外展示信息，供报名和收集表单复用。" },
+  "form-templates": { title: "表单模板", description: "从系统模板或工作空间模板开始创建收集表单。" },
+  forms: { title: "全部表单", description: "统一管理征集、招募、报名和通用收集表单。" },
+  "collection-workflows": { title: "收集工作流", description: "配置收集后的审核、评分、决定和转化流程。" },
+  // 旧版入口保留用于兼容已保存的活动链接；侧栏使用 forms 作为新入口。
+  recruitment: { title: "全部表单", description: "统一管理征集、招募、报名和通用收集表单。" },
   programs: { title: "节目", description: "管理本场节目、演出者、技术需求和来源。" },
   "program-sheets": { title: "节目单", description: "管理本场活动的节目单版本、场次关联和正式发布状态。" },
   people: { title: "人员", description: "配置本场参与人员、岗位、排班和职责。" },
@@ -77,6 +82,11 @@ export function productionPath(workspaceId, productionId, page = "overview") {
   return `/w/${workspaceId}/p/${productionId}/${productionPages[page] ? page : "overview"}`;
 }
 
+export function productionCampaignPath(workspaceId, productionId, campaignId, tab = "overview") {
+  const suffix = tab && tab !== "overview" ? `/${tab}` : "";
+  return `/w/${workspaceId}/p/${productionId}/forms/${campaignId}${suffix}`;
+}
+
 export function programSheetSegmentTypePanelPath(workspaceId) {
   // Deprecated name kept for existing callers; segment types are workspace-scoped.
   return workspacePath(workspaceId, "program-sheet-segment-types");
@@ -84,6 +94,11 @@ export function programSheetSegmentTypePanelPath(workspaceId) {
 
 export function directProductionPath(productionId, page = "overview") {
   return `/p/${productionId}/${productionPages[page] ? page : "overview"}`;
+}
+
+export function directProductionCampaignPath(productionId, campaignId, tab = "overview") {
+  const suffix = tab && tab !== "overview" ? `/${tab}` : "";
+  return `/p/${productionId}/forms/${campaignId}${suffix}`;
 }
 
 export function accountPath(page = "profile", from) {
@@ -142,12 +157,24 @@ export function matchStagePilotRoute(pathname, search = "") {
     if (!accountPages[page] || (accountPages[page].devOnly && !import.meta.env.DEV)) return null;
     return { mode: "account", page, meta: accountPages[page] };
   }
+  const productionCampaignMatch = pathname.match(/^\/w\/([^/]+)\/p\/([^/]+)\/forms\/([^/]+)(?:\/([^/]+))?\/?$/);
+  if (productionCampaignMatch) {
+    const [, workspaceId, productionId, campaignId, requestedTab] = productionCampaignMatch;
+    const detailTab = requestedTab || "overview";
+    return { mode: "production", workspaceId, productionId, page: "forms", campaignId, detailTab, panel: null, meta: productionPages.forms };
+  }
   const productionMatch = pathname.match(/^\/w\/([^/]+)\/p\/([^/]+)\/([^/]+)\/?$/);
   if (productionMatch) {
     const [, workspaceId, productionId, page] = productionMatch;
     const panelValue = new URLSearchParams(search).get("panel");
     const panel = page === "program-sheets" && panelValue === "segment-types" ? panelValue : (page === "members" && panelValue === "invitations" ? panelValue : null);
     return productionPages[page] ? { mode: "production", workspaceId, productionId, page, panel, meta: productionPages[page] } : null;
+  }
+  const directProductionCampaignMatch = pathname.match(/^\/p\/([^/]+)\/forms\/([^/]+)(?:\/([^/]+))?\/?$/);
+  if (directProductionCampaignMatch) {
+    const [, productionId, campaignId, requestedTab] = directProductionCampaignMatch;
+    const detailTab = requestedTab || "overview";
+    return { mode: "production", workspaceId: null, productionId, page: "forms", campaignId, detailTab, direct: true, panel: null, meta: productionPages.forms };
   }
   const directProductionMatch = pathname.match(/^\/p\/([^/]+)(?:\/([^/]+))?\/?$/);
   if (directProductionMatch) {
