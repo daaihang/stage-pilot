@@ -4,6 +4,7 @@ import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { usePageChrome } from "@/components/page-chrome";
 import { normalizeDetailOpenMode, resolveDetailPresentation } from "@/lib/detail-open-mode";
+import { createDetailSurfaceState, transitionDetailSurface } from "@/lib/detail-surface-state";
 
 const MIN_DETAIL_WIDTH = 280;
 const DEFAULT_DETAIL_WIDTH = 420;
@@ -79,8 +80,9 @@ export function DetailSplitPane({
   const openFocusRef = useRef(null);
   const wasOpenRef = useRef(open);
   const exclusiveRef = useRef(false);
-  const surfaceMountedRef = useRef(false);
-  const surfacePhaseRef = useRef("idle");
+  const surfaceStateRef = useRef(createDetailSurfaceState());
+  const surfaceTimeoutRef = useRef(null);
+  const surfacePaintedRef = useRef(false);
   const restoreExclusiveFocusRef = useRef(false);
   const closeFocusToTriggerRef = useRef(false);
   const activeOpenModeRef = useRef(null);
@@ -95,7 +97,6 @@ export function DetailSplitPane({
   const { setDetailAction } = usePageChrome();
 
   const isSurfaceOpen = surfacePhase === "open";
-  surfacePhaseRef.current = surfacePhase;
   exclusiveRef.current = exclusive;
 
   const setExclusiveMode = useCallback((nextMode) => {
@@ -103,6 +104,19 @@ export function DetailSplitPane({
     exclusiveRef.current = next;
     setExclusive(next);
     return next;
+  }, []);
+
+  const cancelSurfaceTransition = useCallback(() => {
+    if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
+    if (surfaceTimeoutRef.current) clearTimeout(surfaceTimeoutRef.current);
+    fallbackFrameRef.current = null;
+    surfaceTimeoutRef.current = null;
+  }, []);
+
+  const commitSurfaceState = useCallback((nextState) => {
+    surfaceStateRef.current = nextState;
+    setSurfaceMounted(nextState.mounted);
+    setSurfacePhase(nextState.phase);
   }, []);
 
   const enterExclusive = useCallback(() => {
@@ -197,52 +211,50 @@ export function DetailSplitPane({
     if (open && desiredMode) onPresentationChange?.(desiredMode);
   }, [desiredMode, onPresentationChange, open]);
 
-  // Keep one surface mounted through mode changes and the close transition.
+  const finishClose = useCallback((sequence) => {
+    const current = surfaceStateRef.current;
+    if (current.sequence !== sequence || current.phase !== "closing") return;
+    surfacePaintedRef.current = false;
+    commitSurfaceState(transitionDetailSurface(current, { type: "close-settled", sequence }));
+  }, [commitSurfaceState]);
+
+  // Keep one surface mounted through mode changes and make every transition
+  // cancellable. A stale RAF or transition callback must never settle a newer
+  // open or close request.
   useEffect(() => {
-    if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
+    cancelSurfaceTransition();
     if (open && desiredMode) {
       setSurfaceMode(desiredMode);
-      if (!surfaceMountedRef.current) {
-        surfaceMountedRef.current = true;
-        setSurfaceMounted(true);
-        setSurfacePhase("opening");
-        // A single RAF can run before the browser paints the opening state,
-        // collapsing the transition into an immediate appearance. Two RAFs
-        // guarantee one painted closed frame, while still allowing the
-        // request to be cancelled when the user quickly reverses the action.
-        const openAfterPaint = () => {
-          if (!surfaceMountedRef.current || surfacePhaseRef.current !== "opening") return;
-          setSurfacePhase("open");
-        };
-        fallbackFrameRef.current = requestAnimationFrame(() => {
-          fallbackFrameRef.current = requestAnimationFrame(openAfterPaint);
-        });
-      } else {
-        setSurfacePhase("open");
-      }
-      return undefined;
+      const nextState = transitionDetailSurface(surfaceStateRef.current, { type: "open" });
+      commitSurfaceState(nextState);
+      if (nextState.phase === "open") return undefined;
+      const sequence = nextState.sequence;
+      const openAfterPaint = () => {
+        if (surfaceStateRef.current.sequence !== sequence) return;
+        surfacePaintedRef.current = true;
+        commitSurfaceState(transitionDetailSurface(surfaceStateRef.current, { type: "open-settled", sequence }));
+      };
+      fallbackFrameRef.current = requestAnimationFrame(() => {
+        fallbackFrameRef.current = requestAnimationFrame(openAfterPaint);
+      });
+      return cancelSurfaceTransition;
     }
     if (open) return undefined;
-    if (surfaceMountedRef.current) setSurfacePhase("closing");
-    return undefined;
-  }, [desiredMode, open]);
-
-  const finishClose = useCallback(() => {
-    if (surfacePhaseRef.current !== "closing") return;
-    surfaceMountedRef.current = false;
-    setSurfaceMounted(false);
-    setSurfacePhase("idle");
-  }, []);
-
-  useEffect(() => {
-    if (surfacePhase !== "closing" || !surfaceMounted) return undefined;
-    fallbackFrameRef.current = requestAnimationFrame(() => {
-      if (transitionDurationMs(surfaceRef.current) === 0) finishClose();
-    });
-    return () => {
-      if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
-    };
-  }, [finishClose, surfaceMounted, surfacePhase]);
+    if (!surfaceStateRef.current.mounted) {
+      commitSurfaceState(createDetailSurfaceState({ sequence: surfaceStateRef.current.sequence }));
+      return undefined;
+    }
+    const nextState = transitionDetailSurface(surfaceStateRef.current, { type: "close" });
+    if (nextState.phase === "closing" && !surfacePaintedRef.current) {
+      commitSurfaceState(transitionDetailSurface(nextState, { type: "close-settled", sequence: nextState.sequence }));
+      return undefined;
+    }
+    commitSurfaceState(nextState);
+    const sequence = nextState.sequence;
+    const duration = transitionDurationMs(surfaceRef.current);
+    surfaceTimeoutRef.current = setTimeout(() => finishClose(sequence), duration + 50);
+    return cancelSurfaceTransition;
+  }, [cancelSurfaceTransition, commitSurfaceState, desiredMode, finishClose, open]);
 
   useEffect(() => {
     if (!open) {
@@ -251,12 +263,14 @@ export function DetailSplitPane({
     }
     setDetailAction({
       label: "关闭详情",
+      detailLabel,
+      presentation: desiredMode,
       exclusive: isExclusivePresentation,
       onClose: closeDetail,
       onToggleExclusive: canInline ? (isExclusivePresentation ? exitExclusive : enterExclusive) : undefined,
     });
     return () => setDetailAction(null);
-  }, [canInline, closeDetail, enterExclusive, exitExclusive, isExclusivePresentation, open, setDetailAction]);
+  }, [canInline, closeDetail, desiredMode, detailLabel, enterExclusive, exitExclusive, isExclusivePresentation, open, setDetailAction]);
 
   // Focus the surface on entering either exclusive or narrow page mode.
   useEffect(() => {
@@ -349,8 +363,8 @@ export function DetailSplitPane({
 
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    if (fallbackFrameRef.current) cancelAnimationFrame(fallbackFrameRef.current);
-  }, []);
+    cancelSurfaceTransition();
+  }, [cancelSurfaceTransition]);
 
   const commitWidth = (nextWidth) => {
     const next = clampDetailWidth(nextWidth, containerWidth || INLINE_MIN_WIDTH);
@@ -395,7 +409,7 @@ export function DetailSplitPane({
 
   const handleSurfaceTransitionEnd = (event) => {
     if (event.target !== event.currentTarget || event.propertyName !== "opacity") return;
-    if (surfacePhaseRef.current === "closing") finishClose();
+    if (surfaceStateRef.current.phase === "closing") finishClose(surfaceStateRef.current.sequence);
   };
 
   const mainInert = isExclusivePresentation || isOverlay;
@@ -457,7 +471,7 @@ export function DetailSplitPane({
       onTransitionCancel={(event) => {
         if (event.target !== event.currentTarget || event.propertyName !== "opacity") return;
         requestAnimationFrame(() => {
-          if (surfacePhaseRef.current === "closing" && transitionDurationMs(surfaceRef.current) === 0) finishClose();
+          if (surfaceStateRef.current.phase === "closing" && transitionDurationMs(surfaceRef.current) === 0) finishClose(surfaceStateRef.current.sequence);
         });
       }}
     >

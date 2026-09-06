@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { notify } from "@/components/ui/sonner";
 import { listProductionLocations } from "@/lib/production-api";
-import { useWindowDetail } from "@/components/window-detail-context";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { ProductionLocationsPage } from "@/components/production-locations-page";
 
 const locationName = (location) => `${location.venueName || "未命名场地"}${location.spaceName ? ` · ${location.spaceName}` : " · 整个场地"}`;
@@ -14,7 +14,7 @@ export function ProductionLocations({ workspace, production, compact = false }) 
   const [locations, setLocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const triggerRef = useRef(null);
-  const { registerDetail, setDetailOpen } = useWindowDetail();
+  const { setDetailOpen } = useWindowDetail();
   const canWrite = ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
 
   const load = useCallback(async () => {
@@ -30,13 +30,8 @@ export function ProductionLocations({ workspace, production, compact = false }) 
   }, [production.id]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => registerDetail({
-    key: `production-locations:${production.id}`,
-    storageKey: `detailPane:production-locations:${production.id}:v2`,
-    detailLabel: "活动地点",
-    triggerRef,
-    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} onChanged={load} key={production.id} />,
-  }), [load, production, registerDetail, workspace]);
+  const getDetail = useCallback(() => <ProductionLocationsPage workspace={workspace} production={production} onChanged={load} key={production.id} />, [load, production, workspace]);
+  useWindowDetailRegistration({ key: `production-locations:${production.id}`, storageKey: `detailPane:production-locations:${production.id}:v2`, detailLabel: "活动地点", triggerRef, getDetail });
   const open = () => setDetailOpen(true);
   const primary = locations.find((location) => location.isPrimary);
 

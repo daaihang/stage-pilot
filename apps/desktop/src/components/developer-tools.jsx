@@ -16,7 +16,7 @@ import { ContextMenuDemo8 } from "@/components/examples/c-context-menu-8";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useWindowDetail } from "@/components/window-detail-context";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -52,7 +52,7 @@ export function DeveloperTools({ workspace, devtools, onDevtoolsChange, initialA
   const [activity, setActivity] = useState(["开发工具已准备就绪"]);
   const [diagnostics, setDiagnostics] = useState([{ label: "尚未检测", ok: true, detail: "点击「重新检测」" }]);
   const detailTriggerRef = useRef(null);
-  const { detailOpen, registerDetail, setDetailOpen } = useWindowDetail();
+  const { detailOpen, setDetailOpen } = useWindowDetail();
   const currentRecord = history[0];
   const addActivity = useCallback((message) => setActivity((items) => [`${formatTime(Date.now())} · ${message}`, ...items].slice(0, 8)), []);
   const persistHistory = async (nextHistory) => { setHistory(nextHistory); await appStore.set("history", nextHistory); };
@@ -191,7 +191,8 @@ export function DeveloperTools({ workspace, devtools, onDevtoolsChange, initialA
   }, [addActivity, workspace]);
 
   const demos = useMemo(() => [[ContextMenuDemo1, "基础菜单"], [ContextMenuDemo2, "图标操作"], [ContextMenuDemo3, "快捷键标注"], [ContextMenuDemo4, "嵌套子菜单"], [ContextMenuDemo5, "分组标签"], [ContextMenuDemo6, "复选项"], [ContextMenuDemo7, "单选项"], [ContextMenuDemo8, "危险操作"]], []);
-  useEffect(() => registerDetail({ key: "developer-tools", detailLabel: "布局检查器", getDetail: () => <LayoutInspector />, triggerRef: detailTriggerRef, storageKey: "detailPane:window:v1" }), [registerDetail]);
+  const getDetail = useCallback(() => <LayoutInspector />, []);
+  useWindowDetailRegistration({ key: "developer-tools", detailLabel: "布局检查器", getDetail, triggerRef: detailTriggerRef, storageKey: "detailPane:window:v1" });
 
   const mainWidthClass = { standard: "max-w-6xl", wide: "max-w-7xl", full: "max-w-none" }[contentWidth] || "max-w-6xl";
   return <div className="h-full min-h-0 overflow-y-auto p-4 md:p-6"><div className={`@container/developer-tools mx-auto w-full ${mainWidthClass} space-y-4`}><div><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="text-sm text-muted-foreground">{description}</p></div><Card><CardHeader><CardTitle>开发者选项</CardTitle><CardDescription>这些能力只在开发构建中显示。</CardDescription></CardHeader><CardContent className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium">开发者工具</p><p className="text-xs text-muted-foreground">关闭后需重启应用才能完全禁用</p></div><div className="flex flex-wrap items-center justify-end gap-2"><Button ref={detailTriggerRef} size="sm" variant="outline" onClick={() => setDetailOpen(!detailOpen)} aria-pressed={detailOpen}><PanelRightOpen />{detailOpen ? "关闭详情" : "打开详情"}</Button><Button size="sm" variant="outline" onClick={openDevtools}><Terminal />打开</Button><Switch checked={devtools} onCheckedChange={onDevtoolsChange} /></div></CardContent></Card>

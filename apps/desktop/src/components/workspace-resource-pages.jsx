@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { ResourcePage, resourceGridClassName } from "@/components/resource-page";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
-import { useWindowDetail } from "@/components/window-detail-context";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { appStore } from "@/lib/app-store";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { createOrganizationContact, createResource, createVenueSpace, deleteOrganizationContact, deleteResource, getResource, listOrganizationContacts, listResource, listResourceTypes, listVenueSpaces, updateResource, resourceDefinitions } from "@/lib/resource-api";
@@ -99,31 +99,24 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   const triggerRefs = useRef(new Map());
   const typePanelTriggerRef = useRef(null);
   const reloadRef = useRef(null);
-  const { registerDetail, setDetailOpen } = useWindowDetail();
+  const { setDetailOpen } = useWindowDetail();
   const typePanelOpen = panel === "types";
+  const activeTriggerRef = useRef(null);
 
   useEffect(() => {
-    if (!selectedResourceId && !typePanelOpen) {
-      setDetailOpen(false, { announce: false });
-      return undefined;
-    }
-    const triggerRef = typePanelOpen
-      ? typePanelTriggerRef
-      : (triggerRefs.current.get(selectedResourceId) || { current: null });
-    if (selectedResourceId) triggerRefs.current.set(selectedResourceId, triggerRef);
-    const unregister = registerDetail({
-      key: typePanelOpen ? `workspace-resource-types:${workspace.id}:${type}` : `workspace-resource:${workspace.id}:${type}:${selectedResourceId}`,
-      detailLabel: typePanelOpen ? `${resourceDefinitions[type].singular}类型` : `${resourceDefinitions[type].singular}详情`,
-      getDetail: () => typePanelOpen
-        ? <ResourceTypeManagementPanel workspace={workspace} resourceType={type} onChanged={() => reloadRef.current?.().catch(() => {})} />
-        : <ResourceDetailPanel workspace={workspace} resourceType={type} resourceId={selectedResourceId} onClose={() => navigate(workspacePath(workspace.id, type))} onUpdated={() => reloadRef.current?.().catch(() => {})} onDeleted={async () => { await reloadRef.current?.().catch(() => {}); navigate(workspacePath(workspace.id, type)); }} />,
-      triggerRef,
-      storageKey: "detailPane:workspace-resources:v1",
-      onClose: () => navigate(workspacePath(workspace.id, type)),
-    });
-    setDetailOpen(true, { announce: false });
-    return unregister;
-  }, [navigate, panel, registerDetail, selectedResourceId, setDetailOpen, type, typePanelOpen, workspace]);
+    const triggerRef = typePanelOpen ? typePanelTriggerRef : triggerRefs.current.get(selectedResourceId);
+    activeTriggerRef.current = triggerRef?.current || null;
+  }, [selectedResourceId, typePanelOpen]);
+  const getDetail = useCallback(() => typePanelOpen
+    ? <ResourceTypeManagementPanel workspace={workspace} resourceType={type} onChanged={() => reloadRef.current?.().catch(() => {})} />
+    : selectedResourceId
+      ? <ResourceDetailPanel workspace={workspace} resourceType={type} resourceId={selectedResourceId} onClose={() => navigate(workspacePath(workspace.id, type))} onUpdated={() => reloadRef.current?.().catch(() => {})} onDeleted={async () => { await reloadRef.current?.().catch(() => {}); navigate(workspacePath(workspace.id, type)); }} />
+      : null, [navigate, selectedResourceId, type, typePanelOpen, workspace]);
+  useWindowDetailRegistration({ key: `workspace-resource:${workspace.id}:${type}`, detailLabel: `${resourceDefinitions[type].singular}详情`, getDetail, triggerRef: activeTriggerRef, storageKey: "detailPane:workspace-resources:v1", onClose: () => navigate(workspacePath(workspace.id, type)) });
+  useEffect(() => {
+    if (selectedResourceId || typePanelOpen) setDetailOpen(true, { announce: false });
+    else setDetailOpen(false, { announce: false });
+  }, [selectedResourceId, setDetailOpen, typePanelOpen]);
 
   const reload = useCallback(async () => {
     const requestId = ++requestSequence.current;

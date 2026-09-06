@@ -8,6 +8,7 @@
     "build": "vite build",
     "test:timezone": "node --test src/lib/timezone.test.js",
     "test:detail-open-mode": "node --test src/lib/detail-open-mode.test.js",
+    "test:window-detail": "node --test src/lib/detail-action-labels.test.js src/lib/detail-surface-state.test.js",
     "test:program-sheets": "node --test src/lib/program-sheet-utils.test.js src/lib/program-sheet-segment-types.test.js src/lib/program-sheet-segment-type-usage.test.js",
     "test:program-sheet-segment-types": "node --test src/lib/program-sheet-segment-types.test.js src/lib/program-sheet-segment-type-usage.test.js",
     "test:production-programs": "node --test src/lib/production-program-utils.test.js",

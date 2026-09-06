@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ResourcePage } from "@/components/resource-page";
 import { ProductionPageHeader } from "@/components/production-page-shell";
 import { TimeText } from "@/components/time-text";
-import { useWindowDetail } from "@/components/window-detail-context";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { listProductionOccurrences } from "@/lib/production-api";
 import { listResource, listResourceTypes } from "@/lib/resource-api";
 import { makeProductionProgram, makeProgramSheet, makeSheetItem, loadProgramSheetState, makePublishedSnapshot, normalizeProgramSheetState, nowIso, saveProgramSheetState } from "@/lib/program-sheet-store";
@@ -57,7 +57,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
   const [dialog, setDialog] = useState(null);
   const triggerRef = useRef(null);
   const requestSequence = useRef(0);
-  const { registerDetail, setDetailOpen } = useWindowDetail();
+  const { setDetailOpen } = useWindowDetail();
   const navigate = useNavigate();
 
   const load = useCallback(async ({ toast = false } = {}) => {
@@ -139,14 +139,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     commit({ ...current, sheets: current.sheets.map((item) => item.id === sheetId ? nextSheet : item) }, options.toast);
   }, [commit]);
 
-  useEffect(() => {
-    const cleanup = registerDetail({
-      key: `program-sheets:${production.id}`,
-      storageKey: `detailPane:program-sheets:${production.id}:v1`,
-      triggerRef,
-      detailLabel: "节目单详情",
-      onClose: () => setSelectedId(null),
-      getDetail: () => selectedSheet ? <ProgramSheetDetail production={production} sheet={selectedSheet} productionPrograms={state.productionPrograms} workspacePrograms={workspacePrograms} programTypes={programTypes} segmentTypes={segmentTypes} segmentTypeLoading={segmentTypeLoading} segmentTypeError={segmentTypeError} occurrences={occurrences} canWrite={canWrite} onSheetChange={(updater, options) => changeSheet(selectedSheet.id, updater, options)} onAddExistingPrograms={(values) => {
+  const getDetail = useCallback(() => selectedSheet ? <ProgramSheetDetail production={production} sheet={selectedSheet} productionPrograms={state.productionPrograms} workspacePrograms={workspacePrograms} programTypes={programTypes} segmentTypes={segmentTypes} segmentTypeLoading={segmentTypeLoading} segmentTypeError={segmentTypeError} occurrences={occurrences} canWrite={canWrite} onSheetChange={(updater, options) => changeSheet(selectedSheet.id, updater, options)} onAddExistingPrograms={(values) => {
         const current = stateRef.current;
         const items = values.map((program) => makeSheetItem("program", { productionProgramId: program.id, programSnapshot: program, title: program.name, durationSeconds: program.durationSeconds, order: current.sheets.find((candidate) => candidate.id === selectedSheet.id)?.items.length || 0 }));
         commit({ ...current, sheets: current.sheets.map((candidate) => candidate.id === selectedSheet.id ? { ...candidate, items: [...candidate.items, ...items.map((item, index) => ({ ...item, order: candidate.items.length + index }))], updatedAt: nowIso() } : candidate) }, "正在添加本场节目");
@@ -167,10 +160,9 @@ export function ProgramSheetsPage({ route, workspace, production }) {
         const item = makeSheetItem("program", { productionProgramId: productionProgram.id, programSnapshot: productionProgram, title: productionProgram.name, durationSeconds: productionProgram.durationSeconds });
         commit({ ...current, productionPrograms: [...current.productionPrograms, productionProgram], sheets: current.sheets.map((candidate) => candidate.id === selectedSheet.id ? { ...candidate, items: [...candidate.items, { ...item, order: candidate.items.length }], updatedAt: nowIso() } : candidate) }, "正在创建并添加活动节目");
       }} onAddItem={(kind, values = {}) => changeSheet(selectedSheet.id, (current) => ({ ...current, items: [...current.items, makeSheetItem(kind, { title: kind === "section" ? "新章节" : kind === "interval" ? "休息" : kind === "note" ? "现场备注" : "新环节", durationSeconds: kind === "interval" ? 15 * 60 : 0, ...values, order: current.items.length })], updatedAt: nowIso() }), { toast: `正在添加${kind === "segment" ? "环节" : kind === "section" ? "章节" : kind === "interval" ? "休息" : "备注"}` })} onDuplicate={(sheet) => setDialog({ type: "copy", sheet })} onAssign={(sheet) => setDialog({ type: "assign", sheet })} onPublish={(sheet) => setDialog({ type: "publish", sheet })} onArchive={(sheet) => setDialog({ type: "archive", sheet })} /> : null,
-    });
-    if (selectedSheet) setDetailOpen(true, { announce: false });
-    return cleanup;
-  }, [canWrite, changeSheet, commit, occurrences, production, programTypes, registerDetail, selectedSheet, segmentTypeError, segmentTypeLoading, segmentTypes, setDetailOpen, state.productionPrograms, workspace, workspacePrograms]);
+  [canWrite, changeSheet, commit, occurrences, production, programTypes, selectedSheet, segmentTypeError, segmentTypeLoading, segmentTypes, state.productionPrograms, workspace, workspacePrograms]);
+  useWindowDetailRegistration({ key: `program-sheets:${production.id}`, storageKey: `detailPane:program-sheets:${production.id}:v1`, triggerRef, detailLabel: "节目单详情", getDetail, onClose: () => setSelectedId(null) });
+  useEffect(() => { setDetailOpen(Boolean(selectedSheet), { announce: false }); }, [selectedSheet, setDetailOpen]);
 
   const nextRevision = useMemo(() => Math.max(0, ...state.sheets.map((item) => Number(item.revision) || 0)) + 1, [state.sheets]);
   const filteredSheets = useMemo(() => {

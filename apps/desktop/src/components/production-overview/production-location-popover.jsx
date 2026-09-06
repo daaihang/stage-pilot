@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { MapPin, Pencil } from "@/components/ui/icons";
@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { notify } from "@/components/ui/sonner";
 import { listProductionLocations } from "@/lib/production-api";
 import { cn } from "@/lib/utils";
-import { useWindowDetail } from "@/components/window-detail-context";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { ProductionLocationsPage } from "@/components/production-locations-page";
 
 export function ProductionLocationPopover({ workspace, production, onRequestEdit, onChanged, disabled = false, className, refreshKey }) {
@@ -15,16 +15,11 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
   const triggerRef = useRef(null);
   const navigate = useNavigate();
   const routerLocation = useLocation();
-  const { registerDetail, setDetailOpen } = useWindowDetail();
+  const { setDetailOpen } = useWindowDetail();
   const canWrite = !production.isCreationSession && (["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit"));
 
-  useEffect(() => registerDetail({
-    key: `production-locations:${production.id}`,
-    storageKey: `detailPane:production-locations:${production.id}:v2`,
-    detailLabel: "活动地点",
-    triggerRef,
-    getDetail: () => <ProductionLocationsPage workspace={workspace} production={production} onChanged={() => onChanged?.()} key={production.id} />,
-  }), [production, registerDetail, workspace]);
+  const getDetail = useCallback(() => <ProductionLocationsPage workspace={workspace} production={production} onChanged={() => onChanged?.()} key={production.id} />, [onChanged, production, workspace]);
+  useWindowDetailRegistration({ key: `production-locations:${production.id}`, storageKey: `detailPane:production-locations:${production.id}:v2`, detailLabel: "活动地点", triggerRef, getDetail });
 
   useEffect(() => {
     if (!routerLocation.state?.openProductionLocations) return;

@@ -13,7 +13,7 @@ import { appStore } from "@/lib/app-store";
 import { listProductionOccurrences, listRehearsalSessions, listScheduleItems, updateProductionOccurrence, updateRehearsalSession, updateScheduleItem } from "@/lib/production-api";
 import { ActivityTimeText as TimeText } from "@/components/time-text";
 import { notify } from "@/components/ui/sonner";
-import { useWindowDetail } from "@/components/window-detail-context";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 
 const configs = { occurrences: { title: "场次", description: "管理正式演出、预演和加演场。", icon: ListTree, views: [{ id: "list", label: "列表" }, { id: "grid", label: "网格" }, { id: "calendar", label: "日历" }], defaultView: "list", emptyTitle: "暂无场次安排", emptyDescription: "场次数据接入后，正式演出、预演和加演场会显示在这里。", type: "occurrence" }, rehearsals: { title: "彩排", description: "管理普通彩排、技术彩排和带妆彩排。", icon: ClipboardList, views: [{ id: "calendar", label: "日历" }, { id: "agenda", label: "议程" }], defaultView: "calendar", emptyTitle: "暂无彩排安排", emptyDescription: "彩排、技术彩排和带妆彩排接入后，会显示在这里。", type: "rehearsal" }, schedule: { title: "总日程", description: "查看装台、彩排、演出和撤台等制作时间安排。", icon: CalendarRange, views: [{ id: "list", label: "列表" }, { id: "calendar", label: "日历" }, { id: "timeline", label: "时间轴" }], defaultView: "list", emptyTitle: "暂无排程安排", emptyDescription: "后续可以在这里管理装台、彩排、演出和撤台等时间。", type: "schedule" } };
 const kindLabels = { preview: "预演", performance: "正式演出", encore: "加演", rehearsal: "普通彩排", technical: "技术彩排", dress: "带妆彩排", cue_to_cue: "Cue-to-cue", load_in: "装台/进场", crew_call: "工作人员集合", technical_check: "技术检查", doors: "开门", break: "休息", strike: "撤台", travel: "转场", other: "其他" };
@@ -26,7 +26,7 @@ function RecordActions({ record, type, onEdit, onRefresh }) { const update = typ
 function RecordRow({ record, type, timezone, onEdit, onRefresh }) { return <button type="button" className="flex w-full flex-wrap items-center gap-3 border-b px-4 py-3 text-left last:border-b-0 hover:bg-muted/40" onClick={() => onEdit(record)}><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium">{titleOf(record, type)}</p><Badge variant="secondary">{kindLabels[record.itemType || record.kind] || record.itemType || record.kind}</Badge><Badge className={statusClass[record.status]} variant="secondary">{statusLabels[record.status] || record.status}</Badge></div><p className="mt-1 text-sm text-muted-foreground">{record.scheduledStartAt ? <><TimeText instant={record.scheduledStartAt} timezone={timezone} />{record.scheduledEndAt ? <> — <TimeText instant={record.scheduledEndAt} timezone={timezone} /></> : null}</> : "尚未安排时间"} · {locationOf(record)}</p>{record.conflicts?.length ? <p className="mt-1 text-xs text-amber-600">存在 {record.conflicts.length} 个地点冲突</p> : null}</div><span onClick={(e) => e.stopPropagation()}><RecordActions record={record} type={type} onEdit={onEdit} onRefresh={onRefresh} /></span></button>; }
 
 export function PlanningPage({ route, workspace, production }) {
-  const page = configs[route.page] || configs.schedule; const { registerDetail, setDetailOpen } = useWindowDetail(); const triggerRef = useRef(null);
+  const page = configs[route.page] || configs.schedule; const { setDetailOpen } = useWindowDetail(); const triggerRef = useRef(null);
   const [view, setView] = useState(page.defaultView); const [query, setQuery] = useState(""); const [status, setStatus] = useState("all"); const [records, setRecords] = useState(null); const [loading, setLoading] = useState(true); const [refreshing, setRefreshing] = useState(false); const [error, setError] = useState(null); const [selected, setSelected] = useState(null);
   const requestIdRef = useRef(0);
   const recordsRef = useRef(null);
@@ -60,7 +60,10 @@ export function PlanningPage({ route, workspace, production }) {
     load();
     return () => { active = false; requestIdRef.current = Math.max(requestIdRef.current, requestId + 1); };
   }, [load, production.id, route.page, validViews]);
-  useEffect(() => { const cleanup = registerDetail({ key: `planning-${production.id}-${page.type}`, storageKey: `detailPane:planning:${production.id}:${page.type}:v1`, triggerRef, detailLabel: `${page.title}详情`, getDetail: () => selected ? <PlanningRecordDetail production={production} entityType={page.type} record={selected.draft ? null : selected} onSaved={(result) => { setSelected(result); load(); }} /> : null }); if (selected) setDetailOpen(true, { announce: false }); return cleanup; }, [page.type, page.title, production, selected, registerDetail, setDetailOpen, load]);
+  const getDetail = useCallback(() => selected ? <PlanningRecordDetail production={production} entityType={page.type} record={selected.draft ? null : selected} onSaved={(result) => { setSelected(result); load(); }} /> : null, [load, page.type, production, selected]);
+  const onCloseDetail = useCallback(() => setSelected(null), []);
+  useWindowDetailRegistration({ key: `planning-${production.id}-${page.type}`, storageKey: `detailPane:planning:${production.id}:${page.type}:v1`, triggerRef, detailLabel: `${page.title}详情`, getDetail, onClose: onCloseDetail });
+  useEffect(() => { setDetailOpen(Boolean(selected), { announce: false }); }, [selected, setDetailOpen]);
   const open = (record) => { setSelected(record ? { ...record, draft: false } : { draft: true }); setDetailOpen(true); };
   const changeView = (next) => { if (!validViews.has(next)) return; setView(next); appStore.set(`planningView:${production.id}:${route.page}`, next).catch(() => {}); };
   const visible = (records || []).filter((item) => (!query.trim() || titleOf(item, page.type).toLowerCase().includes(query.trim().toLowerCase())) && (status === "all" || item.status === status));

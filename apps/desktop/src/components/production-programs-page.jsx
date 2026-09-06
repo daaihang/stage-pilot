@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ResourcePage } from "@/components/resource-page";
 import { ProductionPageHeader } from "@/components/production-page-shell";
 import { TimeText } from "@/components/time-text";
-import { useWindowDetail } from "@/components/window-detail-context";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { notify } from "@/components/ui/sonner";
 import { listResource, listResourceTypes } from "@/lib/resource-api";
 import { listProductionOccurrences } from "@/lib/production-api";
@@ -52,7 +52,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
   const [creating, setCreating] = useState(false);
   const triggerRef = useRef(null);
   const requestSequence = useRef(0);
-  const { registerDetail, setDetailOpen } = useWindowDetail();
+  const { setDetailOpen } = useWindowDetail();
 
   const load = useCallback(async ({ toast = false } = {}) => {
     const requestId = ++requestSequence.current;
@@ -81,16 +81,11 @@ export function ProductionProgramsPage({ route, workspace, production }) {
 
   const selectedProgram = useMemo(() => programs.find((item) => item.id === selectedId) || null, [programs, selectedId]);
 
-  useEffect(() => registerDetail({
-    key: `production-programs:${production.id}`,
-    storageKey: `detailPane:production-programs:${production.id}:v1`,
-    triggerRef,
-    detailLabel: "活动节目详情",
-    onClose: () => { setSelectedId(null); setCreating(false); },
-    getDetail: () => creating ? <ProductionProgramCreateDetail workspacePrograms={workspacePrograms} programTypes={programTypes} existingPrograms={programs} onCancel={() => { setCreating(false); setDetailOpen(false); }} onSave={async (values) => { if (values.openExistingId) { setCreating(false); setSelectedId(values.openExistingId); return; } try { const created = values.sourceProgramId ? (await copyWorkspaceProgram(production.id, values, { workspaceId: workspace.id })).program : await createProductionProgram(production.id, values, { workspaceId: workspace.id }); setPrograms((current) => current.some((item) => item.id === created.id) ? current : [...current, created]); setCreating(false); setSelectedId(created.id); notify.success("活动节目已创建"); } catch (error) { notify.error("活动节目创建失败", { description: error?.message || String(error) }); } }} /> : selectedProgram ? <ProductionProgramDetail program={selectedProgram} programTypes={programTypes} canWrite={canWrite} onSave={async (patch) => { try { const updated = await updateProductionProgram(production.id, selectedProgram.id, patch, { workspaceId: workspace.id }); setPrograms((current) => current.map((item) => item.id === updated.id ? updated : item)); notify.success("活动节目已保存"); } catch (error) { notify.error("活动节目保存失败", { description: error?.message || String(error) }); throw error; } }} onDuplicate={(program) => setDialog({ type: "duplicate", program })} onArchive={(program) => setDialog({ type: "archive", program })} onRestore={async (program) => { try { const restored = await restoreProductionProgram(production.id, program.id, { workspaceId: workspace.id }); setPrograms((current) => current.map((item) => item.id === restored.id ? restored : item)); notify.success("活动节目已恢复"); } catch (error) { notify.error("活动节目恢复失败", { description: error?.message || String(error) }); } }} onAddToSheets={(program) => setDialog({ type: "assign", program })} /> : null,
-  }), [canWrite, creating, production.id, programTypes, programs, registerDetail, selectedProgram, setDetailOpen, workspace.id, workspacePrograms]);
+  const onCloseDetail = useCallback(() => { setSelectedId(null); setCreating(false); }, []);
+  const getDetail = useCallback(() => creating ? <ProductionProgramCreateDetail workspacePrograms={workspacePrograms} programTypes={programTypes} existingPrograms={programs} onCancel={() => { setCreating(false); setDetailOpen(false); }} onSave={async (values) => { if (values.openExistingId) { setCreating(false); setSelectedId(values.openExistingId); return; } try { const created = values.sourceProgramId ? (await copyWorkspaceProgram(production.id, values, { workspaceId: workspace.id })).program : await createProductionProgram(production.id, values, { workspaceId: workspace.id }); setPrograms((current) => current.some((item) => item.id === created.id) ? current : [...current, created]); setCreating(false); setSelectedId(created.id); notify.success("活动节目已创建"); } catch (error) { notify.error("活动节目创建失败", { description: error?.message || String(error) }); } }} /> : selectedProgram ? <ProductionProgramDetail program={selectedProgram} programTypes={programTypes} canWrite={canWrite} onSave={async (patch) => { try { const updated = await updateProductionProgram(production.id, selectedProgram.id, patch, { workspaceId: workspace.id }); setPrograms((current) => current.map((item) => item.id === updated.id ? updated : item)); notify.success("活动节目已保存"); } catch (error) { notify.error("活动节目保存失败", { description: error?.message || String(error) }); throw error; } }} onDuplicate={(program) => setDialog({ type: "duplicate", program })} onArchive={(program) => setDialog({ type: "archive", program })} onRestore={async (program) => { try { const restored = await restoreProductionProgram(production.id, program.id, { workspaceId: workspace.id }); setPrograms((current) => current.map((item) => item.id === restored.id ? restored : item)); notify.success("活动节目已恢复"); } catch (error) { notify.error("活动节目恢复失败", { description: error?.message || String(error) }); } }} onAddToSheets={(program) => setDialog({ type: "assign", program })} /> : null, [canWrite, creating, production.id, programTypes, programs, selectedProgram, setDetailOpen, workspace.id, workspacePrograms]);
+  useWindowDetailRegistration({ key: `production-programs:${production.id}`, storageKey: `detailPane:production-programs:${production.id}:v1`, triggerRef, detailLabel: "活动节目详情", getDetail, onClose: onCloseDetail });
 
-  useEffect(() => { if (selectedProgram || creating) setDetailOpen(true, { announce: false }); }, [creating, selectedProgram, setDetailOpen]);
+  useEffect(() => { setDetailOpen(Boolean(selectedProgram || creating), { announce: false }); }, [creating, selectedProgram, setDetailOpen]);
 
   const filteredPrograms = useMemo(() => {
     const needle = query.trim().toLowerCase();
