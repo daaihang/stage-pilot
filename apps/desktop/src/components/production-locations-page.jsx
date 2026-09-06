@@ -82,7 +82,7 @@ function ProductionLocationRow({ location, index, count, canWrite, reorderable, 
     <MapPin className="hidden size-4 text-muted-foreground sm:block" />
     <div className="min-w-0"><p className="truncate text-sm font-medium">{locationName(location)}</p><p className="mt-1 truncate text-xs text-muted-foreground md:hidden">{location.notes || "地点关联"}</p></div>
     <Badge variant="outline" className="justify-self-start">{purposeLabel(location.purpose)}</Badge>
-    <div className="flex w-full items-center justify-center"><Switch checked={Boolean(location.isPrimary)} disabled={!canWrite || pendingPrimaryId === location.id} onCheckedChange={(checked) => onPrimaryToggle(location, checked)} aria-label={`${location.isPrimary ? "取消" : "设为"}默认地点：${locationName(location)}`} /></div>
+    <div className="flex w-full items-center justify-center"><Switch className="duration-200 ease-out" checked={Boolean(location.isPrimary)} disabled={!canWrite || pendingPrimaryId === location.id} onCheckedChange={(checked) => onPrimaryToggle(location, checked)} aria-label={`${location.isPrimary ? "取消" : "设为"}默认地点：${locationName(location)}`} /></div>
     <p className="hidden truncate text-xs text-muted-foreground md:block">{location.notes || "—"}</p>
     {canWrite && <div className="flex items-center justify-end gap-1"><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === 0} onClick={() => onMove(index, -1)} aria-label="上移地点" title="上移地点"><ArrowUp /></Button><Button type="button" variant="ghost" size="icon-sm" disabled={!reorderable || index === count - 1} onClick={() => onMove(index, 1)} aria-label="下移地点" title="下移地点"><ArrowDown /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onEdit(location)} aria-label="编辑活动地点" title="编辑活动地点"><Pencil /></Button><Button type="button" variant="ghost" size="icon-sm" onClick={() => onRemove(location)} aria-label="移除活动地点" title="移除活动地点"><Trash2 /></Button></div>}
   </div></SortableItem>;
@@ -146,9 +146,9 @@ export function ProductionLocationsPage({ workspace, production }) {
     setLocations((current) => current.map((item) => ({ ...item, isPrimary: checked ? item.id === location.id : item.id === location.id ? false : item.isPrimary })));
     const toast = notify.loading(checked ? "正在设置默认地点…" : "正在取消默认地点…");
     try {
-      await updateProductionLocation(production.id, location.id, { is_primary: checked });
+      const saved = await updateProductionLocation(production.id, location.id, { is_primary: checked });
+      setLocations((current) => current.map((item) => item.id === location.id ? { ...item, ...saved, isPrimary: Boolean(saved?.isPrimary ?? checked) } : checked ? { ...item, isPrimary: false } : item));
       notify.success(checked ? "默认地点已更新" : "已取消默认地点", { id: toast });
-      await load();
     } catch (nextError) {
       setLocations(previous);
       notify.error(checked ? "设置默认地点失败" : "取消默认地点失败", { id: toast, description: nextError?.message || String(nextError) });
