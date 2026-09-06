@@ -14,7 +14,7 @@ import { PageChromeProvider, PageDetailTitlebarAction } from "@/components/page-
 import { WindowDetailHost, WindowDetailProvider } from "@/components/window-detail-context";
 import { NavigationProvider, useNavigationData } from "@/components/navigation-provider";
 import { WorkspaceProvider, useWorkspaceContext } from "@/components/workspace-provider";
-import { UserPreferencesProvider } from "@/components/user-preferences-provider";
+import { UserPreferencesProvider, useUserPreferences } from "@/components/user-preferences-provider";
 import { WorkspacesPage } from "@/components/workspaces-page";
 import { UnifiedWorkContextPage } from "@/components/unified-work-context-page";
 import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
