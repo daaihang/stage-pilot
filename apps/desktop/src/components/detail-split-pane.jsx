@@ -430,7 +430,7 @@ export function DetailSplitPane({
   const effectiveSurfaceMode = surfaceMounted ? surfaceMode : (desiredMode || "overlay");
   return <div ref={containerRef} data-resizing={isResizing || undefined} data-main-inert={mainInert || undefined} className={cn("detail-split-pane relative flex h-full min-h-0 min-w-0", className)}>
     <div className={cn("t-resize flex h-full min-h-0 min-w-0 shrink-0 flex-col overflow-hidden", mainInert && "pointer-events-none")} style={{ width: mainWidth }} inert={mainInert || undefined} aria-hidden={mainInert || undefined}>{children}</div>
-    {surfaceMounted && surfaceMode === "exclusive" && <button type="button" aria-hidden="true" tabIndex={-1} className={cn("absolute inset-0 z-10 cursor-default border-0 bg-black/10 p-0 outline-none transition-opacity", isSurfaceOpen ? "opacity-100" : "pointer-events-none opacity-0")} onClick={exitExclusive} />}
+    {surfaceMounted && surfaceMode === "exclusive" && <button type="button" aria-hidden="true" tabIndex={-1} className={cn("absolute inset-0 z-10 cursor-default border-0 bg-black/10 p-0 outline-none transition-opacity", isSurfaceOpen ? "opacity-100" : "pointer-events-none opacity-0")} onClick={closeDetail} />}
     {surfaceMounted && <div
       ref={surfaceRef}
       data-detail-surface
