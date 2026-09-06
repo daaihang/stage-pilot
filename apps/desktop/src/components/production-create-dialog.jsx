@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -7,8 +7,11 @@ import { notify } from "@/components/ui/sonner"
 import { createProduction } from "@/lib/production-api"
 import { wallClockToInstant } from "@/lib/date-time"
 import { DateTimePicker } from "@/components/reui/date-time-picker"
+import { TimezoneCombobox } from "@/components/timezone-combobox"
+import { useUserPreferences } from "@/components/user-preferences-provider"
 
 export function CreateProductionDialog({ workspace, open, onOpenChange, onCreated }) {
+  const { timezone: preferredTimezone } = useUserPreferences()
   const [form, setForm] = useState({
     name: "",
     plannedStartAt: "",
@@ -17,6 +20,10 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
     description: "",
   })
   const [creating, setCreating] = useState(false)
+
+  useEffect(() => {
+    if (open && preferredTimezone) setForm((current) => current.timezone === "Asia/Shanghai" ? { ...current, timezone: preferredTimezone } : current)
+  }, [open, preferredTimezone])
 
   const set = (key) => (event) => {
     setForm((current) => ({ ...current, [key]: event.target.value }))
@@ -84,8 +91,9 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
             </div>
           </div>
           <label className="block space-y-1.5">
-            <span className="text-sm font-medium">时区（IANA）</span>
-            <Input value={form.timezone} onChange={set("timezone")} placeholder="Asia/Shanghai" />
+            <span className="text-sm font-medium">活动时区</span>
+            <TimezoneCombobox value={form.timezone} onValueChange={(timezone) => setForm((current) => ({ ...current, timezone }))} className="w-full" />
+            <span className="text-xs text-muted-foreground">活动的场次、彩排和排程时间都按此时区解释。</span>
           </label>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">描述（可选）</span>

@@ -198,6 +198,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/productions", app.auth(http.HandlerFunc(app.listAccessibleProductions)))
 	mux.Handle("GET /v1/productions/{productionId}", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getAccessibleProduction))))
 	mux.Handle("PATCH /v1/productions/{productionId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProduction))))
+	mux.Handle("POST /v1/productions/{productionId}/timezone-preview", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.previewProductionTimezone))))
 	mux.Handle("GET /v1/productions/{productionId}/settings", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getProductionPlanningSettings))))
 	mux.Handle("PATCH /v1/productions/{productionId}/settings", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProductionPlanningSettings))))
 	mux.Handle("GET /v1/productions/{productionId}/members", app.auth(app.requireProductionPermission(productionMembersView, http.HandlerFunc(app.listProductionMembers))))
@@ -221,6 +222,11 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /v1/productions/{productionId}/rehearsals", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createPlanning))))
 	mux.Handle("GET /v1/productions/{productionId}/rehearsals/{sessionId}", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getPlanning))))
 	mux.Handle("PATCH /v1/productions/{productionId}/rehearsals/{sessionId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updatePlanning))))
+	mux.Handle("GET /v1/productions/{productionId}/schedule-items", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listScheduleItems))))
+	mux.Handle("POST /v1/productions/{productionId}/schedule-items", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createScheduleItem))))
+	mux.Handle("GET /v1/productions/{productionId}/schedule-items/{itemId}", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getScheduleItem))))
+	mux.Handle("PATCH /v1/productions/{productionId}/schedule-items/{itemId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateScheduleItem))))
+	mux.Handle("DELETE /v1/productions/{productionId}/schedule-items/{itemId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.deleteScheduleItem))))
 	registerFileRoutes(app, mux)
 	return mux
 }

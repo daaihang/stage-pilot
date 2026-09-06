@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { appStore } from "@/lib/app-store";
 import { listProductionOccurrences, listRehearsalSessions, listScheduleItems, updateProductionOccurrence, updateRehearsalSession, updateScheduleItem } from "@/lib/production-api";
-import { TimeText } from "@/components/time-text";
+import { ActivityTimeText as TimeText } from "@/components/time-text";
 import { notify } from "@/components/ui/sonner";
 import { useWindowDetail } from "@/components/window-detail-context";
 

@@ -7,7 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sortable, SortableItem, SortableItemHandle } from "@/components/reui/sortable";
-import { TimeText } from "@/components/time-text";
+import { ActivityTimeText as TimeText } from "@/components/time-text";
 import { ProductionProgramPickerDialog } from "@/components/production-program-dialogs";
 import { ProgramSheetItemDialog } from "@/components/program-sheet-item-dialog";
 import { makeSheetItem } from "@/lib/program-sheet-store";

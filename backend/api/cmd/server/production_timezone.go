@@ -22,11 +22,10 @@ type timezoneRebaseError struct {
 func (err *timezoneRebaseError) Error() string { return err.Message }
 
 type productionTimezoneRow struct {
-	table    string
-	id       string
-	timezone string
-	start    *time.Time
-	end      *time.Time
+	table string
+	id    string
+	start *time.Time
+	end   *time.Time
 }
 
 func (app *application) productionTimezone(ctx context.Context, workspaceID, productionID string) (string, error) {
@@ -84,14 +83,14 @@ func rebaseScheduledInstant(value *time.Time, sourceTimezone, targetTimezone str
 func loadProductionTimezoneRows(ctx context.Context, tx pgx.Tx, workspaceID, productionID string) ([]productionTimezoneRow, error) {
 	rows := make([]productionTimezoneRow, 0)
 	for _, table := range []string{"production_occurrences", "rehearsal_sessions", "schedule_items"} {
-		result, err := tx.Query(ctx, "SELECT id,timezone,scheduled_start_at,scheduled_end_at FROM "+table+" WHERE workspace_id=$1 AND production_id=$2 FOR UPDATE", workspaceID, productionID)
+		result, err := tx.Query(ctx, "SELECT id,scheduled_start_at,scheduled_end_at FROM "+table+" WHERE workspace_id=$1 AND production_id=$2 FOR UPDATE", workspaceID, productionID)
 		if err != nil {
 			return nil, err
 		}
 		for result.Next() {
 			var row productionTimezoneRow
 			row.table, row.start, row.end = table, nil, nil
-			if err := result.Scan(&row.id, &row.timezone, &row.start, &row.end); err != nil {
+			if err := result.Scan(&row.id, &row.start, &row.end); err != nil {
 				result.Close()
 				return nil, err
 			}
@@ -132,15 +131,11 @@ func (app *application) updateProductionTimezone(ctx context.Context, workspaceI
 			return err
 		}
 		for index := range rows {
-			sourceTimezone := rows[index].timezone
-			if sourceTimezone == "" {
-				sourceTimezone = lockedTimezone
-			}
-			rows[index].start, err = rebaseScheduledInstant(rows[index].start, sourceTimezone, targetTimezone)
+			rows[index].start, err = rebaseScheduledInstant(rows[index].start, lockedTimezone, targetTimezone)
 			if err != nil {
 				return err
 			}
-			rows[index].end, err = rebaseScheduledInstant(rows[index].end, sourceTimezone, targetTimezone)
+			rows[index].end, err = rebaseScheduledInstant(rows[index].end, lockedTimezone, targetTimezone)
 			if err != nil {
 				return err
 			}
@@ -152,9 +147,11 @@ func (app *application) updateProductionTimezone(ctx context.Context, workspaceI
 	if plannedStart != nil && plannedEnd != nil && plannedEnd.Before(*plannedStart) {
 		return &timezoneRebaseError{Code: "invalid_input", Message: "同步后的活动结束时间不能早于开始时间"}
 	}
-	for _, row := range rows {
-		if _, err := tx.Exec(ctx, "UPDATE "+row.table+" SET timezone=$1,scheduled_start_at=$2,scheduled_end_at=$3,updated_at=NOW() WHERE id=$4 AND workspace_id=$5 AND production_id=$6", targetTimezone, row.start, row.end, row.id, workspaceID, productionID); err != nil {
-			return err
+	if strategy == keepWallTimeStrategy {
+		for _, row := range rows {
+			if _, err := tx.Exec(ctx, "UPDATE "+row.table+" SET scheduled_start_at=$1,scheduled_end_at=$2,updated_at=NOW() WHERE id=$3 AND workspace_id=$4 AND production_id=$5 AND (scheduled_start_at IS DISTINCT FROM $1 OR scheduled_end_at IS DISTINCT FROM $2)", row.start, row.end, row.id, workspaceID, productionID); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE productions SET name=$1,description=$2,timezone=$3,planned_start_at=$4,planned_end_at=$5,status=$6,actual_completed_at=$7,

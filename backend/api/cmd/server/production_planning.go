@@ -33,7 +33,6 @@ type productionPlanningRecord struct {
 type planningPatch struct {
 	Name                 *string      `json:"name"`
 	Kind                 *string      `json:"kind"`
-	Timezone             *string      `json:"timezone"`
 	ScheduledStartAt     optionalTime `json:"scheduled_start_at"`
 	ScheduledEndAt       optionalTime `json:"scheduled_end_at"`
 	Status               *string      `json:"status"`
@@ -62,7 +61,7 @@ func planningSelect(table string) string {
 	if table == "rehearsal_sessions" {
 		occurrence = "r.occurrence_id"
 	}
-	return `SELECT r.id,r.workspace_id,r.production_id,` + occurrence + `,r.name,r.kind,r.timezone,r.scheduled_start_at,r.scheduled_end_at,r.actual_start_at,r.actual_end_at,r.status,r.production_location_id,v.name,s.name,r.notes,r.created_by,r.created_at,r.updated_at FROM ` + table + ` r LEFT JOIN production_locations l ON l.id=r.production_location_id AND l.workspace_id=r.workspace_id AND l.production_id=r.production_id LEFT JOIN venues v ON v.id=l.venue_id AND v.workspace_id=l.workspace_id LEFT JOIN venue_spaces s ON s.id=l.venue_space_id AND s.workspace_id=l.workspace_id WHERE r.workspace_id=$1 AND r.production_id=$2`
+	return `SELECT r.id,r.workspace_id,r.production_id,` + occurrence + `,r.name,r.kind,p.timezone,r.scheduled_start_at,r.scheduled_end_at,r.actual_start_at,r.actual_end_at,r.status,r.production_location_id,v.name,s.name,r.notes,r.created_by,r.created_at,r.updated_at FROM ` + table + ` r JOIN productions p ON p.id=r.production_id AND p.workspace_id=r.workspace_id LEFT JOIN production_locations l ON l.id=r.production_location_id AND l.workspace_id=r.workspace_id AND l.production_id=r.production_id LEFT JOIN venues v ON v.id=l.venue_id AND v.workspace_id=l.workspace_id LEFT JOIN venue_spaces s ON s.id=l.venue_space_id AND s.workspace_id=l.workspace_id WHERE r.workspace_id=$1 AND r.production_id=$2`
 }
 func scanPlanning(row interface{ Scan(...any) error }) (productionPlanningRecord, error) {
 	var x productionPlanningRecord
@@ -74,7 +73,7 @@ func (app *application) planningRequiresStart(ctx context.Context, workspaceID, 
 	err := app.db.QueryRow(ctx, `SELECT COALESCE(p.require_actual_start_before_completion,w.require_actual_start_before_completion,TRUE) FROM productions x JOIN workspaces w ON w.id=x.workspace_id LEFT JOIN production_settings p ON p.production_id=x.id WHERE x.id=$1 AND x.workspace_id=$2`, productionID, workspaceID).Scan(&required)
 	return err != nil || required
 }
-func validatePlanningInput(w http.ResponseWriter, name, kind, timezone string, start, end *time.Time, rehearsal bool) bool {
+func validatePlanningInput(w http.ResponseWriter, name, kind string, start, end *time.Time, rehearsal bool) bool {
 	name = strings.TrimSpace(name)
 	if utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 120 {
 		errorJSON(w, 400, "invalid_input", "名称不能为空且不能超过 120 字")
@@ -82,10 +81,6 @@ func validatePlanningInput(w http.ResponseWriter, name, kind, timezone string, s
 	}
 	if !validPlanningKind(kind, rehearsal) {
 		errorJSON(w, 400, "invalid_input", "类型无效")
-		return false
-	}
-	if !validProductionTimezone(timezone) {
-		errorJSON(w, 400, "invalid_input", "时区无效，需要 IANA 时区名称")
 		return false
 	}
 	if start != nil && end != nil && end.Before(*start) {
@@ -168,7 +163,6 @@ func (app *application) createPlanning(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name                 string     `json:"name"`
 		Kind                 string     `json:"kind"`
-		Timezone             string     `json:"timezone"`
 		ScheduledStartAt     *time.Time `json:"scheduled_start_at"`
 		ScheduledEndAt       *time.Time `json:"scheduled_end_at"`
 		ProductionLocationID *string    `json:"production_location_id"`
@@ -178,12 +172,6 @@ func (app *application) createPlanning(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	in.Timezone = activityTimezone
 	if in.Kind == "" {
 		if rehearsal {
 			in.Kind = "rehearsal"
@@ -191,7 +179,7 @@ func (app *application) createPlanning(w http.ResponseWriter, r *http.Request) {
 			in.Kind = "performance"
 		}
 	}
-	if !validatePlanningInput(w, in.Name, in.Kind, in.Timezone, in.ScheduledStartAt, in.ScheduledEndAt, rehearsal) {
+	if !validatePlanningInput(w, in.Name, in.Kind, in.ScheduledStartAt, in.ScheduledEndAt, rehearsal) {
 		return
 	}
 	if !app.validPlanningLocation(w, r, a, in.ProductionLocationID) {
@@ -204,11 +192,11 @@ func (app *application) createPlanning(w http.ResponseWriter, r *http.Request) {
 	var q string
 	var args []any
 	if rehearsal {
-		q = `INSERT INTO rehearsal_sessions(id,workspace_id,production_id,occurrence_id,name,kind,timezone,scheduled_start_at,scheduled_end_at,status,production_location_id,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'planned',$10,$11,$12)`
-		args = []any{id, a.WorkspaceID, a.ProductionID, in.OccurrenceID, strings.TrimSpace(in.Name), in.Kind, in.Timezone, in.ScheduledStartAt, in.ScheduledEndAt, in.ProductionLocationID, strings.TrimSpace(in.Notes), claims(r).Subject}
+		q = `INSERT INTO rehearsal_sessions(id,workspace_id,production_id,occurrence_id,name,kind,scheduled_start_at,scheduled_end_at,status,production_location_id,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'planned',$9,$10,$11)`
+		args = []any{id, a.WorkspaceID, a.ProductionID, in.OccurrenceID, strings.TrimSpace(in.Name), in.Kind, in.ScheduledStartAt, in.ScheduledEndAt, in.ProductionLocationID, strings.TrimSpace(in.Notes), claims(r).Subject}
 	} else {
-		q = `INSERT INTO production_occurrences(id,workspace_id,production_id,name,kind,timezone,scheduled_start_at,scheduled_end_at,status,production_location_id,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'planned',$9,$10,$11)`
-		args = []any{id, a.WorkspaceID, a.ProductionID, strings.TrimSpace(in.Name), in.Kind, in.Timezone, in.ScheduledStartAt, in.ScheduledEndAt, in.ProductionLocationID, strings.TrimSpace(in.Notes), claims(r).Subject}
+		q = `INSERT INTO production_occurrences(id,workspace_id,production_id,name,kind,scheduled_start_at,scheduled_end_at,status,production_location_id,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,'planned',$8,$9,$10)`
+		args = []any{id, a.WorkspaceID, a.ProductionID, strings.TrimSpace(in.Name), in.Kind, in.ScheduledStartAt, in.ScheduledEndAt, in.ProductionLocationID, strings.TrimSpace(in.Notes), claims(r).Subject}
 	}
 	if _, err := app.db.Exec(r.Context(), q, args...); err != nil {
 		serverError(w, err)
@@ -238,19 +226,13 @@ func (app *application) updatePlanning(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	name, kind, tz := current.Name, current.Kind, current.Timezone
+	name, kind := current.Name, current.Kind
 	if in.Name != nil {
 		name = *in.Name
 	}
 	if in.Kind != nil {
 		kind = *in.Kind
 	}
-	tz = activityTimezone
 	start, end := current.ScheduledStartAt, current.ScheduledEndAt
 	if in.ScheduledStartAt.Present {
 		start = in.ScheduledStartAt.Value
@@ -258,7 +240,7 @@ func (app *application) updatePlanning(w http.ResponseWriter, r *http.Request) {
 	if in.ScheduledEndAt.Present {
 		end = in.ScheduledEndAt.Value
 	}
-	if !validatePlanningInput(w, name, kind, tz, start, end, rehearsal) {
+	if !validatePlanningInput(w, name, kind, start, end, rehearsal) {
 		return
 	}
 	if in.ProductionLocationID != nil && !app.validPlanningLocation(w, r, a, in.ProductionLocationID) {
@@ -317,11 +299,11 @@ func (app *application) updatePlanning(w http.ResponseWriter, r *http.Request) {
 		if in.OccurrenceID != nil {
 			occ = in.OccurrenceID
 		}
-		q = `UPDATE rehearsal_sessions SET name=$1,kind=$2,timezone=$3,scheduled_start_at=$4,scheduled_end_at=$5,status=$6,production_location_id=$7,notes=$8,actual_start_at=$9,actual_end_at=$10,occurrence_id=$11,updated_at=NOW() WHERE id=$12 AND workspace_id=$13 AND production_id=$14`
-		args = []any{name, kind, tz, start, end, status, location, notes, actualStart, actualEnd, occ, id, a.WorkspaceID, a.ProductionID}
+		q = `UPDATE rehearsal_sessions SET name=$1,kind=$2,scheduled_start_at=$3,scheduled_end_at=$4,status=$5,production_location_id=$6,notes=$7,actual_start_at=$8,actual_end_at=$9,occurrence_id=$10,updated_at=NOW() WHERE id=$11 AND workspace_id=$12 AND production_id=$13`
+		args = []any{name, kind, start, end, status, location, notes, actualStart, actualEnd, occ, id, a.WorkspaceID, a.ProductionID}
 	} else {
-		q = `UPDATE production_occurrences SET name=$1,kind=$2,timezone=$3,scheduled_start_at=$4,scheduled_end_at=$5,status=$6,production_location_id=$7,notes=$8,actual_start_at=$9,actual_end_at=$10,updated_at=NOW() WHERE id=$11 AND workspace_id=$12 AND production_id=$13`
-		args = []any{name, kind, tz, start, end, status, location, notes, actualStart, actualEnd, id, a.WorkspaceID, a.ProductionID}
+		q = `UPDATE production_occurrences SET name=$1,kind=$2,scheduled_start_at=$3,scheduled_end_at=$4,status=$5,production_location_id=$6,notes=$7,actual_start_at=$8,actual_end_at=$9,updated_at=NOW() WHERE id=$10 AND workspace_id=$11 AND production_id=$12`
+		args = []any{name, kind, start, end, status, location, notes, actualStart, actualEnd, id, a.WorkspaceID, a.ProductionID}
 	}
 	if _, err = app.db.Exec(r.Context(), q, args...); err != nil {
 		serverError(w, err)

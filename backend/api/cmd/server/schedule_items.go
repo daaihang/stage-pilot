@@ -67,7 +67,6 @@ type scheduleItemPatchInput struct {
 	ContextType           *string      `json:"context_type"`
 	OccurrenceID          *string      `json:"occurrence_id"`
 	RehearsalSessionID    *string      `json:"rehearsal_session_id"`
-	Timezone              *string      `json:"timezone"`
 	ScheduledStartAt      optionalTime `json:"scheduled_start_at"`
 	ScheduledEndAt        optionalTime `json:"scheduled_end_at"`
 	Status                *string      `json:"status"`
@@ -76,7 +75,7 @@ type scheduleItemPatchInput struct {
 }
 
 func scheduleItemSelect() string {
-	return `SELECT id,workspace_id,production_id,context_type,occurrence_id,rehearsal_session_id,title,item_type,timezone,scheduled_start_at,scheduled_end_at,actual_start_at,actual_end_at,status,notes,created_by,created_at,updated_at FROM schedule_items WHERE workspace_id=$1 AND production_id=$2`
+	return `SELECT s.id,s.workspace_id,s.production_id,s.context_type,s.occurrence_id,s.rehearsal_session_id,s.title,s.item_type,p.timezone,s.scheduled_start_at,s.scheduled_end_at,s.actual_start_at,s.actual_end_at,s.status,s.notes,s.created_by,s.created_at,s.updated_at FROM schedule_items s JOIN productions p ON p.id=s.production_id AND p.workspace_id=s.workspace_id WHERE s.workspace_id=$1 AND s.production_id=$2`
 }
 
 func scanScheduleItem(row interface{ Scan(...any) error }) (scheduleItemRecord, error) {
@@ -131,7 +130,7 @@ func writeScheduleConflicts(w http.ResponseWriter, conflicts []scheduleConflict)
 	errorJSONWithFields(w, http.StatusConflict, "schedule_conflict", "地点时间与其他排程重叠", map[string]any{"conflicts": items})
 }
 
-func validateScheduleItemInput(w http.ResponseWriter, title, itemType, contextType, timezone string, start, end *time.Time) bool {
+func validateScheduleItemInput(w http.ResponseWriter, title, itemType, contextType string, start, end *time.Time) bool {
 	if utf8.RuneCountInString(strings.TrimSpace(title)) < 1 || utf8.RuneCountInString(title) > 160 {
 		errorJSON(w, 400, "invalid_input", "标题不能为空且不能超过 160 字")
 		return false
@@ -142,10 +141,6 @@ func validateScheduleItemInput(w http.ResponseWriter, title, itemType, contextTy
 	}
 	if contextType != "production" && contextType != "occurrence" && contextType != "rehearsal" {
 		errorJSON(w, 400, "invalid_input", "安排上下文无效")
-		return false
-	}
-	if !validProductionTimezone(timezone) {
-		errorJSON(w, 400, "invalid_input", "时区无效，需要 IANA 时区名称")
 		return false
 	}
 	if start != nil && end != nil && end.Before(*start) {
@@ -351,7 +346,6 @@ func (app *application) createScheduleItem(w http.ResponseWriter, r *http.Reques
 		ContextType           string     `json:"context_type"`
 		OccurrenceID          *string    `json:"occurrence_id"`
 		RehearsalSessionID    *string    `json:"rehearsal_session_id"`
-		Timezone              string     `json:"timezone"`
 		Start                 *time.Time `json:"scheduled_start_at"`
 		End                   *time.Time `json:"scheduled_end_at"`
 		Notes                 string     `json:"notes"`
@@ -360,19 +354,13 @@ func (app *application) createScheduleItem(w http.ResponseWriter, r *http.Reques
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
 	if in.ContextType == "" {
 		in.ContextType = "production"
 	}
 	if in.ItemType == "" {
 		in.ItemType = "other"
 	}
-	in.Timezone = activityTimezone
-	if !validateScheduleItemInput(w, in.Title, in.ItemType, in.ContextType, in.Timezone, in.Start, in.End) || !app.validateScheduleContext(w, r, a, in.ContextType, in.OccurrenceID, in.RehearsalSessionID) || !app.validateScheduleLocations(w, r, a, in.ProductionLocationIDs) {
+	if !validateScheduleItemInput(w, in.Title, in.ItemType, in.ContextType, in.Start, in.End) || !app.validateScheduleContext(w, r, a, in.ContextType, in.OccurrenceID, in.RehearsalSessionID) || !app.validateScheduleLocations(w, r, a, in.ProductionLocationIDs) {
 		return
 	}
 	id := newID()
@@ -397,7 +385,7 @@ func (app *application) createScheduleItem(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO schedule_items(id,workspace_id,production_id,context_type,occurrence_id,rehearsal_session_id,title,item_type,timezone,scheduled_start_at,scheduled_end_at,status,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'planned',$12,$13)`, id, a.WorkspaceID, a.ProductionID, in.ContextType, in.OccurrenceID, in.RehearsalSessionID, strings.TrimSpace(in.Title), in.ItemType, in.Timezone, in.Start, in.End, strings.TrimSpace(in.Notes), claims(r).Subject)
+	_, err = tx.Exec(r.Context(), `INSERT INTO schedule_items(id,workspace_id,production_id,context_type,occurrence_id,rehearsal_session_id,title,item_type,scheduled_start_at,scheduled_end_at,status,notes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'planned',$11,$12)`, id, a.WorkspaceID, a.ProductionID, in.ContextType, in.OccurrenceID, in.RehearsalSessionID, strings.TrimSpace(in.Title), in.ItemType, in.Start, in.End, strings.TrimSpace(in.Notes), claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -454,12 +442,7 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 		serverError(w, err)
 		return
 	}
-	activityTimezone, err := app.productionTimezone(r.Context(), a.WorkspaceID, a.ProductionID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	title, itemType, ctxType, tz := current.Title, current.ItemType, current.ContextType, current.Timezone
+	title, itemType, ctxType := current.Title, current.ItemType, current.ContextType
 	if in.Title != nil {
 		title = *in.Title
 	}
@@ -469,7 +452,6 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 	if in.ContextType != nil {
 		ctxType = *in.ContextType
 	}
-	tz = activityTimezone
 	start, end := current.ScheduledStartAt, current.ScheduledEndAt
 	if in.ScheduledStartAt.Present {
 		start = in.ScheduledStartAt.Value
@@ -495,7 +477,7 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 			occ = nil
 		}
 	}
-	if !validateScheduleItemInput(w, title, itemType, ctxType, tz, start, end) || !app.validateScheduleContext(w, r, a, ctxType, occ, rehearsal) {
+	if !validateScheduleItemInput(w, title, itemType, ctxType, start, end) || !app.validateScheduleContext(w, r, a, ctxType, occ, rehearsal) {
 		return
 	}
 	status := current.Status
@@ -552,7 +534,7 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 	}
 	preview := current
 	preview.ContextType, preview.OccurrenceID, preview.RehearsalSessionID = ctxType, occ, rehearsal
-	preview.Title, preview.ItemType, preview.Timezone = title, itemType, tz
+	preview.Title, preview.ItemType = title, itemType
 	preview.ScheduledStartAt, preview.ScheduledEndAt, preview.Locations = start, end, newLocations
 	conflicts, err := app.scheduleItemConflicts(r.Context(), preview)
 	if err != nil {
@@ -569,7 +551,7 @@ func (app *application) updateScheduleItem(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `UPDATE schedule_items SET context_type=$1,occurrence_id=$2,rehearsal_session_id=$3,title=$4,item_type=$5,timezone=$6,scheduled_start_at=$7,scheduled_end_at=$8,status=$9,notes=$10,actual_start_at=$11,actual_end_at=$12,updated_at=NOW() WHERE id=$13 AND workspace_id=$14 AND production_id=$15`, ctxType, occ, rehearsal, strings.TrimSpace(title), itemType, tz, start, end, status, notes, as, ae, id, a.WorkspaceID, a.ProductionID)
+	_, err = tx.Exec(r.Context(), `UPDATE schedule_items SET context_type=$1,occurrence_id=$2,rehearsal_session_id=$3,title=$4,item_type=$5,scheduled_start_at=$6,scheduled_end_at=$7,status=$8,notes=$9,actual_start_at=$10,actual_end_at=$11,updated_at=NOW() WHERE id=$12 AND workspace_id=$13 AND production_id=$14`, ctxType, occ, rehearsal, strings.TrimSpace(title), itemType, start, end, status, notes, as, ae, id, a.WorkspaceID, a.ProductionID)
 	if err != nil {
 		serverError(w, err)
 		return

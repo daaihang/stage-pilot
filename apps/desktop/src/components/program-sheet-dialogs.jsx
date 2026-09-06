@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { TimeText } from "@/components/time-text";
+import { ActivityTimeText as TimeText } from "@/components/time-text";
 import { occurrenceTitle, occurrenceType, formatDuration } from "@/lib/program-sheet-utils";
 
 export function NewProgramSheetDialog({ open, onOpenChange, onCreate, nextRevision = 1 }) {

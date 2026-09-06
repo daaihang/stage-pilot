@@ -32,6 +32,7 @@ export async function getProduction(workspaceId, productionId) {
 export const listAccessibleProductions = () => request("/v1/productions");
 export const getAccessibleProduction = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}`);
 export const updateAccessibleProduction = (productionId, patch) => request(`/v1/productions/${encodeURIComponent(productionId)}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const previewProductionTimezone = (productionId, timezone, strategy = "keep_wall_time") => request(`/v1/productions/${encodeURIComponent(productionId)}/timezone-preview`, { method: "POST", body: JSON.stringify({ timezone, strategy }) });
 export const listProductionMembers = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/members`);
 export const addProductionMember = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/members`, { method: "POST", body: JSON.stringify(payload) });
 export const updateProductionMember = (productionId, memberId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/members/${encodeURIComponent(memberId)}`, { method: "PATCH", body: JSON.stringify(payload) });
