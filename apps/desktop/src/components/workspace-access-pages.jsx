@@ -209,7 +209,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
     storageKey: "detailPane:workspace-members:v1",
     detailLabel: "成员邀请",
     triggerRef: invitationTriggerRef,
-    getDetail: () => invitationPanelOpen ? <InvitationListPanel scope="workspace" title="成员邀请" canManage={workspace.role === "owner" || workspace.role === "admin"} roleOptions={[{ value: "member", label: "Member" }, ...(workspace.role === "owner" ? [{ value: "admin", label: "Admin" }] : [])]} listInvitations={() => listWorkspaceInvitations(workspace.id)} createInvitation={(payload) => createWorkspaceInvitation(workspace.id, payload)} revokeInvitation={(id) => revokeWorkspaceInvitation(workspace.id, id)} onChanged={() => loadMembers()} /> : null,
+    getDetail: () => invitationPanelOpen ? <InvitationListPanel scope="workspace" scopeKey={workspace.id} title="成员邀请" canManage={workspace.role === "owner" || workspace.role === "admin"} roleOptions={[{ value: "member", label: "Member" }, ...(workspace.role === "owner" ? [{ value: "admin", label: "Admin" }] : [])]} listInvitations={() => listWorkspaceInvitations(workspace.id)} createInvitation={(payload) => createWorkspaceInvitation(workspace.id, payload)} revokeInvitation={(id) => revokeWorkspaceInvitation(workspace.id, id)} onChanged={() => loadMembers()} /> : null,
     onClose: () => navigate(workspacePath(workspace.id, "members")),
   });
   useEffect(() => { setDetailOpen(invitationPanelOpen, { announce: false }); }, [invitationPanelOpen, setDetailOpen]);
