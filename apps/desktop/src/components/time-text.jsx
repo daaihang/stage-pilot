@@ -16,7 +16,8 @@ export function TimeDetailsPopover({ instant, timezone, userTimezone, children }
   const zone = normalizeTimeZone(timezone)
   const preferenceZone = normalizeTimeZone(userTimezone || zone)
   const deviceZone = normalizeTimeZone(typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : preferenceZone)
-  if (preferenceZone === zone) return children || <TimeText instant={instant} timezone={zone} />
+  const hasTimezoneDifference = new Set([zone, preferenceZone, deviceZone]).size > 1
+  if (!hasTimezoneDifference) return children || <TimeText instant={instant} timezone={zone} />
   const viewerRows = []
   if (preferenceZone !== zone) viewerRows.push([preferenceZone === deviceZone ? "我的时区" : "我的偏好时区", preferenceZone])
   if (deviceZone !== zone && deviceZone !== preferenceZone) viewerRows.push(["当前设备时区", deviceZone])
