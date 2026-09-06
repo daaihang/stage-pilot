@@ -28,6 +28,8 @@ import { migrateLegacyFileTypes } from "@/lib/file-type-migration";
 import { FILE_TYPE_SCOPE_META, FILE_TYPE_SCOPES } from "@/lib/file-type-config";
 import { createFileType, deleteFileType, listFileTypes, reorderFileTypes, restoreFileTypes, updateFileType } from "@/lib/resource-api";
 import { roleAtLeast } from "@/lib/workspace-api";
+import { DetailFormLayout } from "@/components/detail-form-layout";
+import { FormActionBar } from "@/components/form-action-bar";
 
 const filterFields = [
   {
@@ -90,6 +92,7 @@ function displayPosition(item, index) {
 function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
   const [form, setForm] = useState(initialForm);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
   const editing = Boolean(item);
   const protectedName = isProtected(item);
 
@@ -98,6 +101,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
     setForm(item
       ? { name: item.name, description: item.description || "", isActive: Boolean(item.is_active) }
       : initialForm);
+    setError(null);
     setBusy(false);
   }, [item, open]);
 
@@ -121,6 +125,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
         isActive: isUncategorized(item) ? true : Boolean(form.isActive),
       });
       if (saved) onOpenChange(false);
+      else setError("保存文件类型失败，请检查网络或权限后重试。");
     } finally {
       setBusy(false);
     }
@@ -128,7 +133,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-md flex-col">
         <DialogHeader>
           <DialogTitle>{editing ? "编辑文件类型" : "新建文件类型"}</DialogTitle>
           <DialogDescription>
@@ -137,7 +142,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
               : "自定义类型只会添加到当前选中的文件归属范围。"}
           </DialogDescription>
         </DialogHeader>
-        <form className="space-y-4" onSubmit={submit}>
+        <DetailFormLayout className="min-h-0 flex-1" scrollBoundary="self" onSubmit={submit} error={error} busy={busy} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={() => onOpenChange(false)} busy={busy} submitLabel="保存" busyLabel="保存中…" />}>
           <label className="block space-y-1">
             <span className="text-sm font-medium">名称</span>
             <Input
@@ -167,11 +172,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
               <Switch checked={form.isActive} onCheckedChange={(checked) => setForm((current) => ({ ...current, isActive: checked }))} />
             </label>
           )}
-          <DialogFooter>
-            <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>
-            <Button type="submit" disabled={busy}>{busy ? "保存中…" : "保存"}</Button>
-          </DialogFooter>
-        </form>
+        </DetailFormLayout>
       </DialogContent>
     </Dialog>
   );
