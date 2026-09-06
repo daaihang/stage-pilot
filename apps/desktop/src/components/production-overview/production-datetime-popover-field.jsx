@@ -1,7 +1,7 @@
 import { CalendarClock } from "@/components/ui/icons";
-import { formatProductionInstant } from "@/lib/production-api";
 import { DateTimePickerPanel } from "@/components/reui/date-time-picker";
 import { ProductionOverviewField } from "@/components/production-overview/production-overview-field";
+import { ActivityTimeText } from "@/components/time-text";
 
 export function ProductionDateTimePopoverField({
   label,
@@ -15,7 +15,7 @@ export function ProductionDateTimePopoverField({
     <ProductionOverviewField
       label={label}
       value={value}
-      displayValue={value ? formatProductionInstant(value, timezone) : ""}
+      displayValue={value ? <ActivityTimeText instant={value} timezone={timezone} /> : ""}
       placeholder="未设置"
       icon={CalendarClock}
       disabled={disabled}
