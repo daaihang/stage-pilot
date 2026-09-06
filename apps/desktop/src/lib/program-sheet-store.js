@@ -1,5 +1,6 @@
 import { appStore } from "@/lib/app-store";
 import { getDefaultItemBehavior, normalizeSegmentType } from "@/lib/program-sheet-segment-types";
+import { updateSegmentTypeUsage } from "@/lib/program-sheet-segment-type-usage-store";
 
 export const PROGRAM_SHEET_STORE_VERSION = 1;
 
@@ -162,9 +163,20 @@ export async function loadProgramSheetState(productionId) {
   return normalizeProgramSheetState(value, productionId);
 }
 
-export async function saveProgramSheetState(productionId, value) {
+export async function saveProgramSheetState(productionId, value, { workspaceId } = {}) {
   const normalized = normalizeProgramSheetState(value, productionId);
   await appStore.set(programSheetStoreKey(productionId), normalized);
+  if (workspaceId) {
+    // The usage index is a derived safety aid. A failed index write must not
+    // make an otherwise successful program-sheet save look like it failed;
+    // the workspace manager reconciles it before allowing deletion.
+    try {
+      await updateSegmentTypeUsage(workspaceId, productionId, normalized);
+    } catch {
+      // Keep the primary document saved. Unknown usage is handled safely by
+      // the manager as a non-deletable state until reconciliation succeeds.
+    }
+  }
   return normalized;
 }
 

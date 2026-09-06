@@ -1,4 +1,4 @@
-import { LayoutGrid, LayoutList, Plus, Search, SlidersHorizontal, X } from "@/components/ui/icons";
+import { FileText, LayoutGrid, LayoutList, Plus, Search, SlidersHorizontal, X } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,6 @@ function ResourceSkeleton() {
   return <div className={resourceGridClassName}>{Array.from({ length: 6 }, (_, index) => <Card key={index}><CardContent className="space-y-3 p-4"><Skeleton className="h-5 w-2/3" /><Skeleton className="h-4 w-1/2" /><Skeleton className="h-16 w-full" /></CardContent></Card>)}</div>;
 }
 
-export function ResourceEmpty({ icon: Icon, title, description, action }) {
-  return <Card className="border-dashed"><CardContent className="flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center"><Icon className="size-8 text-muted-foreground" /><div><p className="font-medium">{title}</p><p className="mt-1 max-w-sm text-sm text-muted-foreground">{description}</p></div>{action}</CardContent></Card>;
+export function ResourceEmpty({ icon: Icon = FileText, title, description, action }) {
+  return <Card className="border-dashed"><CardContent className="flex min-h-64 flex-col items-center justify-center gap-3 p-6 text-center"><Icon className="size-8 text-muted-foreground" aria-hidden="true" /><div><p className="font-medium">{title}</p><p className="mt-1 max-w-sm text-sm text-muted-foreground">{description}</p></div>{action}</CardContent></Card>;
 }

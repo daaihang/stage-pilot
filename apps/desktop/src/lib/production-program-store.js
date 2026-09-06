@@ -7,10 +7,10 @@ import {
 } from "@/lib/program-sheet-store";
 export { getProductionProgramMissingInfo, productionProgramHasMissingInfo, productionProgramSourceLabels, productionProgramStatusLabels } from "@/lib/production-program-utils";
 
-async function updateDocument(productionId, updater) {
+async function updateDocument(productionId, updater, options = {}) {
   const current = await loadProgramSheetState(productionId);
   const next = normalizeProgramSheetState(updater(current), productionId);
-  await saveProgramSheetState(productionId, next);
+  await saveProgramSheetState(productionId, next, options);
   return next;
 }
 
@@ -19,13 +19,13 @@ export async function loadProductionPrograms(productionId) {
   return state.productionPrograms || [];
 }
 
-export async function createProductionProgram(productionId, values = {}) {
+export async function createProductionProgram(productionId, values = {}, options = {}) {
   const program = makeProductionProgram(productionId, { ...values, sourceKind: values.sourceKind || "manual" });
-  await updateDocument(productionId, (current) => ({ ...current, productionPrograms: [...current.productionPrograms, program] }));
+  await updateDocument(productionId, (current) => ({ ...current, productionPrograms: [...current.productionPrograms, program] }), options);
   return program;
 }
 
-export async function updateProductionProgram(productionId, id, patch = {}) {
+export async function updateProductionProgram(productionId, id, patch = {}, options = {}) {
   let updated = null;
   await updateDocument(productionId, (current) => ({
     ...current,
@@ -44,12 +44,12 @@ export async function updateProductionProgram(productionId, id, patch = {}) {
       };
       return updated;
     }),
-  }));
+  }), options);
   if (!updated) throw new Error("活动节目不存在");
   return updated;
 }
 
-export async function duplicateProductionProgram(productionId, id) {
+export async function duplicateProductionProgram(productionId, id, options = {}) {
   let copy = null;
   await updateDocument(productionId, (current) => {
     const source = current.productionPrograms.find((program) => program.id === id);
@@ -69,19 +69,19 @@ export async function duplicateProductionProgram(productionId, id) {
       archivedAt: null,
     });
     return { ...current, productionPrograms: [...current.productionPrograms, copy] };
-  });
+  }, options);
   return copy;
 }
 
-export async function archiveProductionProgram(productionId, id) {
-  return updateProductionProgram(productionId, id, { status: "archived", archivedAt: nowIso() });
+export async function archiveProductionProgram(productionId, id, options = {}) {
+  return updateProductionProgram(productionId, id, { status: "archived", archivedAt: nowIso() }, options);
 }
 
-export async function restoreProductionProgram(productionId, id) {
-  return updateProductionProgram(productionId, id, { status: "draft", archivedAt: null });
+export async function restoreProductionProgram(productionId, id, options = {}) {
+  return updateProductionProgram(productionId, id, { status: "draft", archivedAt: null }, options);
 }
 
-export async function copyWorkspaceProgram(productionId, workspaceProgram = {}) {
+export async function copyWorkspaceProgram(productionId, workspaceProgram = {}, options = {}) {
   const current = await loadProgramSheetState(productionId);
   const sourceId = workspaceProgram.id || workspaceProgram.sourceProgramId || null;
   const existing = sourceId ? current.productionPrograms.find((program) => program.sourceProgramId === sourceId) : null;
@@ -97,13 +97,13 @@ export async function copyWorkspaceProgram(productionId, workspaceProgram = {}) 
     description: workspaceProgram.description || "",
     technicalNotes: workspaceProgram.technicalNotes || workspaceProgram.technical_notes || "",
   });
-  await saveProgramSheetState(productionId, { ...current, productionPrograms: [...current.productionPrograms, program] });
+  await saveProgramSheetState(productionId, { ...current, productionPrograms: [...current.productionPrograms, program] }, options);
   return { program, reused: false };
 }
 
-export async function saveProductionPrograms(productionId, productionPrograms) {
+export async function saveProductionPrograms(productionId, productionPrograms, options = {}) {
   const current = await loadProgramSheetState(productionId);
   const next = normalizeProgramSheetState({ ...current, productionPrograms }, productionId);
-  await saveProgramSheetState(productionId, next);
+  await saveProgramSheetState(productionId, next, options);
   return next.productionPrograms;
 }

@@ -26,6 +26,7 @@ import { ProgramLibraryPage } from "@/components/program-library-page";
 import { ProgramSheetsPage } from "@/components/program-sheets-page";
 import { ProductionProgramsPage } from "@/components/production-programs-page";
 import { FileTypeManagementPage } from "@/components/file-type-management-page";
+import { ProgramSheetSegmentTypeManagementPage } from "@/components/program-sheet-segment-type-management-page";
 import { WorkspaceResourcePage } from "@/components/workspace-resource-pages";
 import { FilesPage } from "@/components/files-page";
 import { AppErrorBoundary } from "@/components/app-error-boundary";
@@ -507,6 +508,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "members") content = <WorkspaceMembersPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "roles") content = <WorkspaceRolesPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "file-types") content = <FileTypeManagementPage workspace={workspace} key={workspace.id} />;
+  else if (route.mode === "workspace" && route.page === "program-sheet-segment-types") content = <ProgramSheetSegmentTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} selectedResourceId={route.resourceId} panel={route.panel} />;
   else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} selectedResourceId={route.resourceId} panel={route.panel} />;
   else if (route.mode === "workspace" && route.page === "settings") content = <WorkspaceSettingsPage workspaceId={workspace.id} key={workspace.id} />;

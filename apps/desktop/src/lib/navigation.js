@@ -4,6 +4,7 @@ export const workspacePages = {
   calendar: { title: "日历", description: "从时间维度查看活动、彩排和执行计划。" },
   programs: { title: "节目库", description: "沉淀可在不同活动中复用的长期节目资产。" },
   "file-types": { title: "文件类型", description: "管理当前工作空间各类资产的文件分类。" },
+  "program-sheet-segment-types": { title: "节目单环节类型", description: "管理工作空间节目单环节的分类、默认行为和使用情况。" },
   people: { title: "人员", description: "管理艺人、工作人员和其他长期联系人。" },
   organizations: { title: "机构", description: "管理品牌、学校、合作方和供应商资料。" },
   venues: { title: "场地", description: "管理场地资料、舞台条件和历史使用记录。" },
@@ -58,7 +59,7 @@ export function workspacePath(workspaceId, page = "home") {
   const paths = {
     home: "home", productions: "productions", calendar: "calendar",
     programs: "library/programs", people: "library/people", organizations: "library/organizations",
-    "file-types": "library/file-types", venues: "library/venues", equipment: "library/equipment", files: "files", members: "members", roles: "roles", templates: "templates", settings: "settings",
+    "file-types": "library/file-types", "program-sheet-segment-types": "library/program-sheet-segment-types", venues: "library/venues", equipment: "library/equipment", files: "files", members: "members", roles: "roles", templates: "templates", settings: "settings",
   };
   return `/w/${workspaceId}/${paths[page] ?? paths.home}`;
 }
@@ -76,8 +77,9 @@ export function productionPath(workspaceId, productionId, page = "overview") {
   return `/w/${workspaceId}/p/${productionId}/${productionPages[page] ? page : "overview"}`;
 }
 
-export function programSheetSegmentTypePanelPath(workspaceId, productionId) {
-  return `${productionPath(workspaceId, productionId, "program-sheets")}?panel=segment-types`;
+export function programSheetSegmentTypePanelPath(workspaceId) {
+  // Deprecated name kept for existing callers; segment types are workspace-scoped.
+  return workspacePath(workspaceId, "program-sheet-segment-types");
 }
 
 export function directProductionPath(productionId, page = "overview") {
@@ -160,7 +162,7 @@ export function matchStagePilotRoute(pathname, search = "") {
     const panel = !resourceId && panelValue === "types" ? panelValue : null;
     return { mode: "workspace", workspaceId, productionId: null, page, resourceId, panel: panel === "types" ? panel : null, meta: workspacePages[page] };
   }
-  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|file-types|people|organizations|venues|equipment))\/?$/);
+  const workspaceMatch = pathname.match(/^\/w\/([^/]+)\/(home|productions|calendar|files|members|roles|templates|settings|library\/(programs|file-types|program-sheet-segment-types|people|organizations|venues|equipment))\/?$/);
   if (!workspaceMatch) return null;
   const [, workspaceId, routePage, libraryPage] = workspaceMatch;
   const page = libraryPage || routePage;

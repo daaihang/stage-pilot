@@ -87,8 +87,8 @@ export function ProductionProgramsPage({ route, workspace, production }) {
     triggerRef,
     detailLabel: "活动节目详情",
     onClose: () => { setSelectedId(null); setCreating(false); },
-    getDetail: () => creating ? <ProductionProgramCreateDetail workspacePrograms={workspacePrograms} programTypes={programTypes} existingPrograms={programs} onCancel={() => { setCreating(false); setDetailOpen(false); }} onSave={async (values) => { if (values.openExistingId) { setCreating(false); setSelectedId(values.openExistingId); return; } try { const created = values.sourceProgramId ? (await copyWorkspaceProgram(production.id, values)).program : await createProductionProgram(production.id, values); setPrograms((current) => current.some((item) => item.id === created.id) ? current : [...current, created]); setCreating(false); setSelectedId(created.id); notify.success("活动节目已创建"); } catch (error) { notify.error("活动节目创建失败", { description: error?.message || String(error) }); } }} /> : selectedProgram ? <ProductionProgramDetail program={selectedProgram} programTypes={programTypes} canWrite={canWrite} onSave={async (patch) => { try { const updated = await updateProductionProgram(production.id, selectedProgram.id, patch); setPrograms((current) => current.map((item) => item.id === updated.id ? updated : item)); notify.success("活动节目已保存"); } catch (error) { notify.error("活动节目保存失败", { description: error?.message || String(error) }); throw error; } }} onDuplicate={(program) => setDialog({ type: "duplicate", program })} onArchive={(program) => setDialog({ type: "archive", program })} onRestore={async (program) => { try { const restored = await restoreProductionProgram(production.id, program.id); setPrograms((current) => current.map((item) => item.id === restored.id ? restored : item)); notify.success("活动节目已恢复"); } catch (error) { notify.error("活动节目恢复失败", { description: error?.message || String(error) }); } }} onAddToSheets={(program) => setDialog({ type: "assign", program })} /> : null,
-  }), [canWrite, creating, production.id, programTypes, programs, registerDetail, selectedProgram, setDetailOpen, workspacePrograms]);
+    getDetail: () => creating ? <ProductionProgramCreateDetail workspacePrograms={workspacePrograms} programTypes={programTypes} existingPrograms={programs} onCancel={() => { setCreating(false); setDetailOpen(false); }} onSave={async (values) => { if (values.openExistingId) { setCreating(false); setSelectedId(values.openExistingId); return; } try { const created = values.sourceProgramId ? (await copyWorkspaceProgram(production.id, values, { workspaceId: workspace.id })).program : await createProductionProgram(production.id, values, { workspaceId: workspace.id }); setPrograms((current) => current.some((item) => item.id === created.id) ? current : [...current, created]); setCreating(false); setSelectedId(created.id); notify.success("活动节目已创建"); } catch (error) { notify.error("活动节目创建失败", { description: error?.message || String(error) }); } }} /> : selectedProgram ? <ProductionProgramDetail program={selectedProgram} programTypes={programTypes} canWrite={canWrite} onSave={async (patch) => { try { const updated = await updateProductionProgram(production.id, selectedProgram.id, patch, { workspaceId: workspace.id }); setPrograms((current) => current.map((item) => item.id === updated.id ? updated : item)); notify.success("活动节目已保存"); } catch (error) { notify.error("活动节目保存失败", { description: error?.message || String(error) }); throw error; } }} onDuplicate={(program) => setDialog({ type: "duplicate", program })} onArchive={(program) => setDialog({ type: "archive", program })} onRestore={async (program) => { try { const restored = await restoreProductionProgram(production.id, program.id, { workspaceId: workspace.id }); setPrograms((current) => current.map((item) => item.id === restored.id ? restored : item)); notify.success("活动节目已恢复"); } catch (error) { notify.error("活动节目恢复失败", { description: error?.message || String(error) }); } }} onAddToSheets={(program) => setDialog({ type: "assign", program })} /> : null,
+  }), [canWrite, creating, production.id, programTypes, programs, registerDetail, selectedProgram, setDetailOpen, workspace.id, workspacePrograms]);
 
   useEffect(() => { if (selectedProgram || creating) setDetailOpen(true, { announce: false }); }, [creating, selectedProgram, setDetailOpen]);
 
@@ -105,7 +105,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
 
   const duplicateProgram = async (program) => {
     try {
-      const copy = await duplicateProductionProgram(production.id, program.id);
+      const copy = await duplicateProductionProgram(production.id, program.id, { workspaceId: workspace.id });
       setPrograms((current) => [...current, copy]);
       setDialog(null);
       setSelectedId(copy.id);
@@ -114,7 +114,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
   };
 
   const archiveProgram = async (program) => {
-    try { const archived = await archiveProductionProgram(production.id, program.id); setPrograms((current) => current.map((item) => item.id === archived.id ? archived : item)); setDialog(null); notify.success("活动节目已归档"); } catch (error) { notify.error("活动节目归档失败", { description: error?.message || String(error) }); }
+    try { const archived = await archiveProductionProgram(production.id, program.id, { workspaceId: workspace.id }); setPrograms((current) => current.map((item) => item.id === archived.id ? archived : item)); setDialog(null); notify.success("活动节目已归档"); } catch (error) { notify.error("活动节目归档失败", { description: error?.message || String(error) }); }
   };
 
   const addExistingToSheets = async (program, sheetIds) => {
@@ -123,7 +123,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
       const current = await loadProgramSheetState(production.id);
       const selectedSheets = new Set(sheetIds);
       const next = { ...current, sheets: current.sheets.map((sheet) => selectedSheets.has(sheet.id) ? { ...sheet, items: [...sheet.items, makeSheetItem("program", { productionProgramId: program.id, programSnapshot: program, title: program.name, durationSeconds: program.durationSeconds, order: sheet.items.length })], updatedAt: nowIso() } : sheet) };
-      await saveProgramSheetState(production.id, next);
+      await saveProgramSheetState(production.id, next, { workspaceId: workspace.id });
       setSheets(next.sheets);
       setDialog(null);
       notify.success(`已将“${program.name}”添加到节目单`, { id: toastId });
