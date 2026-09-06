@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Link2, Plus, RefreshCw, Trash2 } from "@/components/ui/icons";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
@@ -63,10 +63,22 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
   const [loadError, setLoadError] = useState(null);
   const [status, setStatus] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const requestRef = useRef(0);
   const load = async (withToast = false) => {
+    const requestId = ++requestRef.current;
     const toastId = withToast ? notify.loading("正在刷新邀请…") : undefined;
-    try { const result = await listInvitations(); setItems(Array.isArray(result) ? result : result?.items || []); setLoadError(null); if (toastId) notify.success("邀请已刷新", { id: toastId }); }
-    catch (error) { const nextError = error instanceof Error ? error : new Error(String(error || "请求失败")); setLoadError(nextError); if (toastId) notify.error("刷新邀请失败", { id: toastId, description: nextError.message }); else notify.error("无法加载邀请", { description: nextError.message }); }
+    try {
+      const result = await listInvitations();
+      if (requestId !== requestRef.current) { if (toastId) notify.dismiss(toastId); return; }
+      setItems(Array.isArray(result) ? result : result?.items || []);
+      setLoadError(null);
+      if (toastId) notify.success("邀请已刷新", { id: toastId });
+    } catch (error) {
+      if (requestId !== requestRef.current) { if (toastId) notify.dismiss(toastId); return; }
+      const nextError = error instanceof Error ? error : new Error(String(error || "请求失败"));
+      setLoadError(nextError);
+      if (toastId) notify.error("刷新邀请失败", { id: toastId, description: nextError.message }); else notify.error("无法加载邀请", { description: nextError.message });
+    }
   };
   useEffect(() => { setItems(null); setLoadError(null); void load(); }, [scope, scopeKey]);
   const filtered = useMemo(() => (items || []).filter((item) => status === "all" || item.status === status), [items, status]);
