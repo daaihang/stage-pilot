@@ -3,7 +3,7 @@ import { notify } from "@/components/ui/sonner";
 import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { usePageChrome } from "@/components/page-chrome";
-import { normalizeDetailOpenMode, resolveDetailPresentation } from "@/lib/detail-open-mode";
+import { normalizeDetailOpenMode, resolveDetailLayoutMode, resolveDetailPresentation, resolveRestoredDetailMode } from "@/lib/detail-open-mode";
 import { createDetailSurfaceState, transitionDetailSurface } from "@/lib/detail-surface-state";
 
 const MIN_DETAIL_WIDTH = 280;
@@ -86,13 +86,16 @@ export function DetailSplitPane({
   const restoreExclusiveFocusRef = useRef(false);
   const closeFocusToTriggerRef = useRef(false);
   const activeOpenModeRef = useRef(null);
-  const previousOpenForModeRef = useRef(open);
+  const widePresentationRef = useRef(null);
+  const layoutModeRef = useRef(null);
+  const previousOpenForModeRef = useRef(false);
   const [containerWidth, setContainerWidth] = useState(0);
   const [detailWidth, setDetailWidth] = useState(DEFAULT_DETAIL_WIDTH);
   const [exclusive, setExclusive] = useState(false);
   const [surfaceMounted, setSurfaceMounted] = useState(false);
   const [surfaceMode, setSurfaceMode] = useState("overlay");
   const [surfacePhase, setSurfacePhase] = useState("idle");
+  const [layoutMode, setLayoutMode] = useState(null);
   const [isResizing, setIsResizing] = useState(false);
   const { setDetailAction } = usePageChrome();
 
@@ -123,14 +126,15 @@ export function DetailSplitPane({
     if (!exclusiveRef.current) openFocusRef.current = document.activeElement;
     restoreExclusiveFocusRef.current = false;
     activeOpenModeRef.current = "exclusive";
+    widePresentationRef.current = "exclusive";
     setExclusiveMode(true);
     notify.info("详情已独占工作区");
   }, [setExclusiveMode]);
 
   const exitExclusive = useCallback(() => {
-    if (!exclusiveRef.current) return;
     restoreExclusiveFocusRef.current = true;
     activeOpenModeRef.current = "inline";
+    widePresentationRef.current = "inline";
     setExclusiveMode(false);
     notify.info("已退出独占详情");
   }, [setExclusiveMode]);
@@ -149,11 +153,12 @@ export function DetailSplitPane({
   const hasMeasuredContainer = containerWidth > 0;
   const preferredMode = normalizeDetailOpenMode(detailOpenMode);
   const activeOpenMode = open ? (activeOpenModeRef.current || preferredMode) : preferredMode;
-  const canInline = open && hasMeasuredContainer && containerWidth >= INLINE_MIN_WIDTH;
+  const canInline = open && hasMeasuredContainer && layoutMode === "wide";
   const desiredMode = resolveDetailPresentation({
     open,
     measured: hasMeasuredContainer,
     containerWidth,
+    layoutMode,
     preferredMode: activeOpenMode,
     exclusive,
     inlineMinWidth: INLINE_MIN_WIDTH,
@@ -176,11 +181,46 @@ export function DetailSplitPane({
 
   useEffect(() => {
     const previousOpen = previousOpenForModeRef.current;
-    if (open && !previousOpen) activeOpenModeRef.current = preferredMode;
-    if (!open && previousOpen) activeOpenModeRef.current = null;
+    if (open && !previousOpen) {
+      activeOpenModeRef.current = preferredMode;
+      widePresentationRef.current = null;
+      layoutModeRef.current = null;
+      if (layoutMode !== null) setLayoutMode(null);
+    }
+    if (!open && previousOpen) {
+      activeOpenModeRef.current = null;
+      widePresentationRef.current = null;
+      layoutModeRef.current = null;
+      if (layoutMode !== null) setLayoutMode(null);
+    }
     if (open && canInline && activeOpenModeRef.current === "exclusive" && !exclusive) setExclusiveMode(true);
     previousOpenForModeRef.current = open;
-  }, [canInline, exclusive, open, preferredMode, setExclusiveMode]);
+  }, [canInline, exclusive, layoutMode, open, preferredMode, setExclusiveMode]);
+
+  useEffect(() => {
+    if (!open || !hasMeasuredContainer) return;
+    const previousMode = layoutModeRef.current;
+    const nextMode = resolveDetailLayoutMode(containerWidth, previousMode);
+    if (!nextMode || nextMode === previousMode) return;
+    if (!activeOpenModeRef.current) activeOpenModeRef.current = preferredMode;
+
+    if (previousMode === "wide" && nextMode === "narrow") {
+      widePresentationRef.current = activeOpenModeRef.current || preferredMode;
+    } else if (previousMode === "narrow" && nextMode === "wide") {
+      const restoredMode = resolveRestoredDetailMode({
+        savedMode: widePresentationRef.current,
+        activeMode: activeOpenModeRef.current,
+        preferredMode,
+      });
+      activeOpenModeRef.current = restoredMode;
+      if (restoredMode === "exclusive") setExclusiveMode(true);
+    } else if (nextMode === "wide" && activeOpenModeRef.current === "exclusive") {
+      setExclusiveMode(true);
+    }
+
+    layoutModeRef.current = nextMode;
+    setLayoutMode(nextMode);
+  }, [containerWidth, hasMeasuredContainer, open, preferredMode, setExclusiveMode]);
 
   useEffect(() => {
     let active = true;
@@ -200,10 +240,9 @@ export function DetailSplitPane({
 
   useEffect(() => {
     if ((!open || !canInline) && exclusive) {
-      if (open && !canInline) activeOpenModeRef.current = preferredMode;
       setExclusiveMode(false);
     }
-  }, [canInline, exclusive, open, preferredMode, setExclusiveMode]);
+  }, [canInline, exclusive, open, setExclusiveMode]);
 
   useEffect(() => { onDetailWidthChange?.(constrainedWidth); }, [constrainedWidth, onDetailWidthChange]);
 
