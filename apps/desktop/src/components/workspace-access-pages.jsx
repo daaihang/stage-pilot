@@ -26,8 +26,13 @@ import { ResourcePage } from "@/components/resource-page";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { AccessMemberTable, AccessPermissionTree, AccessRolesLayout } from "@/components/access-management-ui";
+import { InvitationListPanel } from "@/components/invitation-management-ui";
+import { useNavigate } from "react-router-dom";
+import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import {
   formatMemberJoinedAt,
+  createWorkspaceInvitation,
+  listWorkspaceInvitations,
   listWorkspaceMembers,
   memberDisplayName,
   memberInitials,
@@ -35,12 +40,14 @@ import {
   memberRoleLabel,
   memberStatusBadgeVariant,
   memberStatusLabel,
+  revokeWorkspaceInvitation,
 } from "@/lib/workspace-api";
 import {
   getWorkspaceRolePermissions,
   workspacePermissionGroups,
   workspaceRoles,
 } from "@/lib/workspace-permissions";
+import { workspacePath } from "@/lib/navigation";
 
 function MembersLoadingState() {
   return (
@@ -186,6 +193,9 @@ function MemberTable({ members }) {
 }
 
 export function WorkspaceMembersPage({ route, workspace }) {
+  const navigate = useNavigate();
+  const { setDetailOpen } = useWindowDetail();
+  const invitationTriggerRef = useRef(null);
   const [members, setMembers] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -193,6 +203,16 @@ export function WorkspaceMembersPage({ route, workspace }) {
   const [filterQuery, setFilterQuery] = useState(() => createFilterQuery());
   const membersRef = useRef(null);
   const requestRef = useRef(0);
+  const invitationPanelOpen = route?.panel === "invitations";
+  useWindowDetailRegistration({
+    key: `workspace-members:${workspace.id}`,
+    storageKey: "detailPane:workspace-members:v1",
+    detailLabel: "成员邀请",
+    triggerRef: invitationTriggerRef,
+    getDetail: () => invitationPanelOpen ? <InvitationListPanel scope="workspace" title="成员邀请" canManage={workspace.role === "owner" || workspace.role === "admin"} roleOptions={[{ value: "member", label: "Member" }, ...(workspace.role === "owner" ? [{ value: "admin", label: "Admin" }] : [])]} listInvitations={() => listWorkspaceInvitations(workspace.id)} createInvitation={(payload) => createWorkspaceInvitation(workspace.id, payload)} revokeInvitation={(id) => revokeWorkspaceInvitation(workspace.id, id)} onChanged={() => loadMembers()} /> : null,
+    onClose: () => navigate(workspacePath(workspace.id, "members")),
+  });
+  useEffect(() => { setDetailOpen(invitationPanelOpen, { announce: false }); }, [invitationPanelOpen, setDetailOpen]);
 
   const loadMembers = useCallback(async ({ withToast = false } = {}) => {
     const requestId = ++requestRef.current;
@@ -231,6 +251,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
     return () => { requestRef.current += 1; };
   }, [loadMembers]);
 
+
   const filteredMembers = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
     const conditions = getResourceFilterConditions(filterQuery);
@@ -268,9 +289,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
       search={{ value: query, onChange: setQuery, placeholder: "搜索姓名、邮箱或用户 ID" }}
       filters={<ResourceFilters fields={memberFilterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />}
       showViewToggle={false}
-      createLabel="邀请成员"
-      onCreate={() => notify.info("邀请成员 API 尚未接入", { description: "当前仅支持查看，不会发送邀请。" })}
-      headerActions={<Button variant="outline" onClick={() => loadMembers({ withToast: true })} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button>}
+      headerActions={<>{["owner", "admin"].includes(workspace.role) && <Button ref={invitationTriggerRef} onClick={() => navigate(`${workspacePath(workspace.id, "members")}?panel=invitations`)}><UsersRound />成员邀请</Button>}<Button variant="outline" onClick={() => loadMembers({ withToast: true })} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button></>}
       loading={loading && !members}
       loadingContent={<MembersLoadingState />}
       empty={empty}

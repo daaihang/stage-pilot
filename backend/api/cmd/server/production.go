@@ -762,12 +762,12 @@ func (app *application) createProductionInvitation(w http.ResponseWriter, r *htt
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, 201, map[string]any{"id": id, "accept_token": token, "starts_at": starts, "expires_at": expires, "member_starts_at": in.MemberStartsAt, "member_expires_at": in.MemberExpiresAt, "max_uses": in.MaxUses})
+	writeJSON(w, 201, map[string]any{"id": id, "scope_kind": "production", "invite_kind": map[bool]string{true: "email", false: "link"}[in.TargetEmail != ""], "accept_token": token, "starts_at": starts, "expires_at": expires, "member_starts_at": in.MemberStartsAt, "member_expires_at": in.MemberExpiresAt, "max_uses": in.MaxUses})
 }
 
 func (app *application) listProductionInvitations(w http.ResponseWriter, r *http.Request) {
 	access := currentProductionAccess(r)
-	rows, err := app.db.Query(r.Context(), `SELECT id,role_key,COALESCE(target_email,''),max_uses,accepted_count,starts_at,expires_at,member_starts_at,member_expires_at,revoked_at,created_at FROM production_invitations WHERE production_id=$1 ORDER BY created_at DESC`, access.ProductionID)
+	rows, err := app.db.Query(r.Context(), `SELECT i.id,i.role_key,COALESCE(i.target_email,''),i.max_uses,i.accepted_count,i.starts_at,i.expires_at,i.member_starts_at,i.member_expires_at,i.revoked_at,i.created_at,COALESCE(u.display_name,'') FROM production_invitations i LEFT JOIN users u ON u.id=i.created_by WHERE i.production_id=$1 ORDER BY i.created_at DESC`, access.ProductionID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -779,12 +779,12 @@ func (app *application) listProductionInvitations(w http.ResponseWriter, r *http
 		var max, accepted int
 		var starts, expires time.Time
 		var memberStarts, memberExpires, revoked *time.Time
-		var created time.Time
-		if err := rows.Scan(&id, &role, &email, &max, &accepted, &starts, &expires, &memberStarts, &memberExpires, &revoked, &created); err != nil {
+		var created, creator string
+		if err := rows.Scan(&id, &role, &email, &max, &accepted, &starts, &expires, &memberStarts, &memberExpires, &revoked, &created, &creator); err != nil {
 			serverError(w, err)
 			return
 		}
-		items = append(items, map[string]any{"id": id, "role_key": role, "target_email": email, "max_uses": max, "accepted_count": accepted, "starts_at": starts, "expires_at": expires, "member_starts_at": memberStarts, "member_expires_at": memberExpires, "revoked_at": revoked, "created_at": created})
+		items = append(items, map[string]any{"id": id, "scope_kind": "production", "role_key": role, "target_email": email, "invite_kind": map[bool]string{true: "email", false: "link"}[email != ""], "max_uses": max, "accepted_count": accepted, "remaining_uses": invitationRemainingUses(max, accepted), "status": deriveInvitationStatus(time.Now().UTC(), starts, expires, revoked, accepted, max), "starts_at": starts, "expires_at": expires, "member_starts_at": memberStarts, "member_expires_at": memberExpires, "revoked_at": revoked, "created_at": created, "created_by": creator})
 	}
 	writeJSON(w, 200, items)
 }
@@ -807,53 +807,91 @@ func (app *application) acceptProductionInvitation(w http.ResponseWriter, r *htt
 	var in struct {
 		Token string `json:"token"`
 	}
-	if !decodeJSON(w, r, &in) || in.Token == "" {
-		if in.Token == "" {
-			errorJSON(w, 400, "invalid_input", "邀请码无效")
+	if !decodeJSON(w, r, &in) || strings.TrimSpace(in.Token) == "" {
+		errorJSON(w, 400, "invalid_input", "邀请 Token 无效")
+		return
+	}
+	result, err := app.acceptProductionInvitationTx(r.Context(), strings.TrimSpace(in.Token), claims(r).Subject)
+	if err != nil {
+		if !writeInvitationError(w, err) {
+			serverError(w, err)
 		}
 		return
 	}
-	tx, err := app.db.Begin(r.Context())
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (app *application) acceptProductionInvitationTx(ctx context.Context, token, userID string) (map[string]any, error) {
+	tx, err := app.db.Begin(ctx)
 	if err != nil {
-		serverError(w, err)
-		return
+		return nil, err
 	}
-	defer tx.Rollback(r.Context())
+	defer tx.Rollback(ctx)
 	var id, productionID, role string
+	var workspaceID string
 	var targetEmail *string
 	var max, accepted int
 	var starts, expires time.Time
 	var memberStarts, memberExpires *time.Time
 	var revoked *time.Time
-	err = tx.QueryRow(r.Context(), `SELECT id,production_id,role_key,target_email,max_uses,accepted_count,starts_at,expires_at,member_starts_at,member_expires_at,revoked_at FROM production_invitations WHERE token_hash=$1 FOR UPDATE`, tokenHash(in.Token)).Scan(&id, &productionID, &role, &targetEmail, &max, &accepted, &starts, &expires, &memberStarts, &memberExpires, &revoked)
+	err = tx.QueryRow(ctx, `SELECT id,production_id,role_key,target_email,max_uses,accepted_count,starts_at,expires_at,member_starts_at,member_expires_at,revoked_at FROM production_invitations WHERE token_hash=$1 FOR UPDATE`, tokenHash(token)).Scan(&id, &productionID, &role, &targetEmail, &max, &accepted, &starts, &expires, &memberStarts, &memberExpires, &revoked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, &invitationError{http.StatusNotFound, "invitation_not_found", "邀请无效或已失效"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRow(ctx, `SELECT workspace_id FROM productions WHERE id=$1`, productionID).Scan(&workspaceID); err != nil {
+		return nil, err
+	}
+	var priorAcceptance string
+	if err := tx.QueryRow(ctx, `SELECT membership_id FROM production_invitation_acceptances WHERE invitation_id=$1 AND user_id=$2`, id, userID).Scan(&priorAcceptance); err == nil {
+		var priorStatus string
+		_ = tx.QueryRow(ctx, `SELECT status FROM production_memberships WHERE id=$1`, priorAcceptance).Scan(&priorStatus)
+		if priorStatus == "revoked" {
+			return nil, &invitationError{http.StatusConflict, "invitation_already_used", "该邀请已被此账号使用，撤销访问后不能再次领取"}
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return map[string]any{"production_id": productionID, "workspace_id": workspaceID, "scope_kind": "production", "role_key": role, "status": "accepted", "already_member": true}, nil
+	}
 	now := time.Now().UTC()
-	if err != nil || revoked != nil || now.Before(starts) || !expires.After(now) || accepted >= max {
-		errorJSON(w, 404, "invitation_not_found", "邀请码无效或已失效")
-		return
+	if revoked != nil || now.Before(starts) || !expires.After(now) || accepted >= max {
+		return nil, &invitationError{http.StatusNotFound, "invitation_not_found", "邀请无效或已失效"}
 	}
-	var email string
-	err = tx.QueryRow(r.Context(), `SELECT provider_subject FROM user_identities WHERE user_id=$1 AND provider='email' LIMIT 1`, claims(r).Subject).Scan(&email)
+	email, err := invitationTargetEmail(ctx, tx, userID)
 	if err != nil {
-		serverError(w, err)
-		return
+		return nil, err
 	}
-	if targetEmail != nil && normalizeEmail(email) != *targetEmail {
-		errorJSON(w, 403, "invitation_forbidden", "该邀请仅限指定邮箱接受")
-		return
+	if targetEmail != nil && email != normalizeEmail(*targetEmail) {
+		return nil, &invitationError{http.StatusForbidden, "invitation_forbidden", "该邀请仅限指定邮箱接受"}
 	}
-	_, err = tx.Exec(r.Context(), `INSERT INTO production_memberships(id,production_id,user_id,role_key,status,starts_at,expires_at,invited_by) VALUES($1,$2,$3,$4,'active',$5,$6,NULL)`, newID(), productionID, claims(r).Subject, role, memberStarts, memberExpires)
-	if err != nil {
-		errorJSON(w, 409, "membership_exists", "你已拥有该活动的有效成员关系")
-		return
+	var existingID, existingStatus string
+	if err := tx.QueryRow(ctx, `SELECT id,status FROM production_memberships WHERE production_id=$1 AND user_id=$2 ORDER BY created_at DESC LIMIT 1`, productionID, userID).Scan(&existingID, &existingStatus); err == nil && existingStatus == "active" {
+		if _, err = tx.Exec(ctx, `INSERT INTO production_invitation_acceptances(id,invitation_id,user_id,membership_id) VALUES($1,$2,$3,$4)`, newID(), id, userID, existingID); err != nil {
+			return nil, err
+		}
+		if _, err = tx.Exec(ctx, `UPDATE production_invitations SET accepted_count=accepted_count+1,updated_at=NOW() WHERE id=$1`, id); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return map[string]any{"production_id": productionID, "workspace_id": workspaceID, "scope_kind": "production", "role_key": role, "status": "accepted", "already_member": true}, nil
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE production_invitations SET accepted_count=accepted_count+1 WHERE id=$1`, id)
-	if err != nil {
-		serverError(w, err)
-		return
+	membershipID := newID()
+	if err = tx.QueryRow(ctx, `INSERT INTO production_memberships(id,production_id,user_id,role_key,status,starts_at,expires_at,invited_by) VALUES($1,$2,$3,$4,'active',$5,$6,NULL) RETURNING id`, membershipID, productionID, userID, role, memberStarts, memberExpires).Scan(&membershipID); err != nil {
+		return nil, &invitationError{http.StatusConflict, "membership_exists", "你已拥有该活动的有效成员关系"}
 	}
-	if err = tx.Commit(r.Context()); err != nil {
-		serverError(w, err)
-		return
+	if _, err = tx.Exec(ctx, `INSERT INTO production_invitation_acceptances(id,invitation_id,user_id,membership_id) VALUES($1,$2,$3,$4)`, newID(), id, userID, membershipID); err != nil {
+		return nil, err
 	}
-	writeJSON(w, 200, map[string]string{"production_id": productionID, "status": "accepted"})
+	if _, err = tx.Exec(ctx, `UPDATE production_invitations SET accepted_count=accepted_count+1,updated_at=NOW() WHERE id=$1`, id); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return map[string]any{"production_id": productionID, "workspace_id": workspaceID, "scope_kind": "production", "role_key": role, "status": "accepted", "already_member": false}, nil
 }

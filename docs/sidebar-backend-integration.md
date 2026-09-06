@@ -49,6 +49,9 @@ User / Account
 | `GET /v1/workspaces/:id` | 单个工作空间 | MEMBER |
 | `PATCH /v1/workspaces/:id` | 更新名称 / 描述 / 头像 | ADMIN |
 | `GET /v1/workspaces/:id/members` | 成员列表（成员、角色、加入时间） | MEMBER |
+| `GET /v1/workspaces/:id/invitations` | 成员邀请列表（服务端派生状态） | ADMIN |
+| `POST /v1/workspaces/:id/invitations` | 创建指定邮箱邀请（默认 7 天） | ADMIN |
+| `DELETE /v1/workspaces/:id/invitations/:invitationId` | 撤销未接受邀请 | ADMIN |
 | `GET /me/last-workspace` | 最近工作空间 id（membership 失效时返回空） | 登录 |
 | `PUT /me/last-workspace` | 保存最近工作空间 id（服务端校验 membership） | 登录 |
 
@@ -68,9 +71,12 @@ Production 权限由 `requireProductionPermission(permission)` 统一计算：Wo
 | `GET/PATCH /v1/productions/:pid` | 规范的活动详情与编辑接口，支持 Production-only 成员 | production.view / production.edit |
 | `GET/POST/PATCH/DELETE /v1/productions/:pid/members` | 查看或管理直接活动成员；DELETE 为 revoked | members.view / members.manage |
 | `GET/POST/DELETE /v1/productions/:pid/invitations` | 列出、创建、撤销邀请码 | members.manage |
-| `POST /v1/production-invitations/accept` | 已登录用户接受邀请码 | 登录 |
+| `POST /v1/invitations/accept` | 已登录用户统一接受 Workspace/Production 邀请 | 登录 |
+| `POST /v1/production-invitations/accept` | Production 接受接口兼容别名 | 登录 |
 
 时间模型：`planned_end_at < planned_start_at` 与非法 IANA 时区在服务端拒绝（400）。前端展示一律使用 production.timezone，不使用运行机器本地时区；计划结束不会自动完成 Production。
+
+邀请记录只保存 token hash，原始 token 仅在创建响应中返回一次。Workspace 邀请必须指定邮箱且只能领取一次；Production 邀请可指定邮箱或配置 1–100 次通用领取。邀请撤销只阻止尚未接受的邀请，已建立的 Membership 仍在成员页单独撤销。`status`、`remaining_uses`、`invite_kind` 等列表字段由服务端统一计算，接受时使用行锁、接受记录和 Membership 写入同一事务。
 
 ## 导航层级
 

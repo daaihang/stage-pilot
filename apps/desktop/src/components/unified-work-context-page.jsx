@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Building2, Plus, Search, SlidersHorizontal } from "@/components/ui/icons";
+import { ArrowRight, Building2, Link2, Plus, Search, SlidersHorizontal } from "@/components/ui/icons";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,7 +48,7 @@ function WorkspaceCard({ workspace, onEnter }) {
   </button>;
 }
 
-export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, initialTab = "workspaces" }) {
+export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, onJoinInvitation, initialTab = "workspaces" }) {
   const { timezone } = useUserPreferences();
   const { workspaces, status } = useWorkspaceContext();
   const navigate = useNavigate();
@@ -77,7 +77,7 @@ export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, in
         <h1 className="text-2xl font-semibold tracking-tight">我的工作</h1>
         <p className="mt-1 text-sm text-muted-foreground">访问你的工作空间、参与的活动和协作事项</p>
       </div>
-      <Button onClick={onCreateWorkspace}><Plus />创建工作空间</Button>
+      <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={onJoinInvitation}><Link2 />加入工作空间或活动</Button><Button onClick={onCreateWorkspace}><Plus />创建工作空间</Button></div>
     </div>
 
     <Tabs value={tab} onValueChange={changeTab}>

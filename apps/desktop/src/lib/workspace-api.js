@@ -40,6 +40,10 @@ export async function listWorkspaceMembers(workspaceId) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/members`);
 }
 
+export const listWorkspaceInvitations = (workspaceId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`);
+export const createWorkspaceInvitation = (workspaceId, payload) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
+export const revokeWorkspaceInvitation = (workspaceId, invitationId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" });
+
 export async function getLastWorkspace() {
   return request("/me/last-workspace");
 }

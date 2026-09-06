@@ -146,14 +146,15 @@ export function matchStagePilotRoute(pathname, search = "") {
   if (productionMatch) {
     const [, workspaceId, productionId, page] = productionMatch;
     const panelValue = new URLSearchParams(search).get("panel");
-    const panel = page === "program-sheets" && panelValue === "segment-types" ? panelValue : null;
+    const panel = page === "program-sheets" && panelValue === "segment-types" ? panelValue : (page === "members" && panelValue === "invitations" ? panelValue : null);
     return productionPages[page] ? { mode: "production", workspaceId, productionId, page, panel, meta: productionPages[page] } : null;
   }
   const directProductionMatch = pathname.match(/^\/p\/([^/]+)(?:\/([^/]+))?\/?$/);
   if (directProductionMatch) {
     const [, productionId, requestedPage] = directProductionMatch;
     const page = requestedPage || "overview";
-    return productionPages[page] ? { mode: "production", workspaceId: null, productionId, page, direct: true, meta: productionPages[page] } : null;
+    const panelValue = new URLSearchParams(search).get("panel");
+    return productionPages[page] ? { mode: "production", workspaceId: null, productionId, page, direct: true, panel: page === "members" && panelValue === "invitations" ? panelValue : null, meta: productionPages[page] } : null;
   }
   const resourceMatch = pathname.match(/^\/w\/([^/]+)\/library\/(programs|people|organizations|venues|equipment)\/([^/]+)\/?$/);
   if (resourceMatch) {
@@ -166,8 +167,9 @@ export function matchStagePilotRoute(pathname, search = "") {
   if (!workspaceMatch) return null;
   const [, workspaceId, routePage, libraryPage] = workspaceMatch;
   const page = libraryPage || routePage;
-  const panel = new URLSearchParams(search).get("panel");
-  return { mode: "workspace", workspaceId, productionId: null, page, panel: panel === "types" ? panel : null, meta: workspacePages[page] };
+  const panelValue = new URLSearchParams(search).get("panel");
+  const panel = page === "members" && panelValue === "invitations" ? panelValue : (panelValue === "types" ? panelValue : null);
+  return { mode: "workspace", workspaceId, productionId: null, page, panel, meta: workspacePages[page] };
 }
 
 export function formatProductionDate(production) {

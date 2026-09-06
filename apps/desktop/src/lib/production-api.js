@@ -41,6 +41,7 @@ export const listProductionInvitations = (productionId) => request(`/v1/producti
 export const createProductionInvitation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
 export const revokeProductionInvitation = (productionId, invitationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" });
 export const acceptProductionInvitation = (token) => request("/v1/production-invitations/accept", { method: "POST", body: JSON.stringify({ token }) });
+export const acceptInvitation = (token) => request("/v1/invitations/accept", { method: "POST", body: JSON.stringify({ token }) });
 export const listProductionLocations = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`).then((items) => items.map(toProductionLocation));
 export const createProductionLocation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`, { method: "POST", body: JSON.stringify(payload) }).then(toProductionLocation);
 export const updateProductionLocation = (productionId, locationId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/${encodeURIComponent(locationId)}`, { method: "PATCH", body: JSON.stringify(payload) }).then(toProductionLocation);

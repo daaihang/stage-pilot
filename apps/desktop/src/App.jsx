@@ -43,6 +43,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppSonner, notify } from "@/components/ui/sonner";
 import { AuthDialog } from "@/components/auth-dialog";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
+import { JoinInvitationDialog } from "@/components/invitation-management-ui";
 import { login as loginAccount, register as registerAccount, onSessionInvalidated, restoreSession, logout as logoutAccount } from "@/lib/auth";
 import { appStore, getRecentContexts, isTauriRuntime, saveRecentContext } from "@/lib/app-store";
 import { accountPath, buildBreadcrumbItems, directProductionPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
@@ -102,7 +103,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const location = useLocation();
   const navigate = useNavigate();
   const { detailOpenMode } = useUserPreferences();
-  const { status: workspaceStatus, workspaces, currentWorkspace, switchWorkspace, adoptCreatedWorkspace, error: workspaceError, retry: retryWorkspaces } = useWorkspaceContext();
+  const { status: workspaceStatus, workspaces, currentWorkspace, switchWorkspace, adoptCreatedWorkspace, refreshWorkspaces, error: workspaceError, retry: retryWorkspaces } = useWorkspaceContext();
   const { productionsByWorkspace, creationSession, loadProductions, repository, setProductionsByWorkspaceEntry, createCreationSession, updateCreationSession, discardCreationSession, getCreationSession } = useNavigationData();
   const navigationRepositoryRef = useRef(repository);
   const creationRequestRef = useRef(null);
@@ -119,6 +120,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const accountReturnPath = isAccountRoute ? resolveAccountReturnTarget(location.search, currentWorkspace ? workspacePath(currentWorkspace.id) : "/workspaces") : null;
   const accountReturnRoute = accountReturnPath ? matchStagePilotRoute(accountReturnPath.split("?")[0]) : null;
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
+  const [joinInvitationOpen, setJoinInvitationOpen] = useState(false);
   const [recentContexts, setRecentContexts] = useState([]);
   const recentContextAccountKey = user?.id || user?.email || "anonymous";
   useEffect(() => {
@@ -489,7 +491,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (isAccountRoute && route.page === "developer" && import.meta.env.DEV) content = <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} contentWidth={contentWidth} initialAction={new URLSearchParams(location.search).get("action")} />;
   else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} contentWidth={contentWidth} onContentWidthChange={onContentWidthChange} initialAction={new URLSearchParams(location.search).get("action")} />;
   else if (route?.mode === "invite") content = <ProductionInvitePage token={route.token} />;
-  else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} />;
+  else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} onJoinInvitation={() => setJoinInvitationOpen(true)} />;
   else if (isWorkspacesRoute) content = <WorkspacesPage onCreateWorkspace={() => setCreateWorkspaceOpen(true)} />;
   else if (workspaceError && !currentWorkspace) content = <NavigationFailure description={workspaceError.message} onRetry={retryWorkspaces} />;
   else if (location.pathname === "/") content = <AppLoading />;
@@ -521,7 +523,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "production" && ["schedule", "occurrences", "rehearsals"].includes(route.page)) content = <ProductionPlanningPlaceholderPage route={route} workspace={workspace} production={production} />;
   else if (route.mode === "production" && route.page === "settings") content = <ProductionSettingsPage workspace={workspace} production={production} onUpdateProduction={updateProductionSettings} key={production.id} />;
   else if (route.mode === "production" && route.page === "locations") content = <ProductionLocationsRouteRedirect workspace={workspace} production={production} />;
-  else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage workspace={workspace} production={production} key={production.id} />;
+  else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage route={route} workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "roles") content = <ProductionRolesPage workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" key={route.productionId} />;
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
@@ -529,11 +531,21 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const resourceDetailLayout = route?.mode === "workspace" && ["programs", "people", "organizations", "venues", "equipment"].includes(route?.page);
   const planningDetailLayout = route?.mode === "production" && ["schedule", "occurrences", "rehearsals", "programs", "program-sheets"].includes(route?.page);
   const productionLocationDetailLayout = route?.mode === "production" && ["overview", "settings"].includes(route?.page);
-  const contentLayout = resourceDetailLayout || planningDetailLayout || productionLocationDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
+  const membersDetailLayout = (route?.mode === "workspace" && route?.page === "members") || (route?.mode === "production" && route?.page === "members");
+  const contentLayout = resourceDetailLayout || planningDetailLayout || productionLocationDetailLayout || membersDetailLayout || (isAccountRoute && route?.page === "developer" && import.meta.env.DEV) ? "workspace" : "document";
 
   const handleWorkspaceCreated = async (created) => {
     await adoptCreatedWorkspace(created);
     navigate(workspacePath(created.id), { replace: true });
+  };
+
+  const handleInvitationAccepted = async (result) => {
+    if (result?.scope_kind === "workspace" && result.workspace_id) {
+      await refreshWorkspaces?.();
+      navigate(workspacePath(result.workspace_id), { replace: true });
+    } else if (result?.production_id) {
+      navigate(directProductionPath(result.production_id), { replace: true });
+    }
   };
 
   // 创建会话需要保留 Production Context 的返回入口和禁用导航，
@@ -542,8 +554,8 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const navigationLoading = authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading" && !workspace && !isWorkRoute && !isAccountRoute && !isInviteRoute);
   return <PageChromeProvider><WindowDetailProvider contentWidth={contentWidth} detailOpenMode={detailOpenMode} onModalActiveChange={setDetailModalActive}><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("relative z-20 flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div><TitlebarBreadcrumbs items={titlebarBreadcrumbItems} title={pageTitle} showTitle={showTitlebarTitle} /><div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region /><PageDetailTitlebarAction />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
-    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar inert={detailModalActive || undefined} navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
-   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /><AppSonner /></SidebarProvider></WindowDetailProvider></PageChromeProvider>;
+    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar inert={detailModalActive || undefined} navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onJoinInvitation={() => setJoinInvitationOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
+   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /><JoinInvitationDialog open={joinInvitationOpen} onOpenChange={setJoinInvitationOpen} onAccepted={handleInvitationAccepted} /><AppSonner /></SidebarProvider></WindowDetailProvider></PageChromeProvider>;
 }
 
 function SafeRoutedMainShell(props) {

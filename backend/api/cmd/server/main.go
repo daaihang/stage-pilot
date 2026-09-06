@@ -124,6 +124,9 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/workspaces/{id}", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.getWorkspace))))
 	mux.Handle("PATCH /v1/workspaces/{id}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateWorkspace))))
 	mux.Handle("GET /v1/workspaces/{id}/members", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceMembers))))
+	mux.Handle("GET /v1/workspaces/{id}/invitations", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.listWorkspaceInvitations))))
+	mux.Handle("POST /v1/workspaces/{id}/invitations", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createWorkspaceInvitation))))
+	mux.Handle("DELETE /v1/workspaces/{id}/invitations/{invitationId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.revokeWorkspaceInvitation))))
 	mux.Handle("PUT /me/last-workspace", app.auth(http.HandlerFunc(app.putLastWorkspace)))
 	mux.Handle("GET /me/last-workspace", app.auth(http.HandlerFunc(app.getLastWorkspace)))
 	// Workspace resources. Read operations are available to every active
@@ -209,6 +212,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /v1/productions/{productionId}/invitations", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.createProductionInvitation))))
 	mux.Handle("DELETE /v1/productions/{productionId}/invitations/{invitationId}", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.revokeProductionInvitation))))
 	mux.Handle("POST /v1/production-invitations/accept", app.auth(http.HandlerFunc(app.acceptProductionInvitation)))
+	mux.Handle("POST /v1/invitations/accept", app.auth(http.HandlerFunc(app.acceptInvitation)))
 	mux.Handle("GET /v1/productions/{productionId}/locations", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listProductionLocations))))
 	mux.Handle("POST /v1/productions/{productionId}/locations", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createProductionLocation))))
 	mux.Handle("PATCH /v1/productions/{productionId}/locations/order", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.reorderProductionLocations))))

@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   ArrowLeft, Building2, CalendarDays, CalendarRange, ClipboardCheck, ClipboardList, ContactRound, FileCog, FileText, FolderKanban,
   Gauge, KeyRound, LayoutTemplate, ListMusic, ListTree, MapPin, Mic2, MonitorCog, Package, Plus,
-  Search, Settings, Sparkles, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal,
+  Search, Settings, Sparkles, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal, Link2,
 } from "@/components/ui/icons";
 import { NavLink } from "react-router-dom";
 import {
@@ -51,7 +51,7 @@ function RecentContextRow({ item, active, onClick }) {
   </DropdownMenuItem>;
 }
 
-function WorkspaceSwitcher({ workspace, production, recentContexts, onOpenRecentContext, onCreateWorkspace, onManageWorkspaces }) {
+function WorkspaceSwitcher({ workspace, production, recentContexts, onOpenRecentContext, onCreateWorkspace, onManageWorkspaces, onJoinInvitation }) {
   const { isMobile } = useSidebar();
   const [open, setOpen] = useState(false);
   const closeMenu = () => setOpen(false);
@@ -69,6 +69,7 @@ function WorkspaceSwitcher({ workspace, production, recentContexts, onOpenRecent
     </DropdownMenuGroup>
     <DropdownMenuSeparator />
     <DropdownMenuItem onClick={() => { closeMenu(); onCreateWorkspace(); }}><Plus />创建工作空间</DropdownMenuItem>
+    <DropdownMenuItem onClick={() => { closeMenu(); onJoinInvitation?.(); }}><Link2 />加入工作空间或活动</DropdownMenuItem>
     <DropdownMenuItem onClick={() => { closeMenu(); onManageWorkspaces(); }}><FolderKanban />查看全部工作</DropdownMenuItem>
   </DropdownMenuContent></DropdownMenu></SidebarMenuItem></SidebarMenu>;
 }
@@ -109,9 +110,9 @@ function SidebarNavigationLoading() {
   </SidebarMenu></SidebarGroup>;
 }
 
-export function AppSidebar({ route, workspace, production, navigationLoading = false, recentContexts = [], workspaceSelectionMode = false, railEnabled = true, accountReturnPath, accountReturnLabel, onOpenRecentContext, onLeaveCreation, onCreateWorkspace, onManageWorkspaces, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, onRequireAuth, ...props }) {
+export function AppSidebar({ route, workspace, production, navigationLoading = false, recentContexts = [], workspaceSelectionMode = false, railEnabled = true, accountReturnPath, accountReturnLabel, onOpenRecentContext, onLeaveCreation, onCreateWorkspace, onManageWorkspaces, onJoinInvitation, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, onRequireAuth, ...props }) {
   return <Sidebar collapsible="icon" {...props}>
-    <SidebarHeader>{navigationLoading ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" disabled className="animate-pulse"><Sparkles /><span>正在加载导航</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : route?.mode === "account" || route?.mode === "work" ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" tooltip={route.mode === "work" ? "我的工作" : "账户中心"} className="group-data-[collapsible=icon]:justify-center"><div className="flex size-8 shrink-0 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">{route.mode === "work" ? <Sparkles className="size-4" /> : <UserRound className="size-4" />}</div><div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden"><span className="truncate text-sm font-medium">{route.mode === "work" ? "我的工作" : "账户中心"}</span><span className="truncate text-xs text-muted-foreground">{route.mode === "work" ? "全局工作上下文" : "个人设置"}</span></div></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : <WorkspaceSwitcher workspace={workspace} production={production} recentContexts={recentContexts} onOpenRecentContext={onOpenRecentContext} onCreateWorkspace={onCreateWorkspace} onManageWorkspaces={onManageWorkspaces} />}</SidebarHeader>
+    <SidebarHeader>{navigationLoading ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" disabled className="animate-pulse"><Sparkles /><span>正在加载导航</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : route?.mode === "account" || route?.mode === "work" ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" tooltip={route.mode === "work" ? "我的工作" : "账户中心"} className="group-data-[collapsible=icon]:justify-center"><div className="flex size-8 shrink-0 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">{route.mode === "work" ? <Sparkles className="size-4" /> : <UserRound className="size-4" />}</div><div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden"><span className="truncate text-sm font-medium">{route.mode === "work" ? "我的工作" : "账户中心"}</span><span className="truncate text-xs text-muted-foreground">{route.mode === "work" ? "全局工作上下文" : "个人设置"}</span></div></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : <WorkspaceSwitcher workspace={workspace} production={production} recentContexts={recentContexts} onOpenRecentContext={onOpenRecentContext} onCreateWorkspace={onCreateWorkspace} onManageWorkspaces={onManageWorkspaces} onJoinInvitation={onJoinInvitation} />}</SidebarHeader>
     <SidebarContent>
       {navigationLoading ? <SidebarNavigationLoading /> : <>
       {route?.mode === "account" && <AccountNavigation route={route} returnPath={accountReturnPath} returnLabel={accountReturnLabel} onOpenAccountCenter={onOpenAccountCenter} />}
