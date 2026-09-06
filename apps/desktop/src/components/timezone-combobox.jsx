@@ -6,7 +6,8 @@ export function TimezoneCombobox({ value, onValueChange, disabled = false, class
   const [internalOpen, setInternalOpen] = useState(false)
   const [searchValue, setSearchValue] = useState("")
   const options = useMemo(() => getTimeZoneOptions(), [])
-  const isOpen = open !== undefined ? Boolean(open) : internalOpen
+  const isControlled = open !== undefined
+  const isOpen = isControlled ? Boolean(open) : internalOpen
   const filtered = useMemo(() => {
     const query = searchValue.trim().toLowerCase()
     return query ? options.filter((option) => `${option.value} ${option.city} ${option.offset}`.toLowerCase().includes(query)) : options
@@ -28,9 +29,10 @@ export function TimezoneCombobox({ value, onValueChange, disabled = false, class
   }, [isOpen])
 
   const handleOpenChange = (nextOpen, eventDetails) => {
-    setInternalOpen(nextOpen)
+    const normalizedOpen = Boolean(nextOpen)
+    if (!isControlled) setInternalOpen(normalizedOpen)
     setSearchValue("")
-    onOpenChange?.(nextOpen, eventDetails)
+    onOpenChange?.(normalizedOpen, eventDetails)
   }
 
   const handleInputValueChange = (nextValue) => {
@@ -38,7 +40,14 @@ export function TimezoneCombobox({ value, onValueChange, disabled = false, class
     setSearchValue(nextValue)
   }
 
-  return <Combobox items={filtered} value={selected} open={open} onOpenChange={handleOpenChange} onValueChange={(option) => onValueChange?.(option?.value || option || "")} inputValue={isOpen ? searchValue : selectedLabel} onInputValueChange={handleInputValueChange} itemToStringValue={(item) => item?.value || item || ""} itemToStringLabel={(item) => item?.label || item || ""}>
+  // With a trigger, the input is mounted inside the popup. Keeping the
+  // selected label in that input while the popup is closing races Base UI's
+  // own input cleanup and can reopen the controlled combobox. The trigger's
+  // surrounding field already renders the selected label, so the popup input
+  // should be empty whenever it is closed.
+  const inputValue = isOpen ? searchValue : (trigger ? "" : selectedLabel)
+
+  return <Combobox items={filtered} value={selected} open={isControlled ? isOpen : undefined} openOnInputClick={!trigger} onOpenChange={handleOpenChange} onValueChange={(option) => onValueChange?.(option?.value || option || "")} inputValue={inputValue} onInputValueChange={handleInputValueChange} itemToStringValue={(item) => item?.value || item || ""} itemToStringLabel={(item) => item?.label || item || ""}>
     {trigger ? <ComboboxTrigger render={trigger} disabled={disabled} /> : <ComboboxInput className={className} disabled={disabled} autoFocus={autoFocus} aria-label="时区" placeholder="搜索城市或时区" />}
     <ComboboxContent className={trigger ? "w-80 p-2" : undefined}>
       {trigger && <ComboboxInput hideTrigger className="mb-2 w-full" disabled={disabled} autoFocus aria-label="时区" placeholder="搜索城市或时区" />}
