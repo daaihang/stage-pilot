@@ -22,7 +22,7 @@ import { Badge } from "@/components/reui/badge";
 import { Tree, TreeItem, TreeItemLabel } from "@/components/reui/tree";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { WorkspacePageHeader } from "@/components/workspace-page-shell";
-import { ResourcePage } from "@/components/resource-page";
+import { ListSurface, ResourcePage } from "@/components/resource-page";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { AccessMemberTable, AccessPermissionTree, AccessRolesLayout } from "@/components/access-management-ui";
@@ -294,7 +294,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
       loadingContent={<MembersLoadingState />}
       empty={empty}
     >
-      <Card variant="flush"><CardContent className="p-0"><MemberTable members={filteredMembers} /></CardContent></Card>
+      <ListSurface className="overflow-x-auto"><MemberTable members={filteredMembers} /></ListSurface>
     </ResourcePage>
   );
 }

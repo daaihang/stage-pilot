@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { notify } from "@/components/ui/sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
-import { ResourcePage, resourceGridClassName } from "@/components/resource-page";
+import { ListSurface, ResourcePage, resourceGridClassName } from "@/components/resource-page";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
 import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { appStore } from "@/lib/app-store";
@@ -207,7 +207,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
 
   return <>
     <ResourcePage title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} headerActions={headerActions} onCreate={canManage(workspace) ? () => setOpen(true) : undefined} loading={loading} empty={empty}>
-      {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <Card variant="flush"><CardContent className="p-0">{items.map((item) => <Item key={item.id} item={item} />)}</CardContent></Card>}
+      {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <ListSurface>{items.map((item) => <Item key={item.id} item={item} />)}</ListSurface>}
     </ResourcePage>
     <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} resourceTypes={types} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />
   </>;
@@ -410,8 +410,9 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
         </div>
         {canManage(workspace) && <Button variant="destructive" size="sm" disabled={deleting} onClick={() => setDeleteOpen(true)}><Trash2 />删除</Button>}
       </div>
-      <Card>
-        <CardContent className="grid gap-4 p-5 @min-[36rem]/resource-detail:grid-cols-2">
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">基本资料</h2>
+        <div className="grid gap-4 @min-[36rem]/resource-detail:grid-cols-2">
           {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 @min-[36rem]/resource-detail:col-span-2" : "space-y-1"}>
             <span className="text-sm font-medium">{fieldLabels[key]}</span>
             {["ownership", "status", ...typeFields].includes(key)
@@ -428,8 +429,8 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
                 ? <textarea className="min-h-24 w-full border bg-background p-2 text-sm" defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />
                 : <Input type={["default_duration_seconds", "quantity_total"].includes(key) ? "number" : "text"} defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />}
           </label>)}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
       {["venues", "organizations"].includes(type) && <ResourceRelations workspace={workspace} type={type} resourceId={resourceId} />}
     </div>
     <ConfirmDeleteDialog

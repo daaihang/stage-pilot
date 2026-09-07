@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/sonner";
 import { acceptInvitation } from "@/lib/invitation-api";
+import { ListSurface } from "@/components/resource-page";
 
 const statusLabels = { pending: "待接受", scheduled: "待生效", active: "部分接受", accepted: "已接受", exhausted: "已用尽", expired: "已过期", revoked: "已撤销" };
 const statusVariants = { pending: "warning-light", scheduled: "secondary", active: "success-light", accepted: "success-light", exhausted: "secondary", expired: "destructive-light", revoked: "destructive-light" };
@@ -142,15 +143,15 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
       </CardContent>
     </Card>
 
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base">邀请记录</CardTitle>
-        <p className="text-sm text-muted-foreground">共 {filtered.length} 条匹配记录</p>
-      </CardHeader>
-      <CardContent className="p-0">
+    <section className="min-w-0 space-y-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="text-base font-semibold">邀请记录</h2>
+        <p className="text-xs text-muted-foreground">共 {filtered.length} 条匹配记录</p>
+      </div>
+      <ListSurface className="border-y">
         {items === null ? <div className="p-6 text-sm text-muted-foreground">正在加载邀请…</div> : loadError && filtered.length === 0 ? <div className="space-y-3 p-8 text-center text-sm"><p className="text-destructive">无法加载邀请：{loadError.message}</p><Button variant="outline" size="sm" onClick={() => load(true)}>重试</Button></div> : filtered.length ? filtered.map((item) => <InvitationListRow key={item.id} invitation={item} canManage={canManage} onRevoke={revoke} />) : <div className="p-8 text-center text-sm text-muted-foreground">暂无匹配的邀请记录</div>}
-      </CardContent>
-    </Card>
+      </ListSurface>
+    </section>
 
     <InvitationDialog open={dialogOpen} onOpenChange={setDialogOpen} scope={scope} roleOptions={roleOptions} createInvitation={createInvitation} onCreated={async () => { await load(); onChanged?.(); }} />
   </div>;
