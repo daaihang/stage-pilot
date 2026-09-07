@@ -281,9 +281,9 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
   const checklist = useMemo(
     () => [
       [complete, Sparkles, "设置基本信息", "名称、时间、地点与简介"],
-      [false, ClipboardCheck, "添加节目", "节目库和活动节目将在后续阶段接入", true],
-      [false, UsersRound, "邀请工作人员", "人员与岗位模块将在后续阶段接入", true],
-      [false, Workflow, "创建 Rundown", "流程编排将在后续阶段接入", true],
+      [false, ClipboardCheck, "添加节目", "从工作空间节目库选择，或创建本场活动的节目"],
+      [false, UsersRound, "邀请工作人员", "从工作空间添加成员，或创建外部协作者邀请"],
+      [false, Workflow, "配置排程", "场次、彩排和总日程页面正在接入服务端", true],
     ],
     [complete],
   );
@@ -365,9 +365,14 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
       </section>
 
       <Card className="border-dashed">
-        <CardContent className="flex min-h-24 items-center gap-3 text-sm text-muted-foreground">
-          <FileText className="size-5" />
-          征集、节目、人员、文件与现场模块尚未接入。本次概览不展示虚构业务指标。
+        <CardContent className="min-h-24 py-5 text-sm text-muted-foreground">
+          <div className="flex items-start gap-3">
+            <FileText className="mt-0.5 size-5 shrink-0" />
+            <div className="space-y-1">
+              <p>已接入：活动基础资料、成员与邀请、文件资料、活动地点，以及工作空间资源库。</p>
+              <p>当前仍为本地预览：活动节目和节目单编排；场次、彩排、总日程与报名征集正在接入服务端。</p>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>
