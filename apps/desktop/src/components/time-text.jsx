@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { formatInstantInTimeZone, normalizeTimeZone, resolveTimeZoneDetails, timeZoneOffsetLabel } from "@/lib/timezone"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useUserPreferences } from "@/components/user-preferences-provider"
@@ -22,63 +22,22 @@ export function TimeDetailsPopover({ instant, timezone, userTimezone, children }
 
 function TimeDetailsPopoverInteractive({ instant, zone, viewerRows, children }) {
   const [open, setOpen] = useState(false)
-  const closeTimerRef = useRef(null)
-
-  const clearCloseTimer = () => {
-    if (closeTimerRef.current !== null) {
-      window.clearTimeout(closeTimerRef.current)
-      closeTimerRef.current = null
-    }
-  }
-
-  const openPopover = () => {
-    clearCloseTimer()
-    setOpen(true)
-  }
-
-  const scheduleClose = () => {
-    clearCloseTimer()
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null
-      setOpen(false)
-    }, 200)
-  }
-
-  const handleOpenChange = (nextOpen) => {
-    if (nextOpen) openPopover()
-    else {
-      clearCloseTimer()
-      setOpen(false)
-    }
-  }
-
-  useEffect(() => () => clearCloseTimer(), [])
 
   const triggerContent = children || <TimeText instant={instant} timezone={zone} />
-  return <Popover open={open} onOpenChange={handleOpenChange}>
-    <PopoverTrigger render={<button
+  return <Popover open={open} onOpenChange={setOpen}>
+    <PopoverTrigger openOnHover delay={0} closeDelay={200} render={<button
       type="button"
       aria-label="查看时间详情"
       title="查看活动时区与本地时间"
       data-time-details-trigger="true"
       className="inline appearance-none m-0 cursor-help border-0 bg-transparent p-0 align-baseline font-inherit leading-inherit text-inherit outline-none focus-visible:ring-1 focus-visible:ring-ring"
-      onPointerEnter={openPopover}
-      onPointerLeave={scheduleClose}
-      onFocus={openPopover}
-      onBlur={(event) => {
-        if (!event.relatedTarget?.closest?.('[data-time-details-content="true"]')) scheduleClose()
-      }}
     >{triggerContent}</button>} />
     <PopoverContent
       data-time-details-content="true"
       align="start"
+      collisionPadding={{ top: 40, right: 8, bottom: 8, left: 8 }}
+      collisionAvoidance={{ side: "shift", fallbackAxisSide: "none" }}
       className="w-80 space-y-3 text-sm"
-      onPointerEnter={openPopover}
-      onPointerLeave={scheduleClose}
-      onFocus={openPopover}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) scheduleClose()
-      }}
     >
       <p className="font-medium">时间详情</p>
       <div className="space-y-2 text-muted-foreground">
