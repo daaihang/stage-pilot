@@ -722,6 +722,10 @@ func (app *application) createProductionInvitation(w http.ResponseWriter, r *htt
 		errorJSON(w, 400, "invalid_input", "角色无效")
 		return
 	}
+	if in.TargetEmail != "" && (!strings.Contains(in.TargetEmail, "@") || strings.HasPrefix(in.TargetEmail, "@") || strings.HasSuffix(in.TargetEmail, "@")) {
+		errorJSON(w, 400, "invalid_input", "指定邮箱无效")
+		return
+	}
 	access := currentProductionAccess(r)
 	if !canGrantProductionRole(access, in.RoleKey) {
 		errorJSON(w, 403, "production_forbidden", "只有工作空间管理者可以邀请 Producer")
