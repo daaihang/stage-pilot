@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Link2, Plus, RefreshCw, Search, Trash2 } from "@/components/ui/icons";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,12 +25,46 @@ function formatDate(value) {
   return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(date);
 }
 
+function invitationLink(token) {
+  return token ? `${window.location.origin}/#/invite/${token}` : "";
+}
+
+async function copyText(value) {
+  try {
+    await writeText(value);
+    return true;
+  } catch {}
+  try {
+    if (!navigator.clipboard) return false;
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function InvitationLinkDialog({ open, onOpenChange, invitation }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { if (!open) setCopied(false); }, [open]);
+  const copy = async () => {
+    if (!invitation?.link) return;
+    if (await copyText(invitation.link)) {
+      setCopied(true);
+      notify.success("邀请链接已复制");
+    } else {
+      notify.error("复制失败", { description: "请在下方输入框中手动复制邀请链接。" });
+    }
+  };
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>邀请链接已生成</DialogTitle><DialogDescription>链接只在本次生成后展示。关闭此窗口后，历史记录不能恢复旧 Token；需要再次发送时，请从邀请记录重新生成新链接。</DialogDescription></DialogHeader><div className="space-y-2"><label className="text-sm font-medium" htmlFor="generated-invitation-link">邀请链接</label><div className="flex gap-2"><Input id="generated-invitation-link" readOnly value={invitation?.link || ""} className="min-w-0 font-mono text-xs" /><Button type="button" variant={copied ? "secondary" : "default"} onClick={copy}>{copied ? "已复制" : <><Copy />复制链接</>}</Button></div></div>{invitation?.target_email && <p className="text-xs text-muted-foreground">指定邮箱：{invitation.target_email}</p>}<DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
+}
+
 export function InvitationDialog({ open, onOpenChange, scope, roleOptions = [], createInvitation, onCreated }) {
   const [role, setRole] = useState(roleOptions[0]?.value || "member");
   const [email, setEmail] = useState("");
   const [uses, setUses] = useState("1");
   const [expiresAt, setExpiresAt] = useState("");
   const [busy, setBusy] = useState(false);
+  const [createdInvitation, setCreatedInvitation] = useState(null);
   useEffect(() => { if (open) { setRole(roleOptions[0]?.value || "member"); setEmail(""); setUses("1"); setExpiresAt(""); } }, [open, roleOptions]);
   const workspace = scope === "workspace";
   const submit = async (event) => {
@@ -41,22 +76,20 @@ export function InvitationDialog({ open, onOpenChange, scope, roleOptions = [], 
       const payload = { role_key: role, ...(email.trim() ? { target_email: email.trim() } : {}), ...(expiresAt ? { expires_at: new Date(`${expiresAt}T23:59:59`).toISOString() } : {}) };
       if (!workspace) payload.max_uses = email.trim() ? 1 : Math.min(100, Math.max(1, Number(uses) || 1));
       const result = await createInvitation(payload);
-      const token = result?.accept_token;
-      if (token) {
-        const link = `${window.location.origin}/#/invite/${token}`;
-        try { await navigator.clipboard?.writeText(link); notify.success("邀请链接已复制", { id: toastId }); }
-        catch { notify.success("邀请已创建", { id: toastId, description: "系统未能访问剪贴板，请重新创建并复制链接。" }); }
-      } else notify.success("邀请已创建", { id: toastId });
+      const link = invitationLink(result?.accept_token);
+      notify.success("邀请已创建", { id: toastId, description: link ? "请在弹出的窗口中复制邀请链接。" : "邀请已创建，但服务端没有返回可复制的 Token。" });
+      if (link) setCreatedInvitation({ link, target_email: result?.target_email || email.trim() });
       onOpenChange(false); onCreated?.(result);
     } catch (error) { notify.error("创建邀请失败", { id: toastId, description: error?.message || String(error) }); }
     finally { setBusy(false); }
   };
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{workspace ? "邀请工作空间成员" : "创建活动邀请"}</DialogTitle><DialogDescription>{workspace ? "接受后将进入整个工作空间。" : "可创建指定邮箱邀请或可多次领取的通用邀请链接。"}</DialogDescription></DialogHeader><form onSubmit={submit} className="space-y-4"><label className="block space-y-1"><span className="text-sm font-medium">角色</span><Select value={role} onValueChange={setRole}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{roleOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></label><label className="block space-y-1"><span className="text-sm font-medium">指定邮箱{workspace ? "" : "（可选）"}</span><Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={workspace ? "name@example.com" : "留空表示通用链接"} /></label>{!workspace && !email.trim() && <label className="block space-y-1"><span className="text-sm font-medium">最大领取次数（1–100）</span><Input type="number" min="1" max="100" value={uses} onChange={(event) => setUses(event.target.value)} /></label>}<label className="block space-y-1"><span className="text-sm font-medium">邀请有效期（可选，默认 7 天）</span><Input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? <RefreshCw className="animate-spin" /> : <Link2 />}创建并复制</Button></DialogFooter></form></DialogContent></Dialog>;
+  return <><Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{workspace ? "邀请工作空间成员" : "创建活动邀请"}</DialogTitle><DialogDescription>{workspace ? "接受后将进入整个工作空间。创建成功后会打开链接复制窗口。" : "可创建指定邮箱邀请或可多次领取的通用邀请链接。创建成功后会打开链接复制窗口。"}</DialogDescription></DialogHeader><form onSubmit={submit} className="space-y-4"><label className="block space-y-1"><span className="text-sm font-medium">角色</span><Select value={role} onValueChange={setRole}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{roleOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></label><label className="block space-y-1"><span className="text-sm font-medium">指定邮箱{workspace ? "" : "（可选）"}</span><Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder={workspace ? "name@example.com" : "留空表示通用链接"} /></label>{!workspace && !email.trim() && <label className="block space-y-1"><span className="text-sm font-medium">最大领取次数（1–100）</span><Input type="number" min="1" max="100" value={uses} onChange={(event) => setUses(event.target.value)} /></label>}<label className="block space-y-1"><span className="text-sm font-medium">邀请有效期（可选，默认 7 天）</span><Input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? <RefreshCw className="animate-spin" /> : <Link2 />}创建邀请</Button></DialogFooter></form></DialogContent></Dialog><InvitationLinkDialog open={Boolean(createdInvitation)} onOpenChange={(value) => !value && setCreatedInvitation(null)} invitation={createdInvitation} /></>;
 }
 
-export function InvitationListRow({ invitation, canManage, onRevoke }) {
+export function InvitationListRow({ invitation, canManage, onRevoke, onRecreate, recreating }) {
   const email = invitation.target_email || "通用邀请链接";
   const isRevocable = canManage && !["revoked", "expired", "accepted", "exhausted"].includes(invitation.status);
+  const isRecreatable = canManage && ["pending", "scheduled", "active"].includes(invitation.status);
   const inviteKind = invitation.invite_kind === "link" ? "通用链接" : "指定邮箱";
   const role = invitation.role_key || invitation.role_id || "—";
   return <div className="flex items-start gap-3 border-b p-4 last:border-b-0">
@@ -73,7 +106,10 @@ export function InvitationListRow({ invitation, canManage, onRevoke }) {
       </div>
       {invitation.created_at && <p className="text-xs text-muted-foreground">创建于 {formatDate(invitation.created_at)}</p>}
     </div>
-    {isRevocable && <Button variant="ghost" size="icon-sm" aria-label="撤销邀请" onClick={() => onRevoke(invitation)}><Trash2 /></Button>}
+    <div className="flex shrink-0 items-center gap-1">
+      {isRecreatable && <Button variant="ghost" size="icon-sm" aria-label="重新生成并复制邀请链接" title="重新生成并复制邀请链接" disabled={recreating} onClick={() => onRecreate(invitation)}>{recreating ? <RefreshCw className="animate-spin" /> : <Copy />}</Button>}
+      {isRevocable && <Button variant="ghost" size="icon-sm" aria-label="撤销邀请" title="撤销邀请" onClick={() => onRevoke(invitation)}><Trash2 /></Button>}
+    </div>
   </div>;
 }
 
@@ -83,6 +119,8 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
   const [status, setStatus] = useState("all");
   const [query, setQuery] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [createdInvitation, setCreatedInvitation] = useState(null);
+  const [recreatingId, setRecreatingId] = useState(null);
   const requestRef = useRef(0);
   const load = async (withToast = false) => {
     const requestId = ++requestRef.current;
@@ -112,6 +150,36 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
     });
   }, [items, query, status]);
   const revoke = async (item) => { const toastId = notify.loading("正在撤销邀请…"); try { await revokeInvitation(item.id); notify.success("邀请已撤销", { id: toastId }); await load(); onChanged?.(); } catch (error) { notify.error("撤销邀请失败", { id: toastId, description: error?.message }); } };
+  const recreate = async (item) => {
+    if (recreatingId) return;
+    setRecreatingId(item.id);
+    const toastId = notify.loading("正在重新生成邀请链接…");
+    const payload = {
+      role_key: item.role_key,
+      ...(item.target_email ? { target_email: item.target_email } : {}),
+      ...(scope === "production" ? { max_uses: item.target_email ? 1 : Math.min(100, Math.max(1, Number(item.max_uses) || 1)) } : {}),
+      ...(item.starts_at ? { starts_at: item.starts_at } : {}),
+      ...(item.expires_at ? { expires_at: item.expires_at } : {}),
+      ...(scope === "production" && item.member_starts_at ? { member_starts_at: item.member_starts_at } : {}),
+      ...(scope === "production" && item.member_expires_at ? { member_expires_at: item.member_expires_at } : {}),
+    };
+    try {
+      const result = await createInvitation(payload);
+      const link = invitationLink(result?.accept_token);
+      if (!link) throw new Error("服务端没有返回新的邀请 Token");
+      let revokeError = null;
+      try { await revokeInvitation(item.id); } catch (error) { revokeError = error; }
+      setCreatedInvitation({ link, target_email: result?.target_email || item.target_email || "" });
+      if (revokeError) notify.warning("新邀请链接已生成，但旧邀请仍有效", { id: toastId, description: revokeError?.message || "请在列表中撤销旧邀请。" });
+      else notify.success("新邀请链接已生成", { id: toastId, description: "请在弹出的窗口中复制链接。" });
+      await load();
+      onChanged?.();
+    } catch (error) {
+      notify.error("重新生成邀请链接失败", { id: toastId, description: error?.message || String(error) });
+    } finally {
+      setRecreatingId(null);
+    }
+  };
   const description = scope === "workspace" ? "管理进入整个工作空间的成员邀请。" : "管理只授予当前活动访问权的邀请。";
   return <div className="min-w-0 space-y-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
@@ -149,11 +217,12 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
         <p className="text-xs text-muted-foreground">共 {filtered.length} 条匹配记录</p>
       </div>
       <ListSurface className="border-y">
-        {items === null ? <div className="p-6 text-sm text-muted-foreground">正在加载邀请…</div> : loadError && filtered.length === 0 ? <div className="space-y-3 p-8 text-center text-sm"><p className="text-destructive">无法加载邀请：{loadError.message}</p><Button variant="outline" size="sm" onClick={() => load(true)}>重试</Button></div> : filtered.length ? filtered.map((item) => <InvitationListRow key={item.id} invitation={item} canManage={canManage} onRevoke={revoke} />) : <div className="p-8 text-center text-sm text-muted-foreground">暂无匹配的邀请记录</div>}
+        {items === null ? <div className="p-6 text-sm text-muted-foreground">正在加载邀请…</div> : loadError && filtered.length === 0 ? <div className="space-y-3 p-8 text-center text-sm"><p className="text-destructive">无法加载邀请：{loadError.message}</p><Button variant="outline" size="sm" onClick={() => load(true)}>重试</Button></div> : filtered.length ? filtered.map((item) => <InvitationListRow key={item.id} invitation={item} canManage={canManage} onRevoke={revoke} onRecreate={recreate} recreating={recreatingId === item.id} />) : <div className="p-8 text-center text-sm text-muted-foreground">暂无匹配的邀请记录</div>}
       </ListSurface>
     </section>
 
     <InvitationDialog open={dialogOpen} onOpenChange={setDialogOpen} scope={scope} roleOptions={roleOptions} createInvitation={createInvitation} onCreated={async () => { await load(); onChanged?.(); }} />
+    <InvitationLinkDialog open={Boolean(createdInvitation)} onOpenChange={(value) => !value && setCreatedInvitation(null)} invitation={createdInvitation} />
   </div>;
 }
 
