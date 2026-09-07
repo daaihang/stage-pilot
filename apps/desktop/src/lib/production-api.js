@@ -40,8 +40,8 @@ export const revokeProductionMember = (productionId, memberId) => request(`/v1/p
 export const listProductionInvitations = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations`);
 export const createProductionInvitation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
 export const revokeProductionInvitation = (productionId, invitationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" });
-export const acceptProductionInvitation = (token) => request("/v1/production-invitations/accept", { method: "POST", body: JSON.stringify({ token }) });
-export const acceptInvitation = (token) => request("/v1/invitations/accept", { method: "POST", body: JSON.stringify({ token }) });
+export const getProductionInvitationCredential = (productionId, invitationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations/${encodeURIComponent(invitationId)}/credential`);
+export const rotateProductionInvitation = (productionId, invitationId) => request(`/v1/productions/${encodeURIComponent(productionId)}/invitations/${encodeURIComponent(invitationId)}/rotate`, { method: "POST", body: JSON.stringify({}) });
 export const listProductionLocations = (productionId) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`).then((items) => items.map(toProductionLocation));
 export const createProductionLocation = (productionId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations`, { method: "POST", body: JSON.stringify(payload) }).then(toProductionLocation);
 export const updateProductionLocation = (productionId, locationId, payload) => request(`/v1/productions/${encodeURIComponent(productionId)}/locations/${encodeURIComponent(locationId)}`, { method: "PATCH", body: JSON.stringify(payload) }).then(toProductionLocation);

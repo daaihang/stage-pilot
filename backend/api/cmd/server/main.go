@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,13 +28,15 @@ const accessLifetime = 15 * time.Minute
 const refreshLifetime = 30 * 24 * time.Hour
 
 type application struct {
-	db              *pgxpool.Pool
-	logger          *slog.Logger
-	jwtSecret       []byte
-	exposeDevTokens bool
-	rateMu          sync.Mutex
-	rate            map[string]rateEntry
-	storage         *objectStorage
+	db                      *pgxpool.Pool
+	logger                  *slog.Logger
+	jwtSecret               []byte
+	invitationHashKey       []byte
+	invitationEncryptionKey []byte
+	exposeDevTokens         bool
+	rateMu                  sync.Mutex
+	rate                    map[string]rateEntry
+	storage                 *objectStorage
 }
 type rateEntry struct {
 	started time.Time
@@ -83,7 +86,14 @@ func main() {
 	if storageErr != nil {
 		logger.Warn("object storage unavailable", "error", storageErr)
 	}
-	app := application{db: pool, logger: logger, jwtSecret: []byte(envOrDefault("AUTH_JWT_SECRET", "stagepilot-development-secret-change-me")), exposeDevTokens: os.Getenv("AUTH_EXPOSE_DEV_TOKENS") == "true", rate: make(map[string]rateEntry), storage: storage}
+	jwtSecret := []byte(envOrDefault("AUTH_JWT_SECRET", "stagepilot-development-secret-change-me"))
+	hashKey := []byte(envOrDefault("INVITATION_CODE_HASH_KEY", string(jwtSecret)))
+	encryptionKey := []byte(envOrDefault("INVITATION_CODE_ENCRYPTION_KEY", string(jwtSecret)))
+	if len(hashKey) < 32 || len(encryptionKey) < 32 {
+		logger.Error("invitation code keys must be at least 32 bytes")
+		os.Exit(1)
+	}
+	app := application{db: pool, logger: logger, jwtSecret: jwtSecret, invitationHashKey: hashKey, invitationEncryptionKey: encryptionKey, exposeDevTokens: os.Getenv("AUTH_EXPOSE_DEV_TOKENS") == "true", rate: make(map[string]rateEntry), storage: storage}
 	server := &http.Server{Addr: ":" + port, Handler: requestLogger(logger, corsMiddleware(allowedOrigins())(app.routes())), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -127,6 +137,8 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/workspaces/{id}/invitations", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.listWorkspaceInvitations))))
 	mux.Handle("POST /v1/workspaces/{id}/invitations", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createWorkspaceInvitation))))
 	mux.Handle("DELETE /v1/workspaces/{id}/invitations/{invitationId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.revokeWorkspaceInvitation))))
+	mux.Handle("GET /v1/workspaces/{id}/invitations/{invitationId}/credential", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.getWorkspaceInvitationCredential))))
+	mux.Handle("POST /v1/workspaces/{id}/invitations/{invitationId}/rotate", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.rotateWorkspaceInvitation))))
 	mux.Handle("PUT /me/last-workspace", app.auth(http.HandlerFunc(app.putLastWorkspace)))
 	mux.Handle("GET /me/last-workspace", app.auth(http.HandlerFunc(app.getLastWorkspace)))
 	// Workspace resources. Read operations are available to every active
@@ -211,6 +223,8 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/productions/{productionId}/invitations", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.listProductionInvitations))))
 	mux.Handle("POST /v1/productions/{productionId}/invitations", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.createProductionInvitation))))
 	mux.Handle("DELETE /v1/productions/{productionId}/invitations/{invitationId}", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.revokeProductionInvitation))))
+	mux.Handle("GET /v1/productions/{productionId}/invitations/{invitationId}/credential", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.getProductionInvitationCredential))))
+	mux.Handle("POST /v1/productions/{productionId}/invitations/{invitationId}/rotate", app.auth(app.requireProductionPermission(productionMembersManage, http.HandlerFunc(app.rotateProductionInvitation))))
 	mux.Handle("POST /v1/production-invitations/accept", app.auth(http.HandlerFunc(app.acceptProductionInvitation)))
 	mux.Handle("POST /v1/invitations/accept", app.auth(http.HandlerFunc(app.acceptInvitation)))
 	mux.Handle("GET /v1/productions/{productionId}/locations", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listProductionLocations))))
@@ -641,17 +655,31 @@ func (app *application) devToken(t string) string {
 	return ""
 }
 func (app *application) allow(r *http.Request, key string) bool {
+	return app.allowWindow(r, key+":"+requestClientIP(r), 20, time.Minute)
+}
+func (app *application) allowWindow(r *http.Request, key string, limit int, window time.Duration) bool {
 	now := time.Now()
-	k := key + ":" + r.RemoteAddr
+	k := key
 	app.rateMu.Lock()
 	defer app.rateMu.Unlock()
 	v := app.rate[k]
-	if now.Sub(v.started) > time.Minute {
+	if v.started.IsZero() || now.Sub(v.started) > window {
 		v = rateEntry{started: now}
 	}
 	v.count++
 	app.rate[k] = v
-	return v.count <= 20
+	return v.count <= limit
+}
+func (app *application) resetRate(key string) {
+	app.rateMu.Lock()
+	delete(app.rate, key)
+	app.rateMu.Unlock()
+}
+func requestClientIP(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr)); err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }
 func normalizeEmail(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
 func validEmail(v string) bool       { return strings.Contains(v, "@") && len(v) >= 5 }

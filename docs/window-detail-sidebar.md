@@ -84,6 +84,8 @@ useEffect(() => registerDetail({
 
 成员页同样使用窗口详情 surface：Workspace `/w/:workspaceId/members?panel=invitations` 显示“成员邀请”，Production `/w/:workspaceId/p/:productionId/members?panel=invitations` 或 `/p/:productionId/members?panel=invitations` 显示“活动邀请”。列表、搜索和成员 tabs 保持挂载，关闭面板只移除 `panel`，并通过稳定的“成员邀请”按钮 ref 恢复焦点。邀请面板不得创建页面级 Sheet/Drawer；创建、撤销和接受操作使用共享 Toast。
 
+邀请面板使用短码凭据而不是可回显的长 Token：创建、复制当前凭据和轮换短码都在短暂响应中返回 `join_code`/`join_url`，列表只显示凭据状态。复制不会改变邀请记录；轮换保留原记录并立即使旧短码失效。短码不得写入 Toast、日志、分析事件或本地持久化存储。
+
 `DetailSplitPane` 只保留一个 `[data-detail-surface]` 详情节点。嵌入、独占和覆盖是同一节点的三种几何状态；页面详情内容不得为了不同宽度再渲染第二份。
 
 ## 何时使用 workspace 模式

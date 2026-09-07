@@ -21,7 +21,7 @@ import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
 import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
 import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
-import { ProductionInvitePage } from "@/components/production-invite-page";
+import { InvitationAcceptPage } from "@/components/production-invite-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
 import { ProgramSheetsPage } from "@/components/program-sheets-page";
 import { ProductionProgramsPage } from "@/components/production-programs-page";
@@ -488,10 +488,11 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
 
   let content;
   if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
+  else if (route?.mode === "invite" && authStatus !== "authenticated") content = <InvitationAcceptPage code={route.code} authenticated={false} onRequireAuth={onRequireAuth} />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
   else if (isAccountRoute && route.page === "developer" && import.meta.env.DEV) content = <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} contentWidth={contentWidth} initialAction={new URLSearchParams(location.search).get("action")} />;
   else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} contentWidth={contentWidth} onContentWidthChange={onContentWidthChange} initialAction={new URLSearchParams(location.search).get("action")} />;
-  else if (route?.mode === "invite") content = <ProductionInvitePage token={route.token} />;
+  else if (route?.mode === "invite") content = <InvitationAcceptPage code={route.code} />;
   else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} onJoinInvitation={() => setJoinInvitationOpen(true)} />;
   else if (isWorkspacesRoute) content = <WorkspacesPage onCreateWorkspace={() => setCreateWorkspaceOpen(true)} />;
   else if (workspaceError && !currentWorkspace) content = <NavigationFailure description={workspaceError.message} onRetry={retryWorkspaces} />;

@@ -38,7 +38,7 @@ func newIntegrationApp(t *testing.T) *application {
 		t.Fatalf("connect database: %v", err)
 	}
 	t.Cleanup(pool.Close)
-	return &application{db: pool, logger: discardLogger(), jwtSecret: []byte("stagepilot-test-secret"), rate: make(map[string]rateEntry)}
+	return &application{db: pool, logger: discardLogger(), jwtSecret: []byte("stagepilot-test-secret"), invitationHashKey: []byte("stagepilot-test-invitation-hash-key-32"), invitationEncryptionKey: []byte("stagepilot-test-invitation-encryption-key-32"), rate: make(map[string]rateEntry)}
 }
 
 func createTestUser(t *testing.T, app *application, email string) string {
@@ -55,6 +55,9 @@ func createTestUser(t *testing.T, app *application, email string) string {
 	if _, err := app.db.Exec(ctx, `INSERT INTO user_identities (id,user_id,provider,provider_subject) VALUES ($1,$2,'email',$3)`, newID(), uid, email); err != nil {
 		t.Fatalf("insert identity: %v", err)
 	}
+	if _, err := app.db.Exec(ctx, `INSERT INTO email_verifications (id,user_id,token_hash,expires_at,used_at) VALUES ($1,$2,$3,$4,NOW())`, newID(), uid, tokenHash(randomToken()), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("insert email verification: %v", err)
+	}
 	if _, err := app.db.Exec(ctx, `INSERT INTO password_credentials (user_id,password_hash) VALUES ($1,$2)`, uid, hash); err != nil {
 		t.Fatalf("insert password: %v", err)
 	}
@@ -62,6 +65,47 @@ func createTestUser(t *testing.T, app *application, email string) string {
 		t.Fatalf("insert preferences: %v", err)
 	}
 	return uid
+}
+
+func TestWorkspaceInvitationShortCodeLifecycle(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "workspace-invite-owner-"+newID()+"@example.test")
+	guestEmail := "workspace-invite-guest-" + newID() + "@example.test"
+	_ = createTestUser(t, app, guestEmail)
+	ownerToken := issueTestToken(t, app, owner)
+	workspaceID := createWorkspaceFor(t, app, ownerToken, "工作空间短码邀请")["id"].(string)
+	created := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/workspaces/"+workspaceID+"/invitations", map[string]any{"role_key": "member", "target_email": guestEmail})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create invitation = %d: %s", created.Code, created.Body.String())
+	}
+	var invitation map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &invitation); err != nil {
+		t.Fatalf("decode invitation: %v", err)
+	}
+	code, ok := invitation["join_code"].(string)
+	if !ok || len(code) != 11 || invitation["accept_token"] != nil {
+		t.Fatalf("unexpected create response: %#v", invitation)
+	}
+	id := invitation["id"].(string)
+	listed := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/workspaces/"+workspaceID+"/invitations", nil)
+	if listed.Code != http.StatusOK || strings.Contains(listed.Body.String(), code) {
+		t.Fatalf("list invitation leaked credential or failed: %d %s", listed.Code, listed.Body.String())
+	}
+	credential := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/workspaces/"+workspaceID+"/invitations/"+id+"/credential", nil)
+	if credential.Code != http.StatusOK || credential.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("credential response = %d cache=%q body=%s", credential.Code, credential.Header().Get("Cache-Control"), credential.Body.String())
+	}
+	var revealed map[string]any
+	_ = json.Unmarshal(credential.Body.Bytes(), &revealed)
+	rotated := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/workspaces/"+workspaceID+"/invitations/"+id+"/rotate", map[string]any{})
+	if rotated.Code != http.StatusOK {
+		t.Fatalf("rotate invitation = %d: %s", rotated.Code, rotated.Body.String())
+	}
+	var next map[string]any
+	_ = json.Unmarshal(rotated.Body.Bytes(), &next)
+	if next["id"] != id || next["code_version"].(float64) != 2 || next["join_code"] == revealed["join_code"] {
+		t.Fatalf("unexpected rotation response: %#v", next)
+	}
 }
 
 // issueTestToken 直接构造一个绑定真实会话行的 access token，

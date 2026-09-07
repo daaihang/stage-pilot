@@ -120,7 +120,7 @@ export function buildBreadcrumbItems({ route, workspace, production } = {}) {
     ];
   }
   if (route.mode === "work") return [{ label: "我的工作", current: true }];
-  if (route.mode === "invite") return [{ label: "活动邀请", current: true }];
+  if (route.mode === "invite") return [{ label: "接受邀请", current: true }];
   if (route.mode !== "workspace" && route.mode !== "production") return [];
   if (!workspace) return [];
 
@@ -145,8 +145,8 @@ export function resolveAccountReturnTarget(search, fallback) {
 }
 
 export function matchStagePilotRoute(pathname, search = "") {
-  const inviteMatch = pathname.match(/^\/invite\/([^/]+)\/?$/);
-  if (inviteMatch) return { mode: "invite", token: inviteMatch[1], meta: { title: "接受活动邀请", description: "加入受邀请的活动" } };
+  const inviteMatch = pathname.match(/^\/join\/([^/]+)\/?$/);
+  if (inviteMatch) return { mode: "invite", code: inviteMatch[1], meta: { title: "接受邀请", description: "加入受邀请的工作空间或活动" } };
   if (pathname === "/work") {
     const requestedTab = new URLSearchParams(search).get("tab");
     return { mode: "work", page: "work", tab: workTabs.has(requestedTab) ? requestedTab : "workspaces", meta: { title: "我的工作", description: "访问你的工作空间、参与的活动和协作事项" } };

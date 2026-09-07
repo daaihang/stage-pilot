@@ -43,6 +43,8 @@ export async function listWorkspaceMembers(workspaceId) {
 export const listWorkspaceInvitations = (workspaceId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`);
 export const createWorkspaceInvitation = (workspaceId, payload) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
 export const revokeWorkspaceInvitation = (workspaceId, invitationId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}`, { method: "DELETE" });
+export const getWorkspaceInvitationCredential = (workspaceId, invitationId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}/credential`);
+export const rotateWorkspaceInvitation = (workspaceId, invitationId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations/${encodeURIComponent(invitationId)}/rotate`, { method: "POST", body: JSON.stringify({}) });
 
 export async function getLastWorkspace() {
   return request("/me/last-workspace");

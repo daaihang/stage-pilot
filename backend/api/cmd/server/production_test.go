@@ -409,7 +409,7 @@ func TestProductionInvitationWindowCarriesMemberWindow(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &invitation); err != nil {
 		t.Fatalf("decode invitation: %v", err)
 	}
-	accepted := authedRequest(t, app, outsiderToken, http.MethodPost, "/v1/production-invitations/accept", map[string]any{"token": invitation["accept_token"]})
+	accepted := authedRequest(t, app, outsiderToken, http.MethodPost, "/v1/invitations/accept", map[string]any{"code": invitation["join_code"]})
 	if accepted.Code != http.StatusOK {
 		t.Fatalf("accept invitation = %d: %s", accepted.Code, accepted.Body.String())
 	}
