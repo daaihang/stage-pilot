@@ -55,7 +55,7 @@ export function InvitationLinkDialog({ open, onOpenChange, invitation }) {
       notify.error("复制失败", { description: "请在下方输入框中手动复制邀请链接。" });
     }
   };
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>邀请链接已生成</DialogTitle><DialogDescription>链接只在本次生成后展示。关闭此窗口后，历史记录不能恢复旧 Token；需要再次发送时，请从邀请记录重新生成新链接。</DialogDescription></DialogHeader><div className="space-y-2"><label className="text-sm font-medium" htmlFor="generated-invitation-link">邀请链接</label><div className="flex gap-2"><Input id="generated-invitation-link" readOnly value={invitation?.link || ""} className="min-w-0 font-mono text-xs" /><Button type="button" variant={copied ? "secondary" : "default"} onClick={copy}>{copied ? "已复制" : <><Copy />复制链接</>}</Button></div></div>{invitation?.target_email && <p className="text-xs text-muted-foreground">指定邮箱：{invitation.target_email}</p>}<DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>邀请链接已生成</DialogTitle><DialogDescription>这条链接在有效期内保持不变。关闭窗口后，历史记录不能恢复旧 Token；需要发送新链接时，请使用邀请记录中的“重新生成链接”。</DialogDescription></DialogHeader><div className="space-y-2"><label className="text-sm font-medium" htmlFor="generated-invitation-link">邀请链接</label><div className="flex gap-2"><Input id="generated-invitation-link" readOnly value={invitation?.link || ""} className="min-w-0 font-mono text-xs" /><Button type="button" variant={copied ? "secondary" : "default"} onClick={copy}>{copied ? "已复制" : <><Copy />复制链接</>}</Button></div></div>{invitation?.target_email && <p className="text-xs text-muted-foreground">指定邮箱：{invitation.target_email}</p>}<DialogFooter><Button type="button" onClick={() => onOpenChange(false)}>完成</Button></DialogFooter></DialogContent></Dialog>;
 }
 
 export function InvitationDialog({ open, onOpenChange, scope, roleOptions = [], createInvitation, onCreated }) {
@@ -107,7 +107,7 @@ export function InvitationListRow({ invitation, canManage, onRevoke, onRecreate,
       {invitation.created_at && <p className="text-xs text-muted-foreground">创建于 {formatDate(invitation.created_at)}</p>}
     </div>
     <div className="flex shrink-0 items-center gap-1">
-      {isRecreatable && <Button variant="ghost" size="icon-sm" aria-label="重新生成并复制邀请链接" title="重新生成并复制邀请链接" disabled={recreating} onClick={() => onRecreate(invitation)}>{recreating ? <RefreshCw className="animate-spin" /> : <Copy />}</Button>}
+      {isRecreatable && <Button variant="ghost" size="icon-sm" aria-label="重新生成邀请链接" title="重新生成链接（会撤销旧链接）" disabled={recreating} onClick={() => onRecreate(invitation)}>{recreating ? <RefreshCw className="animate-spin" /> : <RefreshCw />}</Button>}
       {isRevocable && <Button variant="ghost" size="icon-sm" aria-label="撤销邀请" title="撤销邀请" onClick={() => onRevoke(invitation)}><Trash2 /></Button>}
     </div>
   </div>;
