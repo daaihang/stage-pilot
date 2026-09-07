@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Link2, Plus, RefreshCw, Trash2 } from "@/components/ui/icons";
+import { Copy, Link2, Plus, RefreshCw, Search, Trash2 } from "@/components/ui/icons";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/sonner";
 import { acceptInvitation } from "@/lib/invitation-api";
 
@@ -55,13 +56,31 @@ export function InvitationDialog({ open, onOpenChange, scope, roleOptions = [], 
 export function InvitationListRow({ invitation, canManage, onRevoke }) {
   const email = invitation.target_email || "通用邀请链接";
   const isRevocable = canManage && !["revoked", "expired", "accepted", "exhausted"].includes(invitation.status);
-  return <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3 last:border-b-0"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="truncate font-medium">{email}</span><InvitationStatusBadge status={invitation.status} /></div><p className="mt-1 text-xs text-muted-foreground">{invitation.role_key} · {invitation.invite_kind === "link" ? `已领取 ${invitation.accepted_count || 0} / ${invitation.max_uses || 0}` : "指定邮箱"} · 有效至 {formatDate(invitation.expires_at)}</p></div>{isRevocable && <Button variant="ghost" size="icon-sm" aria-label="撤销邀请" onClick={() => onRevoke(invitation)}><Trash2 /></Button>}</div>;
+  const inviteKind = invitation.invite_kind === "link" ? "通用链接" : "指定邮箱";
+  const role = invitation.role_key || invitation.role_id || "—";
+  return <div className="flex items-start gap-3 border-b p-4 last:border-b-0">
+    <div className="min-w-0 flex-1 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 truncate text-sm font-medium">{email}</span>
+        <InvitationStatusBadge status={invitation.status} />
+      </div>
+      <div className="grid gap-x-4 gap-y-1 text-xs text-muted-foreground sm:grid-cols-2">
+        <span>角色：{role}</span>
+        <span>类型：{inviteKind}</span>
+        <span>{invitation.invite_kind === "link" ? `领取：${invitation.accepted_count || 0} / ${invitation.max_uses || 0}` : "单次接受"}</span>
+        <span>有效至：{formatDate(invitation.expires_at)}</span>
+      </div>
+      {invitation.created_at && <p className="text-xs text-muted-foreground">创建于 {formatDate(invitation.created_at)}</p>}
+    </div>
+    {isRevocable && <Button variant="ghost" size="icon-sm" aria-label="撤销邀请" onClick={() => onRevoke(invitation)}><Trash2 /></Button>}
+  </div>;
 }
 
 export function InvitationListPanel({ scope, scopeKey, canManage, listInvitations, createInvitation, revokeInvitation, roleOptions = [], title = "成员邀请", onChanged }) {
   const [items, setItems] = useState(null);
   const [loadError, setLoadError] = useState(null);
   const [status, setStatus] = useState("all");
+  const [query, setQuery] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const requestRef = useRef(0);
   const load = async (withToast = false) => {
@@ -81,9 +100,60 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
     }
   };
   useEffect(() => { setItems(null); setLoadError(null); void load(); }, [scope, scopeKey]);
-  const filtered = useMemo(() => (items || []).filter((item) => status === "all" || item.status === status), [items, status]);
+  const statusGroups = [["all", "全部"], ["pending", "待接受"], ["scheduled", "待生效"], ["active", "部分接受"], ["accepted", "已接受"], ["exhausted", "已用尽"], ["expired", "已过期"], ["revoked", "已撤销"]];
+  const counts = useMemo(() => Object.fromEntries(statusGroups.map(([value]) => [value, value === "all" ? (items || []).length : (items || []).filter((item) => item.status === value).length])), [items]);
+  const filtered = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase("zh-CN");
+    return (items || []).filter((item) => {
+      const matchesStatus = status === "all" || item.status === status;
+      const searchable = [item.target_email, item.invite_kind, item.role_key, item.role_id, item.created_by].filter(Boolean).join(" ").toLocaleLowerCase("zh-CN");
+      return matchesStatus && (!normalizedQuery || searchable.includes(normalizedQuery));
+    });
+  }, [items, query, status]);
   const revoke = async (item) => { const toastId = notify.loading("正在撤销邀请…"); try { await revokeInvitation(item.id); notify.success("邀请已撤销", { id: toastId }); await load(); onChanged?.(); } catch (error) { notify.error("撤销邀请失败", { id: toastId, description: error?.message }); } };
-  return <Card className="min-w-0"><CardHeader className="flex-row items-center justify-between gap-3"><CardTitle>{title}</CardTitle><div className="flex gap-2">{canManage && <Button size="sm" onClick={() => setDialogOpen(true)}><Plus />新建邀请</Button>}<Button variant="outline" size="sm" onClick={() => load(true)}><RefreshCw />刷新</Button></div></CardHeader><CardContent className="p-0"><div className="flex flex-wrap gap-1 border-y px-4 py-2">{[["all", "全部"], ["pending", "待接受"], ["scheduled", "待生效"], ["active", "部分接受"], ["accepted", "已接受"], ["exhausted", "已用尽"], ["expired", "已过期"], ["revoked", "已撤销"]].map(([value, label]) => <Button key={value} variant={status === value ? "secondary" : "ghost"} size="sm" onClick={() => setStatus(value)}>{label}</Button>)}</div>{items === null ? <div className="p-6 text-sm text-muted-foreground">正在加载邀请…</div> : loadError && filtered.length === 0 ? <div className="space-y-3 p-8 text-center text-sm"><p className="text-destructive">无法加载邀请：{loadError.message}</p><Button variant="outline" size="sm" onClick={() => load(true)}>重试</Button></div> : filtered.length ? filtered.map((item) => <InvitationListRow key={item.id} invitation={item} canManage={canManage} onRevoke={revoke} />) : <div className="p-8 text-center text-sm text-muted-foreground">暂无邀请记录</div>}</CardContent><InvitationDialog open={dialogOpen} onOpenChange={setDialogOpen} scope={scope} roleOptions={roleOptions} createInvitation={createInvitation} onCreated={async () => { await load(); onChanged?.(); }} /></Card>;
+  const description = scope === "workspace" ? "管理进入整个工作空间的成员邀请。" : "管理只授予当前活动访问权的邀请。";
+  return <div className="min-w-0 space-y-5">
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        {canManage && <Button size="sm" onClick={() => setDialogOpen(true)}><Plus />新建邀请</Button>}
+        <Button variant="outline" size="sm" onClick={() => load(true)}><RefreshCw />刷新</Button>
+      </div>
+    </div>
+
+    <Card>
+      <CardHeader>
+        <CardTitle>邀请状态</CardTitle>
+        <p className="text-sm text-muted-foreground">按服务端计算的状态查看邀请记录。</p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Tabs value={status} onValueChange={setStatus}>
+          <TabsList variant="line" className="w-full justify-start overflow-x-auto scrollbar-none">
+            {statusGroups.map(([value, label]) => <TabsTrigger key={value} value={value} className="shrink-0">{label} <span className="ml-1 text-xs text-muted-foreground">{counts[value]}</span></TabsTrigger>)}
+          </TabsList>
+        </Tabs>
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索邮箱、角色或邀请类型" className="pl-8" aria-label="搜索邀请" />
+        </div>
+      </CardContent>
+    </Card>
+
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">邀请记录</CardTitle>
+        <p className="text-sm text-muted-foreground">共 {filtered.length} 条匹配记录</p>
+      </CardHeader>
+      <CardContent className="p-0">
+        {items === null ? <div className="p-6 text-sm text-muted-foreground">正在加载邀请…</div> : loadError && filtered.length === 0 ? <div className="space-y-3 p-8 text-center text-sm"><p className="text-destructive">无法加载邀请：{loadError.message}</p><Button variant="outline" size="sm" onClick={() => load(true)}>重试</Button></div> : filtered.length ? filtered.map((item) => <InvitationListRow key={item.id} invitation={item} canManage={canManage} onRevoke={revoke} />) : <div className="p-8 text-center text-sm text-muted-foreground">暂无匹配的邀请记录</div>}
+      </CardContent>
+    </Card>
+
+    <InvitationDialog open={dialogOpen} onOpenChange={setDialogOpen} scope={scope} roleOptions={roleOptions} createInvitation={createInvitation} onCreated={async () => { await load(); onChanged?.(); }} />
+  </div>;
 }
 
 export function JoinInvitationDialog({ open, onOpenChange, onAccepted }) {
