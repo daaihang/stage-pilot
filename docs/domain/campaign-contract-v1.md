@@ -1,7 +1,7 @@
 # Campaign / Form Intake Backend Contract V1
 
 状态：已冻结（2026-09-08）
-范围：`Campaign`、`CampaignTemplate`、`CampaignRevision`、`FormVersion`、`Entry`、`Decision`、`EntryMaterialization` 及其 API、状态和不变量。
+范围：`Campaign`、`CampaignTemplate`、`CampaignRevision`、`FormVersion`、`Entry`、`Decision`、`EntryMaterialization`，以及六类活动级结果对象 `ProductionProgram`、`ProductionPerson`、`ProductionRegistration`、`Requirement`、`ResourceCommitment`、`FormResponse`。
 本文件只冻结契约，不代表数据库或 API 已经实现。
 
 ## 1. 设计原则
@@ -242,8 +242,21 @@ Campaign 的配置版本。草稿可编辑；发布后的 Revision 不可原地�
 }
 ```
 
-`target_kind` V1 预留：`production_registration`、`production_program`、`production_person`、`crew_assignment`、`requirement`、`resource_commitment`、`form_response`。`operation`：`create`、`link_existing`、`merge`、`skip`。
+`target_kind` V1：`production_registration`、`production_program`、`production_person`、`requirement`、`resource_commitment`、`form_response`。V1 不包含 `crew_assignment`、`position` 或 `slot`；招募岗位信息暂存在 `ProductionPerson.roles` 与 `department`。`operation`：`create`、`link_existing`、`merge`、`skip`。
 `status`：`pending`、`running`、`succeeded`、`failed`。服务端必须在事务中写入目标对象和成功记录；重复请求使用同一幂等键，不得重复创建。招募转化永远不会隐式创建 `WorkspaceMembership` 或 `ProductionMembership`。
+
+### 2.3 结果目标映射
+
+活动级结果对象的字段、状态和生命周期见 [`production-result-contract-v1.md`](./production-result-contract-v1.md)。Campaign 的默认目标映射为：
+
+```text
+REGISTRATION  → ProductionRegistration
+SUBMISSION    → ProductionProgram
+RECRUITMENT   → ProductionPerson
+COLLECTION    → FormResponse
+```
+
+任何 Campaign 类型都可以在 `materialization_plan` 中显式配置 `Requirement` 或 `ResourceCommitment`。结果对象始终先保留活动级快照；对 Workspace `Person`、`Program`、`Venue`、`EquipmentItem`、`File` 的引用是可选链接，不会因为转化自动修改长期资源库或权限。
 
 ## 3. 状态和不变量
 
@@ -329,6 +342,12 @@ entries
 entry_revisions                  内部答案版本存储
 decisions
 entry_materializations
+production_programs
+production_people
+production_registrations
+requirements
+resource_commitments
+form_responses
 ```
 
 所有表采用现有 TEXT ID、UTC 时间戳、软删除/归档和 Workspace 复合约束风格。`entry_revisions.answers`、`form_versions.blocks/fields/logic_rules`、Revision 中三个策略值对象使用 JSONB，但必须有服务端 schema 校验和版本号，不能把 JSONB 当作无约束扩展点。
@@ -342,7 +361,7 @@ entry_materializations
 
 ## 7. 实现顺序
 
-1. 新增迁移和服务端模型：Template、Campaign、Revision、FormVersion、Entry、Decision、Materialization。
+1. 新增活动结果迁移，再新增 Campaign/Entry 迁移和服务端模型：Template、Campaign、Revision、FormVersion、Entry、Decision、Materialization 及六类结果对象。
 2. 先实现管理端 Campaign/Revision/Entry API 及租户、权限、发布校验、幂等约束。
 3. 再实现公开读取、草稿/提交、Entry access token 和受限附件。
 4. 前端把当前静态页面替换为 Campaign/Template API；Form Builder 只编辑 draft Revision。
