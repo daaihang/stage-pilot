@@ -215,6 +215,9 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PATCH /v1/productions/{productionId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProduction))))
 	// Campaign intake: templates are authenticated read-only; Campaign and
 	// revision mutations reuse the Production permission boundary.
+	mux.Handle("GET /v1/review-recipes", app.auth(http.HandlerFunc(app.listReviewRecipes)))
+	mux.Handle("GET /v1/workspaces/{id}/review-recipes", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceReviewRecipes))))
+	mux.Handle("GET /v1/review-recipes/{recipeId}/versions", app.auth(http.HandlerFunc(app.listReviewRecipeVersions)))
 	mux.Handle("GET /v1/campaign-templates", app.auth(http.HandlerFunc(app.listCampaignTemplates)))
 	mux.Handle("GET /v1/workspaces/{id}/campaign-templates", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceCampaignTemplates))))
 	mux.Handle("GET /v1/productions/{productionId}/campaigns", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listCampaigns))))
@@ -223,6 +226,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PATCH /v1/campaigns/{campaignId}", app.auth(http.HandlerFunc(app.updateCampaign)))
 	mux.Handle("GET /v1/campaigns/{campaignId}/revisions", app.auth(http.HandlerFunc(app.listCampaignRevisions)))
 	mux.Handle("POST /v1/campaigns/{campaignId}/revisions", app.auth(http.HandlerFunc(app.createCampaignRevision)))
+	mux.Handle("POST /v1/campaigns/{campaignId}/revisions/{revisionId}/publish", app.auth(http.HandlerFunc(app.publishCampaignRevision)))
 	mux.Handle("POST /v1/productions/{productionId}/timezone-preview", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.previewProductionTimezone))))
 	mux.Handle("GET /v1/productions/{productionId}/settings", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.getProductionPlanningSettings))))
 	mux.Handle("PATCH /v1/productions/{productionId}/settings", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProductionPlanningSettings))))

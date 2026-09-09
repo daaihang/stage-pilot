@@ -1,6 +1,6 @@
 # Campaign / Form Intake Backend Contract V1
 
-状态：已冻结（2026-09-08）
+状态：已冻结（2026-09-09）
 范围：`Campaign`、`CampaignTemplate`、`CampaignRevision`、`FormVersion`、`Entry`、`Decision`、`EntryMaterialization`，以及六类活动级结果对象 `ProductionProgram`、`ProductionPerson`、`ProductionRegistration`、`Requirement`、`ResourceCommitment`、`FormResponse`。
 本文件只冻结契约，不代表数据库或 API 已经实现。
 
@@ -26,7 +26,8 @@ System CampaignTemplate
         ├── CampaignRevision（可编辑草稿 / 不可变发布快照）
         │   ├── FormVersion
         │   ├── AvailabilityPolicy（值对象）
-        │   ├── ReviewWorkflow（值对象）
+        │   ├── ReviewRecipeVersion（来源引用）
+        │   ├── ReviewWorkflow（ReviewRecipe 快照值对象）
         │   └── MaterializationPlan（值对象）
         └── Entry（固定关联提交时的 CampaignRevision）
             ├── EntryRevision / answers（追加式答案版本）
@@ -116,9 +117,30 @@ Campaign 的配置版本。草稿可编辑；发布后的 Revision 不可原地�
     "waitlist_limit": 30,
     "close_behavior": "close_to_new_entries"
   },
+  "review_recipe_version_id": "rrv_…",
   "review_workflow": {
-    "mode": "manual",
-    "stages": []
+    "schema_version": 1,
+    "mode": "MULTI_STAGE_REVIEW",
+    "rounds": [
+      {
+        "key": "qualification",
+        "name": "资格筛选",
+        "execution": "parallel",
+        "reviewer_policy": { "source": "production_roles", "role_keys": ["producer"] },
+        "completion": { "mode": "all" },
+        "feedback": { "kind": "binary" }
+      },
+      {
+        "key": "final",
+        "name": "最终审核",
+        "execution": "parallel",
+        "reviewer_policy": { "source": "production_roles", "role_keys": ["producer"] },
+        "completion": { "mode": "all" },
+        "feedback": { "kind": "binary" }
+      }
+    ],
+    "request_changes": { "enabled": true, "target": "same_round" },
+    "final_decision": "manual"
   },
   "materialization_plan": {
     "primary_target": "production_program",
@@ -138,7 +160,9 @@ Campaign 的配置版本。草稿可编辑；发布后的 Revision 不可原地�
 - `visibility`：`public`、`workspace`、`invite_only`。
 - `submission_limit` 是最多接收的 Entry 数；`capacity` 是最终录取/确认数量；`target` 只是运营目标；`waitlist_limit` 是候补数量上限，四者不能混用。
 - `close_behavior`：`close_to_new_entries` 或 `accept_to_waitlist`。
-- `review_workflow` 可以为空；报名不一定需要人工审核。启用审核时，每个阶段必须有可执行的负责人或角色。
+- `review_recipe_version_id` 记录创建时所用的已发布 `ReviewRecipeVersion`；`review_workflow` 是复制到 Revision 的完整审核快照，也是运行时权威配置。方案后续升级不得改变历史 Revision。
+- 新版本的 `review_workflow` 必须符合 [`review-recipe-contract-v1.md`](./review-recipe-contract-v1.md) 的 V1 结构。`AUTO_ACCEPT` 不需要审核轮次；其他模式必须在发布前解析出当前 Production 的成员或角色。旧 Revision 可以保留没有方案 ID 的 `legacy` 快照，但只能读取，不能直接发布。
+- 轮次按顺序执行、轮次内部审核人并行；完成条件（`all`、`any`、`at_least_n`）与通过/拒绝决定分离。请求补件只能回到原轮次并产生新的 EntryRevision。
 - `materialization_plan` 只能选择系统支持的目标和重复处理策略，不能提交任意表名、SQL 或脚本。
 
 #### FormVersion
@@ -298,6 +322,10 @@ GET    /v1/workspaces/{workspaceId}/campaign-templates?kind=…
 POST   /v1/workspaces/{workspaceId}/campaign-templates
 GET    /v1/campaign-templates/{templateId}
 POST   /v1/campaign-templates/{templateId}/versions
+
+GET    /v1/review-recipes?status=…
+GET    /v1/workspaces/{workspaceId}/review-recipes?status=…
+GET    /v1/review-recipes/{recipeId}/versions
 
 GET    /v1/campaigns/{campaignId}/revisions
 POST   /v1/campaigns/{campaignId}/revisions

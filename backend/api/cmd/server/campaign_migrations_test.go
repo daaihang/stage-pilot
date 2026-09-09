@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 29 时跳过；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30 时跳过；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -36,21 +36,22 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
-	if version != "29" {
-		t.Skipf("campaign migration schema is %s, want 29", version)
+	if version != "30" {
+		t.Skipf("campaign migration schema is %s, want 30", version)
 	}
 	for _, table := range []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
 		"campaign_templates", "campaign_template_versions", "form_versions", "campaigns", "campaign_revisions",
 		"entries", "entry_revisions", "decisions", "entry_materializations", "form_responses",
 		"api_idempotency_keys",
+		"review_recipe_templates", "review_recipe_versions",
 	} {
 		var registered *string
 		if err := app.db.QueryRow(t.Context(), `SELECT to_regclass($1)`, "public."+table).Scan(&registered); err != nil {
 			t.Fatalf("inspect table %s: %v", table, err)
 		}
 		if registered == nil {
-			t.Fatalf("table %s missing at schema 27", table)
+			t.Fatalf("table %s missing at schema 30", table)
 		}
 	}
 }
@@ -107,6 +108,18 @@ func TestCampaignResultMigrationV1Constraints(t *testing.T) {
 	}
 
 	expectMigrationConstraintError(t, tx, `INSERT INTO production_programs(id,workspace_id,production_id,workspace_program_id,name,created_by) VALUES($1,$2,$3,$4,$5,$6)`, newID(), workspaceAID, productionAID, programB, "跨租户节目", uid)
+	recipeTemplateA, recipeVersionA := newID(), newID()
+	if _, err := tx.Exec(t.Context(), `INSERT INTO review_recipe_templates(id,workspace_id,scope,key,name,status,latest_version,created_by) VALUES($1,$2,'workspace',$3,'A 的审核方案','published',1,$4)`, recipeTemplateA, workspaceAID, "recipe_"+newID(), uid); err != nil {
+		t.Fatalf("insert workspace recipe template: %v", err)
+	}
+	if _, err := tx.Exec(t.Context(), `INSERT INTO review_recipe_versions(id,template_id,workspace_id,version,schema_version,definition,created_by,published_at) VALUES($1,$2,$3,1,1,'{"schema_version":1,"mode":"AUTO_ACCEPT","rounds":[]}'::jsonb,$4,NOW())`, recipeVersionA, recipeTemplateA, workspaceAID, uid); err != nil {
+		t.Fatalf("insert workspace recipe version: %v", err)
+	}
+	crossTemplate := newID()
+	if _, err := tx.Exec(t.Context(), `INSERT INTO campaign_templates(id,workspace_id,scope,kind,name,status,latest_version,created_by) VALUES($1,$2,'workspace','COLLECTION','B 的模板','published',1,$3)`, crossTemplate, workspaceBID, uid); err != nil {
+		t.Fatalf("insert workspace B template: %v", err)
+	}
+	expectMigrationConstraintError(t, tx, `INSERT INTO campaign_template_versions(id,template_id,workspace_id,version,review_recipe_version_id,definition,created_by) VALUES($1,$2,$3,1,$4,'{}'::jsonb,$5)`, newID(), crossTemplate, workspaceBID, recipeVersionA, uid)
 	if _, err := tx.Exec(t.Context(), `INSERT INTO production_people(id,workspace_id,production_id,display_name,roles,created_by) VALUES($1,$2,$3,$4,$5,$6)`, newID(), workspaceAID, productionAID, "外部候选人", `{"摄影师","导播"}`, uid); err != nil {
 		t.Fatalf("unlinked production person should be accepted: %v", err)
 	}

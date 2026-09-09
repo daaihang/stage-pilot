@@ -70,6 +70,9 @@ func TestCampaignTemplateCreateListDetailAndArchive(t *testing.T) {
 	if campaign["kind"] != campaignKindSubmission || createdBody["draft_revision"] == nil {
 		t.Fatalf("unexpected create response: %#v", createdBody)
 	}
+	if createdBody["draft_revision"].(map[string]any)["review_recipe_version_id"] != "review_recipe_multi_stage_scored_v1" {
+		t.Fatalf("system template recipe snapshot = %#v", createdBody["draft_revision"].(map[string]any)["review_recipe_version_id"])
+	}
 	changedID := "snapshot_changed_" + newID()
 	changedDefinition, _ := json.Marshal(map[string]any{"form": map[string]any{"schema_version": 1, "blocks": []any{}, "fields": []any{map[string]any{"id": changedID, "type": "text"}}, "logic_rules": []any{}, "end_screen": map[string]any{}}})
 	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_template_versions SET definition=$1 WHERE template_id=$2`, changedDefinition, templateID); err != nil {
