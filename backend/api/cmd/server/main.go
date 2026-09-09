@@ -255,6 +255,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("POST /v1/productions/{productionId}/programs", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createProductionProgram))))
 	mux.Handle("PATCH /v1/productions/{productionId}/programs/{programId}", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.updateProductionProgram))))
 	mux.Handle("POST /v1/productions/{productionId}/programs/{programId}/archive", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.archiveProductionProgram))))
+	mux.Handle("POST /v1/productions/{productionId}/programs/{programId}/restore", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.restoreProductionProgram))))
 	mux.Handle("GET /v1/productions/{productionId}/program-sheets", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listProgramSheets))))
 	mux.Handle("POST /v1/productions/{productionId}/program-sheets", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createProgramSheet))))
 	mux.Handle("POST /v1/productions/{productionId}/program-sheets/migrate", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.migrateProgramSheets))))

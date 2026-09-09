@@ -6,6 +6,7 @@ export const listProductionPrograms = (productionId) => request(`/v1/productions
 export const createProductionProgram = (productionId, payload) => request(`/v1/productions/${enc(productionId)}/programs`, { method: "POST", body: JSON.stringify(payload) });
 export const updateProductionProgram = (productionId, programId, payload) => request(`/v1/productions/${enc(productionId)}/programs/${enc(programId)}`, { method: "PATCH", body: JSON.stringify(payload) });
 export const archiveProductionProgram = (productionId, programId) => request(`/v1/productions/${enc(productionId)}/programs/${enc(programId)}/archive`, { method: "POST", body: JSON.stringify({}) });
+export const restoreProductionProgram = (productionId, programId) => request(`/v1/productions/${enc(productionId)}/programs/${enc(programId)}/restore`, { method: "POST", body: JSON.stringify({}) });
 
 export const listProgramSheets = (productionId) => request(`/v1/productions/${enc(productionId)}/program-sheets`);
 export const createProgramSheet = (productionId, payload) => request(`/v1/productions/${enc(productionId)}/program-sheets`, { method: "POST", body: JSON.stringify(payload) });
@@ -35,6 +36,7 @@ export function normalizeProgramSheetResponse(value, productionId) {
     updatedAt: sheet.updatedAt || sheet.updated_at,
     publishedAt: sheet.publishedAt || sheet.published_at || null,
     publishedBy: sheet.publishedBy || sheet.published_by || null,
+    publishedSnapshot: sheet.publishedSnapshot || sheet.published_snapshot || null,
     items: (sheet.items || []).map((item, index) => ({
       ...item,
       productionProgramId: item.productionProgramId || item.production_program_id || null,
@@ -44,6 +46,10 @@ export function normalizeProgramSheetResponse(value, productionId) {
       countsTowardDuration: item.countsTowardDuration ?? item.counts_toward_duration ?? true,
       audienceVisible: item.audienceVisible ?? item.audience_visible ?? true,
       requiresExecution: item.requiresExecution ?? item.requires_execution ?? false,
+      title: item.title ?? "",
+      durationSeconds: Number(item.durationSeconds ?? item.duration_seconds ?? 0),
+      programSnapshot: item.programSnapshot ?? item.program_snapshot ?? null,
+      segmentTypeSnapshot: item.segmentTypeSnapshot ?? item.segment_type_snapshot ?? null,
       order: Number(item.order ?? item.sort_order ?? index),
     })),
     assignments: (sheet.assignments || []).map((item) => ({

@@ -13,7 +13,7 @@ import { useWindowDetail, useWindowDetailRegistration } from "@/components/windo
 import { listProductionOccurrences } from "@/lib/production-api";
 import { createProgramSheet, listProductionPrograms, listProgramSheets, normalizeProductionProgramsResponse, normalizeProgramSheetResponse, updateProgramSheet, archiveProgramSheet as archiveProgramSheetApi, copyProgramSheet as copyProgramSheetApi, publishProgramSheet as publishProgramSheetApi, updateProgramSheetOccurrences } from "@/lib/program-sheet-api";
 import { listResource, listResourceTypes } from "@/lib/resource-api";
-import { makeProductionProgram, makeProgramSheet, makeSheetItem, makePublishedSnapshot, normalizeProgramSheetState, nowIso } from "@/lib/program-sheet-store";
+import { makeProgramSheet, makeSheetItem, makePublishedSnapshot, normalizeProgramSheetState, nowIso } from "@/lib/program-sheet-store";
 import { programSheetSegmentTypePanelPath, workspacePath } from "@/lib/navigation";
 import { assignedOccurrenceIds, formatDuration, getProgramItemCount, getTotalDurationSeconds, occurrenceTitle, programSheetStatusLabels } from "@/lib/program-sheet-utils";
 import { notify } from "@/components/ui/sonner";
@@ -79,20 +79,21 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     if (stateRef.current.sheets.length) setRefreshing(true);
     try {
       await migrateLegacyProgramSheets(production.id, { isAdmin: ["owner", "admin"].includes(workspace?.role) });
-      const [sheetResult, nextOccurrences, programResult, typesResult] = await Promise.all([
+      const [sheetResult, nextOccurrences, activityProgramResult, workspaceProgramResult, typesResult] = await Promise.all([
         listProgramSheets(production.id),
         listProductionOccurrences(production.id),
+        listProductionPrograms(production.id),
         listResource(workspace.id, "programs").catch(() => ({ items: [] })),
         listResourceTypes(workspace.id, "programs").catch(() => ({ items: [] })),
       ]);
       if (requestId !== requestSequence.current) return;
-      const cloudPrograms = normalizeProductionProgramsResponse(programResult, production.id);
+      const cloudPrograms = normalizeProductionProgramsResponse(activityProgramResult, production.id);
       const cloudSheets = normalizeProgramSheetResponse(sheetResult, production.id);
       const nextState = normalizeProgramSheetState({ version: 1, productionId: production.id, productionPrograms: cloudPrograms, sheets: cloudSheets }, production.id);
       stateRef.current = nextState;
       setState(nextState);
       setOccurrences(Array.isArray(nextOccurrences) ? nextOccurrences : []);
-      setWorkspacePrograms(Array.isArray(programResult?.items) ? programResult.items : Array.isArray(programResult) ? programResult : []);
+      setWorkspacePrograms(Array.isArray(workspaceProgramResult?.items) ? workspaceProgramResult.items : Array.isArray(workspaceProgramResult) ? workspaceProgramResult : []);
       setProgramTypes(Array.isArray(typesResult?.items) ? typesResult.items : Array.isArray(typesResult) ? typesResult : []);
       if (toast) notify.success("节目单数据已刷新");
     } catch (nextError) {
@@ -140,7 +141,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     stateRef.current = normalized;
     setState(normalized);
     const toastId = message ? notify.loading(message) : null;
-    Promise.all(normalized.sheets.map((sheet) => updateProgramSheet(sheet.id, {
+    return Promise.all(normalized.sheets.filter((sheet) => sheet.status !== "published" && sheet.status !== "archived").map((sheet) => updateProgramSheet(sheet.id, {
       name: sheet.name,
       change_note: sheet.changeNote,
       status: sheet.status,
@@ -165,22 +166,28 @@ export function ProgramSheetsPage({ route, workspace, production }) {
         const current = stateRef.current;
         const items = values.map((program) => makeSheetItem("program", { productionProgramId: program.id, programSnapshot: program, title: program.name, durationSeconds: program.durationSeconds, order: current.sheets.find((candidate) => candidate.id === selectedSheet.id)?.items.length || 0 }));
         commit({ ...current, sheets: current.sheets.map((candidate) => candidate.id === selectedSheet.id ? { ...candidate, items: [...candidate.items, ...items.map((item, index) => ({ ...item, order: candidate.items.length + index }))], updatedAt: nowIso() } : candidate) }, "正在添加本场节目");
-      }} onCopyWorkspacePrograms={(values) => {
-        const current = stateRef.current;
-        let nextPrograms = [...current.productionPrograms];
-        const added = values.map((program) => {
-          const existing = nextPrograms.find((item) => item.sourceProgramId === program.id);
-          const programTypeName = program.programTypeName || program.program_type_name || programTypes.find((type) => type.id === (program.programTypeId || program.program_type_id))?.name || "";
-          const productionProgram = existing || makeProductionProgram(production.id, { ...program, sourceKind: "workspace_copy", programTypeId: program.programTypeId || program.program_type_id, programTypeName });
-          if (!existing) nextPrograms.push(productionProgram);
-          return productionProgram;
-        });
-        commit({ ...current, productionPrograms: nextPrograms, sheets: current.sheets.map((candidate) => candidate.id === selectedSheet.id ? { ...candidate, items: [...candidate.items, ...added.map((program, index) => ({ ...makeSheetItem("program", { productionProgramId: program.id, programSnapshot: program, title: program.name, durationSeconds: program.durationSeconds }), order: candidate.items.length + index }))], updatedAt: nowIso() } : candidate) }, "正在复制并添加工作空间节目");
-      }} onCreateCustomProgram={(values = {}) => {
-        const current = stateRef.current;
-        const productionProgram = makeProductionProgram(production.id, { ...values, sourceKind: "manual" });
-        const item = makeSheetItem("program", { productionProgramId: productionProgram.id, programSnapshot: productionProgram, title: productionProgram.name, durationSeconds: productionProgram.durationSeconds });
-        commit({ ...current, productionPrograms: [...current.productionPrograms, productionProgram], sheets: current.sheets.map((candidate) => candidate.id === selectedSheet.id ? { ...candidate, items: [...candidate.items, { ...item, order: candidate.items.length }], updatedAt: nowIso() } : candidate) }, "正在创建并添加活动节目");
+      }} onCopyWorkspacePrograms={async (values) => {
+        try {
+          const created = [];
+          for (const program of values) {
+            const result = await createProductionProgram(production.id, { name: program.name, program_type_id: program.programTypeId || program.program_type_id || null, program_type_name: program.programTypeName || program.program_type_name || "", performers: program.performers || [], duration_seconds: Number(program.durationSeconds ?? program.default_duration_seconds ?? 0), description: program.description || program.notes || "", technical_notes: program.technicalNotes || program.technical_notes || "", source_kind: "workspace_copy", workspace_program_id: program.id });
+            created.push({ ...program, id: result?.id || result?.program?.id, durationSeconds: Number(program.durationSeconds ?? program.default_duration_seconds ?? 0) });
+          }
+          const current = stateRef.current;
+          const target = current.sheets.find((candidate) => candidate.id === selectedSheet.id);
+          const items = created.filter((program) => program.id).map((program, index) => makeSheetItem("program", { productionProgramId: program.id, programSnapshot: program, title: program.name, durationSeconds: program.durationSeconds, order: (target?.items.length || 0) + index }));
+          if (target && items.length) await commit({ ...current, sheets: current.sheets.map((candidate) => candidate.id === target.id ? { ...candidate, items: [...candidate.items, ...items] } : candidate) }, "正在添加到节目单");
+          await load();
+          notify.success("已将工作空间节目复制到活动");
+        } catch (error) { notify.error("复制工作空间节目失败", { description: error?.message || String(error) }); }
+      }} onCreateCustomProgram={async (values = {}) => {
+        try {
+          const result = await createProductionProgram(production.id, { name: values.name, program_type_id: values.programTypeId || null, program_type_name: values.programTypeName || "", performers: values.performers || [], duration_seconds: Number(values.durationSeconds || 0), description: values.description || "", technical_notes: values.technicalNotes || "", source_kind: "manual" });
+          const current = stateRef.current;
+          const target = current.sheets.find((candidate) => candidate.id === selectedSheet.id);
+          if (target && result?.id) await commit({ ...current, sheets: current.sheets.map((candidate) => candidate.id === target.id ? { ...candidate, items: [...candidate.items, makeSheetItem("program", { productionProgramId: result.id, title: values.name, durationSeconds: Number(values.durationSeconds || 0), order: candidate.items.length })] } : candidate) }, "正在添加活动节目");
+          notify.success("活动节目已创建");
+        } catch (error) { notify.error("创建活动节目失败", { description: error?.message || String(error) }); }
       }} onAddItem={(kind, values = {}) => changeSheet(selectedSheet.id, (current) => ({ ...current, items: [...current.items, makeSheetItem(kind, { title: kind === "section" ? "新章节" : kind === "interval" ? "休息" : kind === "note" ? "现场备注" : "新环节", durationSeconds: kind === "interval" ? 15 * 60 : 0, ...values, order: current.items.length })], updatedAt: nowIso() }), { toast: `正在添加${kind === "segment" ? "环节" : kind === "section" ? "章节" : kind === "interval" ? "休息" : "备注"}` })} onDuplicate={(sheet) => setDialog({ type: "copy", sheet })} onAssign={(sheet) => setDialog({ type: "assign", sheet })} onPublish={(sheet) => setDialog({ type: "publish", sheet })} onArchive={(sheet) => setDialog({ type: "archive", sheet })} /> : null,
   [canPublish, canShare, canWrite, changeSheet, commit, occurrences, production, programTypes, selectedSheet, segmentTypeError, segmentTypeLoading, segmentTypes, state.productionPrograms, workspace, workspacePrograms]);
   useWindowDetailRegistration({ key: `program-sheets:${production.id}`, storageKey: `detailPane:program-sheets:${production.id}:v1`, triggerRef, detailLabel: "节目单详情", getDetail, onClose: () => setSelectedId(null) });

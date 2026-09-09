@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { API_BASE } from "@/lib/auth";
 
-export function PublicProgramSheetPage({ token }) {
+export function PublicProgramSheetPage({ token, onRequireAuth }) {
   const [state, setState] = useState({ loading: true, error: null, data: null });
   useEffect(() => { let active = true; fetch(`${API_BASE}/v1/public/program-sheet-shares/${encodeURIComponent(token)}`, { headers: { "Referrer-Policy": "no-referrer" } }).then(async (response) => { const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body?.error?.message || "分享链接不可用"); return body; }).then((data) => active && setState({ loading: false, error: null, data })).catch((error) => active && setState({ loading: false, error, data: null })); return () => { active = false; }; }, [token]);
   if (state.loading) return <main className="flex min-h-screen items-center justify-center p-6 text-sm text-muted-foreground">正在加载节目单…</main>;
-  if (state.error) return <main className="flex min-h-screen items-center justify-center p-6"><div className="max-w-md space-y-2 text-center"><h1 className="text-lg font-semibold">分享链接不可用</h1><p className="text-sm text-muted-foreground">{state.error.message}</p></div></main>;
+  if (state.error) return <main className="flex min-h-screen items-center justify-center p-6"><div className="max-w-md space-y-3 text-center"><h1 className="text-lg font-semibold">分享链接不可用</h1><p className="text-sm text-muted-foreground">{state.error.message}</p>{/需要登录|登录/.test(state.error.message || "") && onRequireAuth ? <button type="button" className="inline-flex h-9 items-center justify-center border px-4 text-sm font-medium hover:bg-muted" onClick={() => onRequireAuth()}>登录后继续访问</button> : null}</div></main>;
   const data = state.data || {}; const items = Array.isArray(data.items) ? data.items : [];
   return <main className="min-h-screen bg-background p-6 text-foreground"><div className="mx-auto max-w-3xl space-y-6"><header><p className="text-xs text-muted-foreground">节目单 · v{data.revision || "—"}</p><h1 className="mt-1 text-2xl font-semibold">{data.name || "节目单"}</h1></header><div className="divide-y border-y">{items.map((item, index) => <div key={item.id || index} className="flex items-center justify-between gap-4 py-4"><div className="min-w-0"><p className="truncate text-sm font-medium">{item.title_override || item.title || "未命名条目"}</p><p className="mt-1 text-xs text-muted-foreground">{item.kind || "节目"}</p></div><span className="shrink-0 text-sm tabular-nums text-muted-foreground">{item.duration_seconds_override ?? item.duration_seconds ?? 0}s</span></div>)}{!items.length ? <p className="py-10 text-center text-sm text-muted-foreground">此节目单没有可公开显示的条目。</p> : null}</div></div></main>;
 }

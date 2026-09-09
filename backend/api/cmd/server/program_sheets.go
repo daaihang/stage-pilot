@@ -19,36 +19,40 @@ import (
 )
 
 type programSheet struct {
-	ID           string                   `json:"id"`
-	WorkspaceID  string                   `json:"workspace_id"`
-	ProductionID string                   `json:"production_id"`
-	Name         string                   `json:"name"`
-	Revision     int                      `json:"revision"`
-	Status       string                   `json:"status"`
-	ChangeNote   string                   `json:"change_note"`
-	CreatedBy    string                   `json:"created_by"`
-	CreatedAt    time.Time                `json:"created_at"`
-	UpdatedAt    time.Time                `json:"updated_at"`
-	PublishedAt  *time.Time               `json:"published_at,omitempty"`
-	PublishedBy  *string                  `json:"published_by,omitempty"`
-	ArchivedAt   *time.Time               `json:"archived_at,omitempty"`
-	Items        []programSheetItem       `json:"items"`
-	Assignments  []programSheetAssignment `json:"assignments"`
+	ID                string                   `json:"id"`
+	WorkspaceID       string                   `json:"workspace_id"`
+	ProductionID      string                   `json:"production_id"`
+	Name              string                   `json:"name"`
+	Revision          int                      `json:"revision"`
+	Status            string                   `json:"status"`
+	ChangeNote        string                   `json:"change_note"`
+	CreatedBy         string                   `json:"created_by"`
+	CreatedAt         time.Time                `json:"created_at"`
+	UpdatedAt         time.Time                `json:"updated_at"`
+	PublishedAt       *time.Time               `json:"published_at,omitempty"`
+	PublishedBy       *string                  `json:"published_by,omitempty"`
+	ArchivedAt        *time.Time               `json:"archived_at,omitempty"`
+	Items             []programSheetItem       `json:"items"`
+	Assignments       []programSheetAssignment `json:"assignments"`
+	PublishedSnapshot json.RawMessage          `json:"published_snapshot,omitempty"`
 }
 type programSheetItem struct {
-	ID                      string    `json:"id"`
-	Kind                    string    `json:"kind"`
-	SortOrder               int       `json:"sort_order"`
-	ProductionProgramID     *string   `json:"production_program_id,omitempty"`
-	SegmentTypeID           *string   `json:"segment_type_id,omitempty"`
-	TitleOverride           *string   `json:"title_override,omitempty"`
-	DurationSecondsOverride *int      `json:"duration_seconds_override,omitempty"`
-	CountsTowardDuration    bool      `json:"counts_toward_duration"`
-	AudienceVisible         bool      `json:"audience_visible"`
-	RequiresExecution       bool      `json:"requires_execution"`
-	Notes                   string    `json:"notes"`
-	CreatedAt               time.Time `json:"created_at"`
-	UpdatedAt               time.Time `json:"updated_at"`
+	ID                      string         `json:"id"`
+	Kind                    string         `json:"kind"`
+	SortOrder               int            `json:"sort_order"`
+	ProductionProgramID     *string        `json:"production_program_id,omitempty"`
+	SegmentTypeID           *string        `json:"segment_type_id,omitempty"`
+	TitleOverride           *string        `json:"title_override,omitempty"`
+	DurationSecondsOverride *int           `json:"duration_seconds_override,omitempty"`
+	CountsTowardDuration    bool           `json:"counts_toward_duration"`
+	AudienceVisible         bool           `json:"audience_visible"`
+	RequiresExecution       bool           `json:"requires_execution"`
+	Notes                   string         `json:"notes"`
+	CreatedAt               time.Time      `json:"created_at"`
+	UpdatedAt               time.Time      `json:"updated_at"`
+	Title                   string         `json:"title,omitempty"`
+	DurationSeconds         int            `json:"duration_seconds,omitempty"`
+	ProgramSnapshot         map[string]any `json:"program_snapshot,omitempty"`
 }
 type programSheetAssignment struct {
 	OccurrenceID string    `json:"occurrence_id"`
@@ -124,6 +128,18 @@ func (app *application) loadProgramSheet(ctx context.Context, id string) (progra
 			return s, err
 		}
 		s.Items = append(s.Items, i)
+		if i.ProductionProgramID != nil {
+			var name, typeName, description, technicalNotes string
+			var performers []byte
+			var duration int
+			if err := app.db.QueryRow(ctx, `SELECT name,program_type_name,performers,duration_seconds,description,technical_notes FROM production_programs WHERE id=$1`, *i.ProductionProgramID).Scan(&name, &typeName, &performers, &duration, &description, &technicalNotes); err == nil {
+				var performerValues any
+				_ = json.Unmarshal(performers, &performerValues)
+				s.Items[len(s.Items)-1].Title = name
+				s.Items[len(s.Items)-1].DurationSeconds = duration
+				s.Items[len(s.Items)-1].ProgramSnapshot = map[string]any{"id": *i.ProductionProgramID, "name": name, "program_type_name": typeName, "performers": performerValues, "duration_seconds": duration, "description": description, "technical_notes": technicalNotes}
+			}
+		}
 	}
 	s.Assignments = []programSheetAssignment{}
 	arows, err := app.db.Query(ctx, `SELECT occurrence_id,role,assigned_by,assigned_at FROM program_sheet_assignments WHERE sheet_id=$1 ORDER BY assigned_at,occurrence_id`, id)
@@ -138,13 +154,14 @@ func (app *application) loadProgramSheet(ctx context.Context, id string) (progra
 		}
 		s.Assignments = append(s.Assignments, a)
 	}
+	_ = app.db.QueryRow(ctx, `SELECT snapshot FROM program_sheet_releases WHERE sheet_id=$1 ORDER BY published_at DESC LIMIT 1`, id).Scan(&s.PublishedSnapshot)
 	return s, rows.Err()
 }
 
 func (app *application) listProductionPrograms(w http.ResponseWriter, r *http.Request) {
 	productionID := r.PathValue("productionId")
 	access := currentProductionAccess(r)
-	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,production_id,workspace_program_id,source_entry_id,source_kind,name,program_type_id,program_type_name,performers,duration_seconds,description,technical_notes,status,created_by,created_at,updated_at,archived_at FROM production_programs WHERE workspace_id=$1 AND production_id=$2 AND archived_at IS NULL ORDER BY updated_at DESC,id`, access.WorkspaceID, productionID)
+	rows, err := app.db.Query(r.Context(), `SELECT id,workspace_id,production_id,workspace_program_id,source_entry_id,source_kind,name,program_type_id,program_type_name,performers,duration_seconds,description,technical_notes,status,created_by,created_at,updated_at,archived_at FROM production_programs WHERE workspace_id=$1 AND production_id=$2 ORDER BY updated_at DESC,id`, access.WorkspaceID, productionID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -152,7 +169,8 @@ func (app *application) listProductionPrograms(w http.ResponseWriter, r *http.Re
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var id, wid, pid, wp, sourceEntry, sourceKind, name, typeID, typeName, status, createdBy string
+		var id, wid, pid, sourceKind, name, typeName, status, createdBy string
+		var wp, sourceEntry, typeID *string
 		var performers []byte
 		var duration int
 		var desc, tech string
@@ -164,16 +182,9 @@ func (app *application) listProductionPrograms(w http.ResponseWriter, r *http.Re
 		}
 		var pv any
 		_ = json.Unmarshal(performers, &pv)
-		items = append(items, map[string]any{"id": id, "workspace_id": wid, "production_id": pid, "workspace_program_id": nullIfEmpty(wp), "source_entry_id": nullIfEmpty(sourceEntry), "source_kind": sourceKind, "name": name, "program_type_id": nullIfEmpty(typeID), "program_type_name": typeName, "performers": pv, "duration_seconds": duration, "description": desc, "technical_notes": tech, "status": status, "created_by": createdBy, "created_at": created, "updated_at": updated, "archived_at": archived})
+		items = append(items, map[string]any{"id": id, "workspace_id": wid, "production_id": pid, "workspace_program_id": wp, "source_entry_id": sourceEntry, "source_kind": sourceKind, "name": name, "program_type_id": typeID, "program_type_name": typeName, "performers": pv, "duration_seconds": duration, "description": desc, "technical_notes": tech, "status": status, "created_by": createdBy, "created_at": created, "updated_at": updated, "archived_at": archived})
 	}
 	writeJSON(w, 200, map[string]any{"items": items})
-}
-
-func nullIfEmpty(v string) any {
-	if v == "" {
-		return nil
-	}
-	return v
 }
 
 func (app *application) createProductionProgram(w http.ResponseWriter, r *http.Request) {
@@ -273,6 +284,20 @@ func (app *application) updateProductionProgram(w http.ResponseWriter, r *http.R
 func (app *application) archiveProductionProgram(w http.ResponseWriter, r *http.Request) {
 	access := currentProductionAccess(r)
 	tag, err := app.db.Exec(r.Context(), `UPDATE production_programs SET status='archived',archived_at=NOW(),updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND production_id=$3 AND archived_at IS NULL`, r.PathValue("programId"), access.WorkspaceID, r.PathValue("productionId"))
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		errorJSON(w, 404, "not_found", "节目不存在")
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+func (app *application) restoreProductionProgram(w http.ResponseWriter, r *http.Request) {
+	access := currentProductionAccess(r)
+	tag, err := app.db.Exec(r.Context(), `UPDATE production_programs SET status='draft',archived_at=NULL,updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND production_id=$3 AND archived_at IS NOT NULL`, r.PathValue("programId"), access.WorkspaceID, r.PathValue("productionId"))
 	if err != nil {
 		serverError(w, err)
 		return
@@ -779,7 +804,14 @@ func shareURL(r *http.Request, path string) string {
 	return strings.TrimRight(origin, "/") + path
 }
 func (app *application) listShareLinks(w http.ResponseWriter, r *http.Request) {
-	if _, err := app.releaseAccess(r, productionShare); err != nil {
+	releaseID := r.PathValue("releaseId")
+	var productionID string
+	if err := app.db.QueryRow(r.Context(), `SELECT production_id FROM program_sheet_releases WHERE id=$1`, releaseID).Scan(&productionID); err != nil {
+		errorJSON(w, 404, "not_found", "分享链接不存在")
+		return
+	}
+	access, err := app.productionAccessFor(r.Context(), claims(r).Subject, productionID)
+	if err != nil || !access.Permissions[productionShare] {
 		errorJSON(w, 404, "not_found", "发布版本不存在或无权管理分享")
 		return
 	}
@@ -801,7 +833,14 @@ func (app *application) listShareLinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": out})
 }
 func (app *application) createShareLink(w http.ResponseWriter, r *http.Request) {
-	if _, err := app.releaseAccess(r, productionShare); err != nil {
+	releaseID := r.PathValue("releaseId")
+	var productionID string
+	if err := app.db.QueryRow(r.Context(), `SELECT production_id FROM program_sheet_releases WHERE id=$1`, releaseID).Scan(&productionID); err != nil {
+		errorJSON(w, 404, "not_found", "分享链接不存在")
+		return
+	}
+	access, err := app.productionAccessFor(r.Context(), claims(r).Subject, productionID)
+	if err != nil || !access.Permissions[productionShare] {
 		errorJSON(w, 404, "not_found", "发布版本不存在或无权管理分享")
 		return
 	}
@@ -841,11 +880,13 @@ func (app *application) revokeShareLink(w http.ResponseWriter, r *http.Request) 
 		errorJSON(w, 404, "not_found", "分享链接不存在")
 		return
 	}
-	if _, err := app.productionAccessFor(r.Context(), claims(r).Subject, func() string {
-		var p string
-		_ = app.db.QueryRow(r.Context(), `SELECT production_id FROM program_sheet_releases WHERE id=$1`, releaseID).Scan(&p)
-		return p
-	}()); err != nil {
+	var productionID string
+	if err := app.db.QueryRow(r.Context(), `SELECT production_id FROM program_sheet_releases WHERE id=$1`, releaseID).Scan(&productionID); err != nil {
+		errorJSON(w, 404, "not_found", "分享链接不存在")
+		return
+	}
+	access, err := app.productionAccessFor(r.Context(), claims(r).Subject, productionID)
+	if err != nil || !access.Permissions[productionShare] {
 		errorJSON(w, 404, "not_found", "无权管理分享")
 		return
 	}

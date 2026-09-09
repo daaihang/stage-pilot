@@ -487,7 +487,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const titlebarBreadcrumbItems = buildBreadcrumbItems({ route, workspace, production });
 
   let content;
-  if (route?.mode === "public-program-sheet") content = <PublicProgramSheetPage token={route.token} />;
+  if (route?.mode === "public-program-sheet") content = <PublicProgramSheetPage token={route.token} onRequireAuth={onRequireAuth} />;
   else if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
   else if (route?.mode === "invite" && authStatus !== "authenticated") content = <InvitationAcceptPage code={route.code} authenticated={false} onRequireAuth={onRequireAuth} />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
