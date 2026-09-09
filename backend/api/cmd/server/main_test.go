@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ func TestCORSPreflightAllowsDesktopPreview(t *testing.T) {
 	request := httptest.NewRequest(http.MethodOptions, "/auth/register", nil)
 	request.Header.Set("Origin", "http://localhost:1420")
 	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
-	request.Header.Set("Access-Control-Request-Headers", "content-type")
+	request.Header.Set("Access-Control-Request-Headers", "content-type, idempotency-key, if-match")
 	recorder := httptest.NewRecorder()
 
 	handler.ServeHTTP(recorder, request)
@@ -48,6 +49,12 @@ func TestCORSPreflightAllowsDesktopPreview(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Headers"); got == "" {
 		t.Fatal("missing allow headers header")
+	} else {
+		for _, want := range []string{"Authorization", "Content-Type", "Idempotency-Key", "If-Match"} {
+			if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
+				t.Fatalf("allow headers = %q, missing %q", got, want)
+			}
+		}
 	}
 }
 

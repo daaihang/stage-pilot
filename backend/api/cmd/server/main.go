@@ -788,7 +788,7 @@ func requestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 func allowedOrigins() map[string]struct{} {
-	configured := envOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:1420,http://127.0.0.1:1420,http://[::1]:1420,tauri://localhost,https://tauri.localhost")
+	configured := envOrDefault("CORS_ALLOWED_ORIGINS", "http://localhost:1420,http://127.0.0.1:1420,http://[::1]:1420,http://tauri.localhost,tauri://localhost,https://tauri.localhost")
 	origins := make(map[string]struct{})
 	for _, origin := range strings.Split(configured, ",") {
 		if origin = strings.TrimSpace(origin); origin != "" {
@@ -811,7 +811,7 @@ func corsMiddleware(origins map[string]struct{}) func(http.Handler) http.Handler
 			}
 			if r.Method == http.MethodOptions {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, If-Match")
 				w.Header().Set("Access-Control-Max-Age", "600")
 				w.WriteHeader(http.StatusNoContent)
 				return
