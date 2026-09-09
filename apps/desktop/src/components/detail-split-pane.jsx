@@ -10,16 +10,6 @@ const MIN_DETAIL_WIDTH = 280;
 const DEFAULT_DETAIL_WIDTH = 420;
 const MIN_MAIN_WIDTH = 320;
 const INLINE_MIN_WIDTH = 960;
-const FOCUSABLE_SELECTOR = [
-  "a[href]",
-  "area[href]",
-  "button:not([disabled])",
-  "input:not([disabled]):not([type=hidden])",
-  "select:not([disabled])",
-  "textarea:not([disabled])",
-  "[contenteditable=\"true\"]",
-  "[tabindex]:not([tabindex=\"-1\"])",
-].join(",");
 const contentWidthClassName = { standard: "max-w-6xl", wide: "max-w-7xl", full: "max-w-none" };
 
 function maxDetailWidth(containerWidth) {
@@ -28,20 +18,6 @@ function maxDetailWidth(containerWidth) {
 
 function clampDetailWidth(width, containerWidth) {
   return Math.min(maxDetailWidth(containerWidth), Math.max(MIN_DETAIL_WIDTH, Math.round(width)));
-}
-
-function isVisible(element) {
-  if (!element || element.hidden) return false;
-  const styles = window.getComputedStyle(element);
-  return styles.display !== "none" && styles.visibility !== "hidden";
-}
-
-// Base UI renders Select, Popover, Menu, Combobox and Dialog surfaces into a
-// body-level portal. In exclusive detail mode those surfaces are still owned
-// by the detail editor; treating them as outside focus would immediately pull
-// focus back to the inset surface and make the popup appear unclickable.
-function isDetailOwnedPortalTarget(element) {
-  return Boolean(element?.closest?.("[data-base-ui-portal]"));
 }
 
 function transitionDurationMs(element) {
@@ -359,47 +335,6 @@ export function DetailSplitPane({
     return () => window.removeEventListener("keydown", handleEscape);
   }, [closeDetail, exitExclusive, isExclusivePresentation, isOverlay, open]);
 
-  useEffect(() => {
-    if (!open || !isExclusivePresentation) return undefined;
-    const getFocusable = () => {
-      const titlebarControls = [...document.querySelectorAll("[data-detail-titlebar-control]")];
-      const surfaceControls = surfaceRef.current ? [...surfaceRef.current.querySelectorAll(FOCUSABLE_SELECTOR)] : [];
-      return [...titlebarControls, ...surfaceControls].filter((element, index, items) => items.indexOf(element) === index && !element.disabled && isVisible(element));
-    };
-    const handleKeyDown = (event) => {
-      if (event.key !== "Tab") return;
-      // A body-level Base UI popup temporarily owns focus. Let its own focus
-      // manager handle Tab/arrow navigation instead of cycling back to the
-      // detail surface while a Select, Menu, Popover or Dialog is open.
-      if (isDetailOwnedPortalTarget(event.target) || isDetailOwnedPortalTarget(document.activeElement)) return;
-      const focusable = getFocusable();
-      if (!focusable.length) {
-        event.preventDefault();
-        surfaceRef.current?.focus?.();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && (document.activeElement === first || !focusable.includes(document.activeElement))) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (document.activeElement === last || !focusable.includes(document.activeElement))) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    const handleFocusIn = (event) => {
-      if (surfaceRef.current?.contains(event.target) || event.target.closest?.("[data-detail-titlebar-control]") || isDetailOwnedPortalTarget(event.target)) return;
-      surfaceRef.current?.focus?.();
-    };
-    document.addEventListener("keydown", handleKeyDown, true);
-    document.addEventListener("focusin", handleFocusIn, true);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown, true);
-      document.removeEventListener("focusin", handleFocusIn, true);
-    };
-  }, [isExclusivePresentation, open]);
-
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     cancelSurfaceTransition();
@@ -491,7 +426,6 @@ export function DetailSplitPane({
       data-detail-phase={surfacePhase}
       data-detail-closing={surfacePhase === "closing" ? "true" : undefined}
       role={effectiveSurfaceMode === "exclusive" ? "dialog" : "region"}
-      aria-modal={effectiveSurfaceMode === "exclusive" ? "true" : undefined}
       aria-hidden={!isSurfaceOpen || undefined}
       aria-label={detailLabel}
       tabIndex={-1}

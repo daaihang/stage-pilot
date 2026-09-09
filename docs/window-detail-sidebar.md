@@ -127,7 +127,7 @@ useEffect(() => registerDetail({
 
 独占详情不是普通的满幅侧栏：它在中间/右侧工作区内以带外边距的大窗口呈现。窗口表面沿用项目当前 shadcn/ui 的弹层语义（`bg-popover`、`text-popover-foreground`、`rounded-none`、`ring-1 ring-foreground/10`），只保留阴影作为独占层级的额外提示；主工作区留在下方但不可交互，使用轻量遮罩区分层级，不使用背景模糊。应用标题栏和左侧 `AppSidebar` 始终位于这个窗口之外。
 
-独占表面是真正的 modal dialog：使用 `role="dialog"`、`aria-modal="true"`，进入时聚焦详情容器，Tab/Shift+Tab 只在详情控件和标题栏的详情独占/关闭按钮之间循环，背景主区与左侧导航设置为 `inert`。点击独占阴影或按 Escape 只退出独占并回到嵌入式详情，不关闭详情；标题栏关闭才会关闭详情。退出独占恢复进入独占前的焦点，关闭详情恢复页面触发按钮。
+独占详情是“工作区独占”表面，而不是全应用模态：使用 `role="dialog"`，不设置 `aria-modal`。进入时聚焦详情容器，但不安装全局焦点陷阱；主工作区通过 `inert`、`aria-hidden` 和 `pointer-events-none` 跳过交互，标题栏和左侧导航仍可点击、聚焦和切换路由。点击独占阴影或按 Escape 只退出独占并回到嵌入式详情，不关闭详情；标题栏关闭才会关闭详情。退出独占恢复进入独占前的焦点，关闭详情恢复页面触发按钮。左侧导航切换路由后，旧页面卸载会清理注册并关闭旧详情，不覆盖新的目标路由。
 
 打开/关闭动画采用统一的 `cubic-bezier(0.22, 1, 0.36, 1)`：工作区尺寸使用 300ms 的 `t-resize`，独占窗口使用 250ms 打开、150ms 关闭，并从 `scale(0.96)` 过渡到 `scale(1)`；`prefers-reduced-motion` 下全部关闭过渡。
 

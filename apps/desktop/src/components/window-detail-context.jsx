@@ -5,7 +5,7 @@ import { normalizeDetailOpenMode } from "@/lib/detail-open-mode";
 
 const WindowDetailContext = createContext(null);
 
-export function WindowDetailProvider({ children, contentWidth = "standard", detailOpenMode = "inline", onModalActiveChange }) {
+export function WindowDetailProvider({ children, contentWidth = "standard", detailOpenMode = "inline" }) {
   const normalizedDetailOpenMode = normalizeDetailOpenMode(detailOpenMode);
   const [registration, setRegistration] = useState(null);
   const registrationRef = useRef(null);
@@ -13,7 +13,6 @@ export function WindowDetailProvider({ children, contentWidth = "standard", deta
   const detailOpenRef = useRef(false);
   const [detailPresentation, setDetailPresentation] = useState("overlay");
   const [detailWidth, setDetailWidth] = useState(420);
-  const [detailModalActive, setDetailModalActive] = useState(false);
   const [detailRevision, setDetailRevision] = useState(0);
 
   const registerDetail = useCallback((request) => {
@@ -26,10 +25,8 @@ export function WindowDetailProvider({ children, contentWidth = "standard", deta
       detailOpenRef.current = false;
       setDetailOpenState(false);
       setDetailPresentation("overlay");
-      setDetailModalActive(false);
-      onModalActiveChange?.(false);
     };
-  }, [onModalActiveChange]);
+  }, []);
 
   const setDetailOpen = useCallback((nextOpen, { announce = true } = {}) => {
     const next = typeof nextOpen === "function" ? nextOpen(detailOpenRef.current) : Boolean(nextOpen);
@@ -39,18 +36,13 @@ export function WindowDetailProvider({ children, contentWidth = "standard", deta
     if (!next) {
       registrationRef.current?.onClose?.();
       setDetailPresentation("overlay");
-      setDetailModalActive(false);
-      onModalActiveChange?.(false);
     }
     if (announce) notify.info(next ? "已打开布局详情" : "已关闭布局详情");
-  }, [onModalActiveChange]);
+  }, []);
 
   const handlePresentationChange = useCallback((nextPresentation) => {
     setDetailPresentation(nextPresentation);
-    const modalActive = nextPresentation === "exclusive";
-    setDetailModalActive(modalActive);
-    onModalActiveChange?.(modalActive);
-  }, [onModalActiveChange]);
+  }, []);
 
   const refreshDetail = useCallback((key) => {
     if (key && registrationRef.current?.key !== key) return;
@@ -64,7 +56,6 @@ export function WindowDetailProvider({ children, contentWidth = "standard", deta
     detailOpen,
     detailPresentation,
     detailWidth,
-    detailModalActive,
     detailRevision,
     registerDetail,
     refreshDetail,
@@ -72,7 +63,7 @@ export function WindowDetailProvider({ children, contentWidth = "standard", deta
     handlePresentationChange,
     setDetailPresentation,
     setDetailWidth,
-  }), [contentWidth, detailModalActive, detailOpen, detailOpenMode, detailPresentation, detailRevision, detailWidth, handlePresentationChange, normalizedDetailOpenMode, refreshDetail, registerDetail, setDetailOpen, registration]);
+  }), [contentWidth, detailOpen, detailOpenMode, detailPresentation, detailRevision, detailWidth, handlePresentationChange, normalizedDetailOpenMode, refreshDetail, registerDetail, setDetailOpen, registration]);
 
   return <WindowDetailContext.Provider value={value}>{children}</WindowDetailContext.Provider>;
 }
