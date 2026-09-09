@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 27 时跳过；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 29 时跳过；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -36,13 +36,14 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
-	if version != "27" {
-		t.Skipf("campaign migration schema is %s, want 27", version)
+	if version != "29" {
+		t.Skipf("campaign migration schema is %s, want 29", version)
 	}
 	for _, table := range []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
 		"campaign_templates", "campaign_template_versions", "form_versions", "campaigns", "campaign_revisions",
 		"entries", "entry_revisions", "decisions", "entry_materializations", "form_responses",
+		"api_idempotency_keys",
 	} {
 		var registered *string
 		if err := app.db.QueryRow(t.Context(), `SELECT to_regclass($1)`, "public."+table).Scan(&registered); err != nil {
@@ -187,4 +188,23 @@ func TestCampaignResultMigrationV1Constraints(t *testing.T) {
 		t.Fatalf("anonymization removed audit chain: decisions=%d materializations=%d registrations=%d", decisions, materializations, registrations)
 	}
 
+}
+
+func TestCampaignSystemTemplateSeedAndIdempotencyTable(t *testing.T) {
+	app := newIntegrationApp(t)
+	requireCampaignSchemaV1(t, app)
+	var templateCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT count(*) FROM campaign_templates WHERE scope='system' AND id LIKE 'system_%'`).Scan(&templateCount); err != nil {
+		t.Fatal(err)
+	}
+	if templateCount != 4 {
+		t.Fatalf("system template count = %d, want 4", templateCount)
+	}
+	var versionCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT count(*) FROM campaign_template_versions WHERE id LIKE 'system_%_v1'`).Scan(&versionCount); err != nil {
+		t.Fatal(err)
+	}
+	if versionCount != 4 {
+		t.Fatalf("system template version count = %d, want 4", versionCount)
+	}
 }

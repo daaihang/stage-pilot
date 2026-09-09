@@ -35,5 +35,5 @@ DROP INDEX IF EXISTS campaign_templates_scope_kind_idx;
 DROP TABLE IF EXISTS campaign_templates;
 
 INSERT INTO app_metadata (key, value)
-VALUES ('schema', '{"version": 25}'::jsonb)
+VALUES ('schema', '{"version": 26}'::jsonb)
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();

@@ -292,7 +292,6 @@ GET    /v1/productions/{productionId}/campaigns
 POST   /v1/productions/{productionId}/campaigns
 GET    /v1/campaigns/{campaignId}
 PATCH  /v1/campaigns/{campaignId}
-POST   /v1/campaigns/{campaignId}/archive
 
 GET    /v1/campaign-templates?scope=system&kind=…
 GET    /v1/workspaces/{workspaceId}/campaign-templates?kind=…
