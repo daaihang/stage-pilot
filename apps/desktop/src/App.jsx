@@ -22,6 +22,7 @@ import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
 import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
 import { InvitationAcceptPage } from "@/components/production-invite-page";
+import { PublicProgramSheetPage } from "@/components/public-program-sheet-page";
 import { ProgramLibraryPage } from "@/components/program-library-page";
 import { ProgramSheetsPage } from "@/components/program-sheets-page";
 import { ProductionProgramsPage } from "@/components/production-programs-page";
@@ -486,7 +487,8 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const titlebarBreadcrumbItems = buildBreadcrumbItems({ route, workspace, production });
 
   let content;
-  if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
+  if (route?.mode === "public-program-sheet") content = <PublicProgramSheetPage token={route.token} />;
+  else if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
   else if (route?.mode === "invite" && authStatus !== "authenticated") content = <InvitationAcceptPage code={route.code} authenticated={false} onRequireAuth={onRequireAuth} />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
   else if (isAccountRoute && route.page === "developer" && import.meta.env.DEV) content = <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} contentWidth={contentWidth} initialAction={new URLSearchParams(location.search).get("action")} />;
@@ -560,6 +562,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   // 但它从未加入 productionsByWorkspace，因此不会出现在正式活动预览中。
   const sidebarProduction = production;
   const navigationLoading = authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading" && !workspace && !isWorkRoute && !isAccountRoute && !isInviteRoute);
+  if (route?.mode === "public-program-sheet") return <div className="min-h-svh bg-background">{content}</div>;
   return <PageChromeProvider><WindowDetailProvider contentWidth={contentWidth} detailOpenMode={detailOpenMode}><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
     <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("relative z-20 flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div><TitlebarBreadcrumbs items={titlebarBreadcrumbItems} title={pageTitle} showTitle={showTitlebarTitle} /><div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region /><PageDetailTitlebarAction />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
     <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onJoinInvitation={() => setJoinInvitationOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>

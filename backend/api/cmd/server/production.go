@@ -86,10 +86,12 @@ const (
 	productionArchive       = "production.archive"
 	productionMembersView   = "production.members.view"
 	productionMembersManage = "production.members.manage"
+	productionPublish       = "production.publish"
+	productionShare         = "production.share"
 )
 
 var productionRolePermissions = map[string][]string{
-	"producer":      {productionView, productionEdit, productionArchive, productionMembersView, productionMembersManage},
+	"producer":      {productionView, productionEdit, productionArchive, productionMembersView, productionMembersManage, productionPublish, productionShare},
 	"editor":        {productionView, productionEdit, productionMembersView},
 	"stage_manager": {productionView, productionMembersView},
 	"contributor":   {productionView},

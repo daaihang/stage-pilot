@@ -145,6 +145,10 @@ export function resolveAccountReturnTarget(search, fallback) {
 }
 
 export function matchStagePilotRoute(pathname, search = "") {
+  const publicLongMatch = pathname.match(/^\/share\/program-sheet\/([^/]+)\/?$/);
+  if (publicLongMatch) return { mode: "public-program-sheet", token: publicLongMatch[1], meta: { title: "节目单" } };
+  const publicShortMatch = pathname.match(/^\/s\/ps\/([^/]+)\/?$/);
+  if (publicShortMatch) return { mode: "public-program-sheet", token: publicShortMatch[1], meta: { title: "节目单" } };
   const inviteMatch = pathname.match(/^\/join\/([^/]+)\/?$/);
   if (inviteMatch) return { mode: "invite", code: inviteMatch[1], meta: { title: "接受邀请", description: "加入受邀请的工作空间或活动" } };
   if (pathname === "/work") {

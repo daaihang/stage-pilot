@@ -11,17 +11,27 @@ import { ProductionPageHeader } from "@/components/production-page-shell";
 import { TimeText } from "@/components/time-text";
 import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { listProductionOccurrences } from "@/lib/production-api";
+import { createProgramSheet, listProductionPrograms, listProgramSheets, normalizeProductionProgramsResponse, normalizeProgramSheetResponse, updateProgramSheet, archiveProgramSheet as archiveProgramSheetApi, copyProgramSheet as copyProgramSheetApi, publishProgramSheet as publishProgramSheetApi, updateProgramSheetOccurrences } from "@/lib/program-sheet-api";
 import { listResource, listResourceTypes } from "@/lib/resource-api";
-import { makeProductionProgram, makeProgramSheet, makeSheetItem, loadProgramSheetState, makePublishedSnapshot, normalizeProgramSheetState, nowIso, saveProgramSheetState } from "@/lib/program-sheet-store";
+import { makeProductionProgram, makeProgramSheet, makeSheetItem, makePublishedSnapshot, normalizeProgramSheetState, nowIso } from "@/lib/program-sheet-store";
 import { programSheetSegmentTypePanelPath, workspacePath } from "@/lib/navigation";
 import { assignedOccurrenceIds, formatDuration, getProgramItemCount, getTotalDurationSeconds, occurrenceTitle, programSheetStatusLabels } from "@/lib/program-sheet-utils";
 import { notify } from "@/components/ui/sonner";
 import { ArchiveProgramSheetDialog, AssignOccurrencesDialog, CopyProgramSheetDialog, NewProgramSheetDialog, PublishProgramSheetDialog } from "@/components/program-sheet-dialogs";
 import { ProgramSheetDetail } from "@/components/program-sheet-detail";
 import { loadSegmentTypes } from "@/lib/program-sheet-segment-type-store";
+import { migrateLegacyProgramSheets } from "@/lib/program-sheet-migration";
 
 function canWriteProgramSheets(workspace, production) {
   return ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
+}
+
+function canPublishProgramSheets(workspace, production) {
+  return ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.publish");
+}
+
+function canShareProgramSheets(workspace, production) {
+  return ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.share");
 }
 
 function sheetStatusClass(status) {
@@ -38,6 +48,8 @@ function SheetListRow({ sheet, occurrences, production, selected, canWrite, onSe
 
 export function ProgramSheetsPage({ route, workspace, production }) {
   const canWrite = canWriteProgramSheets(workspace, production);
+  const canPublish = canPublishProgramSheets(workspace, production);
+  const canShare = canShareProgramSheets(workspace, production);
   const [state, setState] = useState(() => normalizeProgramSheetState(null, production.id));
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -66,15 +78,19 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     setLoading((current) => current && !stateRef.current.sheets.length);
     if (stateRef.current.sheets.length) setRefreshing(true);
     try {
-      const [localState, nextOccurrences, programResult, typesResult] = await Promise.all([
-        loadProgramSheetState(production.id),
+      await migrateLegacyProgramSheets(production.id, { isAdmin: ["owner", "admin"].includes(workspace?.role) });
+      const [sheetResult, nextOccurrences, programResult, typesResult] = await Promise.all([
+        listProgramSheets(production.id),
         listProductionOccurrences(production.id),
         listResource(workspace.id, "programs").catch(() => ({ items: [] })),
         listResourceTypes(workspace.id, "programs").catch(() => ({ items: [] })),
       ]);
       if (requestId !== requestSequence.current) return;
-      stateRef.current = localState;
-      setState(localState);
+      const cloudPrograms = normalizeProductionProgramsResponse(programResult, production.id);
+      const cloudSheets = normalizeProgramSheetResponse(sheetResult, production.id);
+      const nextState = normalizeProgramSheetState({ version: 1, productionId: production.id, productionPrograms: cloudPrograms, sheets: cloudSheets }, production.id);
+      stateRef.current = nextState;
+      setState(nextState);
       setOccurrences(Array.isArray(nextOccurrences) ? nextOccurrences : []);
       setWorkspacePrograms(Array.isArray(programResult?.items) ? programResult.items : Array.isArray(programResult) ? programResult : []);
       setProgramTypes(Array.isArray(typesResult?.items) ? typesResult.items : Array.isArray(typesResult) ? typesResult : []);
@@ -124,11 +140,17 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     stateRef.current = normalized;
     setState(normalized);
     const toastId = message ? notify.loading(message) : null;
-    saveProgramSheetState(production.id, normalized, { workspaceId: workspace.id }).then(() => {
-      if (toastId) notify.success("已保存到本机", { id: toastId });
+    Promise.all(normalized.sheets.map((sheet) => updateProgramSheet(sheet.id, {
+      name: sheet.name,
+      change_note: sheet.changeNote,
+      status: sheet.status,
+      items: sheet.items.map((item, index) => ({ ...item, id: item.id, sort_order: index })),
+      assignments: sheet.assignments.map((assignment) => ({ occurrence_id: assignment.occurrenceId, role: assignment.role })),
+    }))).then(() => {
+      if (toastId) notify.success("节目单已保存到云端", { id: toastId });
     }).catch((nextError) => {
-      if (toastId) notify.error("本地保存失败", { id: toastId, description: nextError?.message || String(nextError) });
-      else notify.error("本地保存失败", { description: nextError?.message || String(nextError) });
+      if (toastId) notify.error("节目单云端保存失败", { id: toastId, description: nextError?.message || String(nextError) });
+      else notify.error("节目单云端保存失败", { description: nextError?.message || String(nextError) });
     });
   }, [production.id, workspace.id]);
   const changeSheet = useCallback((sheetId, updater, options = {}) => {
@@ -139,7 +161,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     commit({ ...current, sheets: current.sheets.map((item) => item.id === sheetId ? nextSheet : item) }, options.toast);
   }, [commit]);
 
-  const getDetail = useCallback(() => selectedSheet ? <ProgramSheetDetail production={production} sheet={selectedSheet} productionPrograms={state.productionPrograms} workspacePrograms={workspacePrograms} programTypes={programTypes} segmentTypes={segmentTypes} segmentTypeLoading={segmentTypeLoading} segmentTypeError={segmentTypeError} occurrences={occurrences} canWrite={canWrite} onSheetChange={(updater, options) => changeSheet(selectedSheet.id, updater, options)} onAddExistingPrograms={(values) => {
+  const getDetail = useCallback(() => selectedSheet ? <ProgramSheetDetail production={production} sheet={selectedSheet} productionPrograms={state.productionPrograms} workspacePrograms={workspacePrograms} programTypes={programTypes} segmentTypes={segmentTypes} segmentTypeLoading={segmentTypeLoading} segmentTypeError={segmentTypeError} occurrences={occurrences} canWrite={canWrite} canPublish={canPublish} canShare={canShare} onSheetChange={(updater, options) => changeSheet(selectedSheet.id, updater, options)} onAddExistingPrograms={(values) => {
         const current = stateRef.current;
         const items = values.map((program) => makeSheetItem("program", { productionProgramId: program.id, programSnapshot: program, title: program.name, durationSeconds: program.durationSeconds, order: current.sheets.find((candidate) => candidate.id === selectedSheet.id)?.items.length || 0 }));
         commit({ ...current, sheets: current.sheets.map((candidate) => candidate.id === selectedSheet.id ? { ...candidate, items: [...candidate.items, ...items.map((item, index) => ({ ...item, order: candidate.items.length + index }))], updatedAt: nowIso() } : candidate) }, "正在添加本场节目");
@@ -160,7 +182,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
         const item = makeSheetItem("program", { productionProgramId: productionProgram.id, programSnapshot: productionProgram, title: productionProgram.name, durationSeconds: productionProgram.durationSeconds });
         commit({ ...current, productionPrograms: [...current.productionPrograms, productionProgram], sheets: current.sheets.map((candidate) => candidate.id === selectedSheet.id ? { ...candidate, items: [...candidate.items, { ...item, order: candidate.items.length }], updatedAt: nowIso() } : candidate) }, "正在创建并添加活动节目");
       }} onAddItem={(kind, values = {}) => changeSheet(selectedSheet.id, (current) => ({ ...current, items: [...current.items, makeSheetItem(kind, { title: kind === "section" ? "新章节" : kind === "interval" ? "休息" : kind === "note" ? "现场备注" : "新环节", durationSeconds: kind === "interval" ? 15 * 60 : 0, ...values, order: current.items.length })], updatedAt: nowIso() }), { toast: `正在添加${kind === "segment" ? "环节" : kind === "section" ? "章节" : kind === "interval" ? "休息" : "备注"}` })} onDuplicate={(sheet) => setDialog({ type: "copy", sheet })} onAssign={(sheet) => setDialog({ type: "assign", sheet })} onPublish={(sheet) => setDialog({ type: "publish", sheet })} onArchive={(sheet) => setDialog({ type: "archive", sheet })} /> : null,
-  [canWrite, changeSheet, commit, occurrences, production, programTypes, selectedSheet, segmentTypeError, segmentTypeLoading, segmentTypes, state.productionPrograms, workspace, workspacePrograms]);
+  [canPublish, canShare, canWrite, changeSheet, commit, occurrences, production, programTypes, selectedSheet, segmentTypeError, segmentTypeLoading, segmentTypes, state.productionPrograms, workspace, workspacePrograms]);
   useWindowDetailRegistration({ key: `program-sheets:${production.id}`, storageKey: `detailPane:program-sheets:${production.id}:v1`, triggerRef, detailLabel: "节目单详情", getDetail, onClose: () => setSelectedId(null) });
   useEffect(() => { setDetailOpen(Boolean(selectedSheet), { announce: false }); }, [selectedSheet, setDetailOpen]);
 
@@ -177,7 +199,10 @@ export function ProgramSheetsPage({ route, workspace, production }) {
 
   const createSheet = ({ name, changeNote, revision }) => {
     const sheet = makeProgramSheet(production.id, { name, changeNote, revision });
-    commit({ ...stateRef.current, sheets: [...stateRef.current.sheets, sheet] }, "正在创建节目单");
+    createProgramSheet(production.id, { name: sheet.name, change_note: sheet.changeNote, revision }).then((created) => {
+      const next = normalizeProgramSheetResponse([created], production.id)[0] || sheet;
+      commit({ ...stateRef.current, sheets: [...stateRef.current.sheets, next] }, "正在创建节目单");
+    }).catch((error) => notify.error("创建节目单失败", { description: error?.message || String(error) }));
     setDialog(null);
     setSelectedId(sheet.id);
   };
@@ -185,16 +210,19 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     const revision = nextRevision;
     const sourceItems = source.publishedSnapshot?.items || source.items;
     const copy = makeProgramSheet(production.id, { name, revision, changeNote: `复制自 ${source.name}`, items: sourceItems.map((item) => makeSheetItem(item.kind, { ...item, id: undefined, title: item.title, programSnapshot: item.programSnapshot, segmentTypeSnapshot: item.segmentTypeSnapshot })) });
-    commit({ ...stateRef.current, sheets: [...stateRef.current.sheets, copy] }, "正在复制节目单");
+    copyProgramSheetApi(source.id, name).then((created) => {
+      const next = normalizeProgramSheetResponse([created], production.id)[0] || copy;
+      commit({ ...stateRef.current, sheets: [...stateRef.current.sheets, next] }, "正在复制节目单");
+    }).catch((error) => notify.error("复制节目单失败", { description: error?.message || String(error) }));
     setDialog(null);
     setSelectedId(copy.id);
   };
   const archiveSheet = (sheet) => {
-    commit({ ...stateRef.current, sheets: stateRef.current.sheets.map((item) => item.id === sheet.id ? { ...item, status: "archived", updatedAt: nowIso() } : item) }, "正在归档节目单");
+    archiveProgramSheetApi(sheet.id).then(() => commit({ ...stateRef.current, sheets: stateRef.current.sheets.map((item) => item.id === sheet.id ? { ...item, status: "archived", updatedAt: nowIso() } : item) }, "正在归档节目单")).catch((error) => notify.error("归档节目单失败", { description: error?.message || String(error) }));
     setDialog(null);
   };
   const applyAssignments = (sheet, occurrenceIds) => {
-    changeSheet(sheet.id, { assignments: occurrenceIds.map((occurrenceId) => ({ occurrenceId, role: "official", assignedAt: nowIso() })), updatedAt: nowIso() }, { toast: "正在保存场次关联" });
+    updateProgramSheetOccurrences(sheet.id, occurrenceIds).then(() => changeSheet(sheet.id, { assignments: occurrenceIds.map((occurrenceId) => ({ occurrenceId, role: "official", assignedAt: nowIso() })), updatedAt: nowIso() }, { toast: "正在保存场次关联" })).catch((error) => notify.error("保存场次关联失败", { description: error?.message || String(error) }));
     setDialog(null);
   };
   const replacementsFor = (sheet) => {
@@ -202,6 +230,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     return occurrences.filter((occurrence) => targetIds.has(occurrence.id) && stateRef.current.sheets.some((candidate) => candidate.id !== sheet.id && candidate.status === "published" && assignedOccurrenceIds(candidate).has(occurrence.id)));
   };
   const publishSheet = (sheet) => {
+    if (!canPublish) return notify.error("当前账号没有发布节目单的权限");
     const targetIds = assignedOccurrenceIds(sheet);
     if (!targetIds.size) return notify.error("请先关联至少一个场次");
     const publishedAt = nowIso();
@@ -210,10 +239,15 @@ export function ProgramSheetsPage({ route, workspace, production }) {
       if (candidate.status !== "published") return candidate;
       return { ...candidate, assignments: candidate.assignments.filter((assignment) => !targetIds.has(assignment.occurrenceId)), updatedAt: publishedAt };
     });
-    commit({ ...stateRef.current, sheets: nextSheets }, "正在发布节目单");
+    publishProgramSheetApi(sheet.id).then(() => {
+      // 已发布版本不可再 PATCH；发布成功后只刷新云端状态，避免把整份状态再次写回。
+      setDialog(null);
+      notify.success("节目单已发布");
+      load();
+    }).catch((error) => notify.error("发布节目单失败", { description: error?.message || String(error) }));
     setDialog(null);
   };
 
   const assignedFilterOptions = occurrences.filter((occurrence) => state.sheets.some((sheet) => assignedOccurrenceIds(sheet).has(occurrence.id)));
-  return <div className="space-y-5" ref={triggerRef}><ProductionPageHeader workspace={workspace} production={production} title="节目单" subtitle={route.meta.description} actions={<div className="flex flex-wrap items-center gap-2"><Button variant="outline" onClick={() => load({ toast: true })} disabled={refreshing}><RefreshCw className={refreshing ? "animate-spin" : ""} />刷新</Button>{canWrite && <Button variant="outline" onClick={() => navigate(programSheetSegmentTypePanelPath(workspace.id, production.id))}>环节类型</Button>}{canWrite && <Button onClick={() => setDialog({ type: "new" })}><Plus />新建节目单</Button>}</div>} /><ResourcePage title="节目单版本" description="本地前端预览 · 尚未同步到服务器" count={filteredSheets.length} search={{ value: query, onChange: setQuery, placeholder: "搜索节目单名称或变更说明" }} filters={<><Select value={status} onValueChange={setStatus}><SelectTrigger className="h-8 w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="draft">草稿</SelectItem><SelectItem value="review">待审核</SelectItem><SelectItem value="published">正式</SelectItem><SelectItem value="archived">已归档</SelectItem></SelectContent></Select><Select value={occurrenceFilter} onValueChange={setOccurrenceFilter}><SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部场次</SelectItem>{occurrences.map((occurrence) => <SelectItem key={occurrence.id} value={occurrence.id}>{occurrenceTitle(occurrence)}</SelectItem>)}</SelectContent></Select></>} showViewToggle={false} summary={<span className="inline-flex items-center gap-1"><Clock3 className="size-3.5" />活动时区：{production.timezone}</span>} loading={loading} empty={error ? { icon: ListMusic, title: "无法加载节目单", description: error.message, action: <Button variant="outline" onClick={() => load({ toast: true })}>重试</Button> } : !filteredSheets.length ? { icon: ListMusic, title: query || status !== "all" ? "没有匹配的节目单" : "还没有节目单版本", description: canWrite ? "创建一个草稿，开始编排节目顺序。" : "当前活动还没有可查看的节目单。", action: canWrite && !query && status === "all" ? <Button onClick={() => setDialog({ type: "new" })}><Plus />新建节目单</Button> : null } : null}><Card variant="flush"><CardContent className="p-0">{filteredSheets.map((sheet) => <SheetListRow key={sheet.id} sheet={sheet} occurrences={occurrences} production={production} selected={sheet.id === selectedId} canWrite={canWrite} onSelect={(id) => setSelectedId(id)} onCopy={(item) => setDialog({ type: "copy", sheet: item })} onArchive={(item) => setDialog({ type: "archive", sheet: item })} />)}</CardContent></Card></ResourcePage><NewProgramSheetDialog open={dialog?.type === "new"} onOpenChange={(open) => !open && setDialog(null)} nextRevision={nextRevision} onCreate={createSheet} />{dialog?.type === "copy" && <CopyProgramSheetDialog open sheet={dialog.sheet} nextRevision={nextRevision} onOpenChange={(open) => !open && setDialog(null)} onConfirm={(name) => duplicateSheet(dialog.sheet, name)} />}{dialog?.type === "archive" && <ArchiveProgramSheetDialog open sheet={dialog.sheet} onOpenChange={(open) => !open && setDialog(null)} onConfirm={() => archiveSheet(dialog.sheet)} />}{dialog?.type === "assign" && <AssignOccurrencesDialog open sheet={dialog.sheet} timezone={production.timezone} occurrences={occurrences} onOpenChange={(open) => !open && setDialog(null)} onApply={(ids) => applyAssignments(dialog.sheet, ids)} />}{dialog?.type === "publish" && <PublishProgramSheetDialog open sheet={dialog.sheet} occurrences={occurrences} replacements={replacementsFor(dialog.sheet)} onOpenChange={(open) => !open && setDialog(null)} onConfirm={() => publishSheet(dialog.sheet)} />}</div>;
+  return <div className="space-y-5" ref={triggerRef}><ProductionPageHeader workspace={workspace} production={production} title="节目单" subtitle={route.meta.description} actions={<div className="flex flex-wrap items-center gap-2"><Button variant="outline" onClick={() => load({ toast: true })} disabled={refreshing}><RefreshCw className={refreshing ? "animate-spin" : ""} />刷新</Button>{canWrite && <Button variant="outline" onClick={() => navigate(programSheetSegmentTypePanelPath(workspace.id, production.id))}>环节类型</Button>}{canWrite && <Button onClick={() => setDialog({ type: "new" })}><Plus />新建节目单</Button>}</div>} /><ResourcePage title="节目单版本" description="云端节目单版本 · 发布后可受控分享" count={filteredSheets.length} search={{ value: query, onChange: setQuery, placeholder: "搜索节目单名称或变更说明" }} filters={<><Select value={status} onValueChange={setStatus}><SelectTrigger className="h-8 w-28"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem><SelectItem value="draft">草稿</SelectItem><SelectItem value="review">待审核</SelectItem><SelectItem value="published">正式</SelectItem><SelectItem value="archived">已归档</SelectItem></SelectContent></Select><Select value={occurrenceFilter} onValueChange={setOccurrenceFilter}><SelectTrigger className="h-8 w-36"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部场次</SelectItem>{occurrences.map((occurrence) => <SelectItem key={occurrence.id} value={occurrence.id}>{occurrenceTitle(occurrence)}</SelectItem>)}</SelectContent></Select></>} showViewToggle={false} summary={<span className="inline-flex items-center gap-1"><Clock3 className="size-3.5" />活动时区：{production.timezone}</span>} loading={loading} empty={error ? { icon: ListMusic, title: "无法加载节目单", description: error.message, action: <Button variant="outline" onClick={() => load({ toast: true })}>重试</Button> } : !filteredSheets.length ? { icon: ListMusic, title: query || status !== "all" ? "没有匹配的节目单" : "还没有节目单版本", description: canWrite ? "创建一个草稿，开始编排节目顺序。" : "当前活动还没有可查看的节目单。", action: canWrite && !query && status === "all" ? <Button onClick={() => setDialog({ type: "new" })}><Plus />新建节目单</Button> : null } : null}><Card variant="flush"><CardContent className="p-0">{filteredSheets.map((sheet) => <SheetListRow key={sheet.id} sheet={sheet} occurrences={occurrences} production={production} selected={sheet.id === selectedId} canWrite={canWrite} onSelect={(id) => setSelectedId(id)} onCopy={(item) => setDialog({ type: "copy", sheet: item })} onArchive={(item) => setDialog({ type: "archive", sheet: item })} />)}</CardContent></Card></ResourcePage><NewProgramSheetDialog open={dialog?.type === "new"} onOpenChange={(open) => !open && setDialog(null)} nextRevision={nextRevision} onCreate={createSheet} />{dialog?.type === "copy" && <CopyProgramSheetDialog open sheet={dialog.sheet} nextRevision={nextRevision} onOpenChange={(open) => !open && setDialog(null)} onConfirm={(name) => duplicateSheet(dialog.sheet, name)} />}{dialog?.type === "archive" && <ArchiveProgramSheetDialog open sheet={dialog.sheet} onOpenChange={(open) => !open && setDialog(null)} onConfirm={() => archiveSheet(dialog.sheet)} />}{dialog?.type === "assign" && <AssignOccurrencesDialog open sheet={dialog.sheet} timezone={production.timezone} occurrences={occurrences} onOpenChange={(open) => !open && setDialog(null)} onApply={(ids) => applyAssignments(dialog.sheet, ids)} />}{dialog?.type === "publish" && <PublishProgramSheetDialog open sheet={dialog.sheet} occurrences={occurrences} replacements={replacementsFor(dialog.sheet)} onOpenChange={(open) => !open && setDialog(null)} onConfirm={() => publishSheet(dialog.sheet)} />}</div>;
 }
