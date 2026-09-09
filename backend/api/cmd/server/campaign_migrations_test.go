@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30 时跳过；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30-32 时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -36,8 +36,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
-	if version != "30" {
-		t.Skipf("campaign migration schema is %s, want 30", version)
+	if version != "30" && version != "31" && version != "32" {
+		t.Skipf("campaign migration schema is %s, want 30, 31 or 32", version)
 	}
 	for _, table := range []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
@@ -51,8 +51,64 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 			t.Fatalf("inspect table %s: %v", table, err)
 		}
 		if registered == nil {
-			t.Fatalf("table %s missing at schema 30", table)
+			t.Fatalf("table %s missing at campaign schema", table)
 		}
+	}
+}
+
+func TestCampaignFormBlocksV2TemplateInvariant(t *testing.T) {
+	app := newIntegrationApp(t)
+	var version string
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || version != "32" {
+		t.Skipf("campaign form blocks v2 requires schema 32 (got %s)", version)
+	}
+	rows, err := app.db.Query(t.Context(), `
+		SELECT ctv.definition->'form'->'fields', ctv.definition->'form'->'blocks', ctv.review_recipe_version_id
+		FROM campaign_template_versions ctv
+		WHERE ctv.version=2 AND ctv.template_id LIKE 'system_%'
+	`)
+	if err != nil {
+		t.Fatalf("query v2 templates: %v", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var fieldsJSON, blocksJSON []byte
+		var recipeID *string
+		if err := rows.Scan(&fieldsJSON, &blocksJSON, &recipeID); err != nil {
+			t.Fatalf("scan v2 template: %v", err)
+		}
+		var fields, blocks []map[string]any
+		if err := json.Unmarshal(fieldsJSON, &fields); err != nil {
+			t.Fatalf("decode fields: %v", err)
+		}
+		if err := json.Unmarshal(blocksJSON, &blocks); err != nil {
+			t.Fatalf("decode blocks: %v", err)
+		}
+		if recipeID == nil || *recipeID == "" {
+			t.Fatal("v2 template is missing review recipe source")
+		}
+		seen := map[string]int{}
+		for _, block := range blocks {
+			if block["type"] == "field" {
+				if key, ok := block["field_key"].(string); ok {
+					seen[key]++
+				}
+			}
+		}
+		for _, field := range fields {
+			id, _ := field["id"].(string)
+			if id == "" || seen[id] != 1 {
+				t.Fatalf("field %q has %d field blocks", id, seen[id])
+			}
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate v2 templates: %v", err)
+	}
+	if count != 4 {
+		t.Fatalf("v2 template count=%d, want 4", count)
 	}
 }
 

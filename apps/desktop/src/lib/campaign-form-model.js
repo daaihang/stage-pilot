@@ -16,11 +16,23 @@ export function normalizeFormVersion(value = {}) {
   const fields = Array.isArray(source.fields) ? source.fields : [];
   const blocks = Array.isArray(source.blocks) ? source.blocks : [];
   const logicRules = Array.isArray(source.logicRules || source.logic_rules) ? (source.logicRules || source.logic_rules) : [];
+  const normalizedFields = fields.map((field, index) => ({ id: field.id || field.key || `field_${index + 1}`, type: field.type || "text", label: field.label || "", required: Boolean(field.required), ...field }));
+  const normalizedBlocks = blocks.map((block, index) => ({ id: block.id || `block_${index + 1}`, type: block.type || "text", ...block }));
+  const blockFieldKeys = new Set(normalizedBlocks.filter((block) => block.type === "field" && typeof block.field_key === "string").map((block) => block.field_key));
+  // Older system templates only contained section blocks while fields lived in
+  // the parallel fields array. Keep their order, then append stable field
+  // blocks for any field that is not represented yet. This makes blocks the
+  // single renderer order without rewriting historical snapshots.
+  normalizedFields.forEach((field) => {
+    if (!blockFieldKeys.has(field.id)) {
+      normalizedBlocks.push({ id: `field_${field.id}`, type: "field", field_key: field.id });
+    }
+  });
   return {
     schemaVersion: Number(source.schemaVersion ?? source.schema_version ?? 1) || 1,
-    blocks: blocks.map((block, index) => ({ id: block.id || makeId(`block${index}`), type: block.type || "text", ...block })),
-    fields: fields.map((field, index) => ({ id: field.id || field.key || makeId(`field${index}`), type: field.type || "text", label: field.label || "", required: Boolean(field.required), ...field })),
-    logicRules: logicRules.map((rule, index) => ({ id: rule.id || makeId(`rule${index}`), ...rule })),
+    blocks: normalizedBlocks,
+    fields: normalizedFields,
+    logicRules: logicRules.map((rule, index) => ({ id: rule.id || `rule_${index + 1}`, ...rule })),
     endScreen: source.endScreen || source.end_screen || {},
   };
 }
@@ -31,13 +43,13 @@ function withArrays(form) {
 
 export function addContentBlock(form, type = "text", properties = {}) {
   const next = withArrays(form);
-  const block = { id: makeId("block"), type, ...properties };
+  const block = { ...properties, id: properties.id || makeId("block"), type: properties.type || type };
   return { ...next, blocks: [...next.blocks, block] };
 }
 
 export function addField(form, properties = {}, blockProperties = {}) {
   const next = withArrays(form);
-  const field = { id: makeId("field"), type: "text", label: "新字段", required: false, ...properties };
+  const field = { ...properties, id: properties.id || makeId("field"), type: properties.type || "text", label: properties.label || "新字段", required: Boolean(properties.required) };
   const block = { id: makeId("block"), type: "field", field_key: field.id, ...blockProperties };
   return { ...next, fields: [...next.fields, field], blocks: [...next.blocks, block] };
 }
@@ -54,17 +66,38 @@ export function updateBlock(form, blockId, patch) {
 
 export function removeField(form, fieldId) {
   const next = withArrays(form);
+  const referencesField = (value) => {
+    if (Array.isArray(value)) return value.some(referencesField);
+    if (!value || typeof value !== "object") return false;
+    return Object.entries(value).some(([key, child]) => {
+      if (["field_id", "field_key", "target_field_id", "target_field_key", "source_field_id", "depends_on"].includes(key) && child === fieldId) return true;
+      return referencesField(child);
+    });
+  };
   return {
     ...next,
     fields: next.fields.filter((field) => field.id !== fieldId),
     blocks: next.blocks.filter((block) => block.field_key !== fieldId),
-    logicRules: next.logicRules.filter((rule) => JSON.stringify(rule).indexOf(fieldId) === -1),
+    logicRules: next.logicRules.filter((rule) => !referencesField(rule)),
   };
 }
 
 export function removeBlock(form, blockId) {
   const next = withArrays(form);
-  return { ...next, blocks: next.blocks.filter((block) => block.id !== blockId) };
+  const block = next.blocks.find((item) => item.id === blockId);
+  if (block?.type === "field" && block.field_key) return removeField(next, block.field_key);
+  return { ...next, blocks: next.blocks.filter((item) => item.id !== blockId) };
+}
+
+export function duplicateBlock(form, blockId) {
+  const next = withArrays(form);
+  const block = next.blocks.find((item) => item.id === blockId);
+  if (!block || block.type === "field") return next;
+  const copy = { ...block, id: makeId("block"), title: `${block.title || "内容块"}（副本）` };
+  const index = next.blocks.findIndex((item) => item.id === blockId);
+  const blocks = [...next.blocks];
+  blocks.splice(index + 1, 0, copy);
+  return { ...next, blocks };
 }
 
 export function duplicateField(form, fieldId) {
@@ -91,7 +124,15 @@ export function moveBlock(form, from, to) {
 }
 
 export function moveField(form, from, to) {
-  const next = withArrays(form); return { ...next, fields: moveArrayItem(next.fields, from, to) };
+  const next = withArrays(form);
+  const field = next.fields[from];
+  if (!field) return next;
+  const blockIndex = next.blocks.findIndex((block) => block.type === "field" && block.field_key === field.id);
+  const targetField = next.fields[to];
+  const targetBlockIndex = targetField ? next.blocks.findIndex((block) => block.type === "field" && block.field_key === targetField.id) : -1;
+  const fields = moveArrayItem(next.fields, from, to);
+  const blocks = blockIndex >= 0 && targetBlockIndex >= 0 ? moveArrayItem(next.blocks, blockIndex, targetBlockIndex) : next.blocks;
+  return { ...next, fields, blocks };
 }
 
 export function referencedFieldIds(form) {
@@ -168,11 +209,20 @@ export function clientValidateForm(form) {
     if (["select", "radio", "checkbox", "multiselect"].includes(field.type) && (!Array.isArray(field.options) || field.options.length === 0)) issues.push({ severity: "error", code: "field_options_required", path: `/fields/${index}/options`, message: "选择字段必须配置选项" });
   });
   const blockIds = new Set();
+  const fieldBlockCounts = new Map();
   next.blocks.forEach((block, index) => {
     if (!block.id || blockIds.has(block.id)) issues.push({ severity: "error", code: "invalid_form_block", path: `/blocks/${index}/id`, message: "内容块标识必须唯一" });
     blockIds.add(block.id);
     if (!BLOCK_TYPES.has(block.type)) issues.push({ severity: "error", code: "invalid_form_block", path: `/blocks/${index}/type`, message: "内容块类型无效" });
-    if (block.type === "field" && !ids.has(block.field_key)) issues.push({ severity: "error", code: "unknown_form_field_reference", path: `/blocks/${index}/field_key`, message: "内容块引用了不存在的字段" });
+    if (block.type === "field") {
+      if (!ids.has(block.field_key)) issues.push({ severity: "error", code: "unknown_form_field_reference", path: `/blocks/${index}/field_key`, message: "内容块引用了不存在的字段" });
+      fieldBlockCounts.set(block.field_key, (fieldBlockCounts.get(block.field_key) || 0) + 1);
+    }
+  });
+  next.fields.forEach((field, index) => {
+    const count = fieldBlockCounts.get(field.id) || 0;
+    if (count === 0) issues.push({ severity: "error", code: "missing_field_block", path: `/fields/${index}/id`, message: "每个字段必须对应一个字段内容块" });
+    if (count > 1) issues.push({ severity: "error", code: "duplicate_field_block", path: `/fields/${index}/id`, message: "每个字段只能对应一个字段内容块" });
   });
   referencedFieldIds(next).forEach((id) => { if (!ids.has(id)) issues.push({ severity: "error", code: "unknown_logic_field", path: "/logicRules", message: "条件逻辑引用了不存在的字段" }); });
   if (next.fields.length === 0) issues.push({ severity: "warning", code: "no_fields", path: "/fields", message: "表单尚未添加字段" });

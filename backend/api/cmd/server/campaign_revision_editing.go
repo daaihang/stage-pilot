@@ -281,6 +281,17 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 		errorJSON(w, http.StatusNotFound, "campaign_revision_not_found", "表单版本不存在或无权访问")
 		return
 	}
+	// Validation is read-only by default, but an explicitly supplied ETag is
+	// honored so an editor can detect a concurrent save before presenting
+	// publish errors.
+	if provided := strings.TrimSpace(r.Header.Get("If-Match")); provided != "" && provided != revision.ETag {
+		errorJSONWithFields(w, http.StatusPreconditionFailed, "revision_conflict", "表单版本已被其他人修改，请重新加载最新版本", map[string]any{
+			"current_etag":     revision.ETag,
+			"current_revision": map[string]any{"id": revision.ID, "revision_no": revision.RevisionNo, "status": revision.Status, "form_version_id": revision.FormVersionID},
+		})
+		w.Header().Set("ETag", revision.ETag)
+		return
+	}
 	issues := make([]revisionValidationIssue, 0, 8)
 	if revision.FormVersion == nil {
 		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "form_version_missing", Path: "/form", Message: "表单定义不存在"})

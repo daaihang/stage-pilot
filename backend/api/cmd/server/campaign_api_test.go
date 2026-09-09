@@ -75,7 +75,7 @@ func TestCampaignTemplateCreateListDetailAndArchive(t *testing.T) {
 	}
 	changedID := "snapshot_changed_" + newID()
 	changedDefinition, _ := json.Marshal(map[string]any{"form": map[string]any{"schema_version": 1, "blocks": []any{}, "fields": []any{map[string]any{"id": changedID, "type": "text"}}, "logic_rules": []any{}, "end_screen": map[string]any{}}})
-	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_template_versions SET definition=$1 WHERE template_id=$2`, changedDefinition, templateID); err != nil {
+	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_template_versions SET definition=$1 WHERE template_id=$2 AND version=1`, changedDefinition, templateID); err != nil {
 		t.Fatal(err)
 	}
 	createdDetail := authedRequest(t, app, token, http.MethodGet, "/v1/campaigns/"+campaignID, nil)

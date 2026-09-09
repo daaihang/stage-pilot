@@ -2,6 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addField, clientValidateForm, emptyFormVersion, evaluateLogic, normalizeFormVersion, removeField } from "./campaign-form-model.js";
 
+test("normalizes legacy orphan fields into stable field blocks", () => {
+  const normalized = normalizeFormVersion({
+    blocks: [{ id: "section", type: "section", title: "资料" }],
+    fields: [{ id: "title", type: "text", label: "标题" }, { id: "email", type: "email", label: "邮箱" }],
+  });
+  assert.deepEqual(normalized.blocks.map((block) => block.field_key).filter(Boolean), ["title", "email"]);
+  assert.equal(normalized.blocks.filter((block) => block.id === "field_title").length, 1);
+  assert.equal(normalized.blocks.filter((block) => block.id === "field_email").length, 1);
+  assert.equal(clientValidateForm(normalized).filter((issue) => issue.severity === "error").length, 0);
+});
+
 test("normalizes a form and keeps field block references stable", () => {
   const form = addField(emptyFormVersion(), { id: "name", label: "姓名" });
   assert.equal(form.fields[0].id, "name");

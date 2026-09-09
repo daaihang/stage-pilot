@@ -199,6 +199,11 @@ Revision 编辑 API 使用完整 `FormVersion` 快照。读取、保存、校验
 
 `blocks` 是线性文档，可包含 `welcome`、`text`、`section`、`field`、`consent`、`upload`、`divider` 和 `end`。`fields` 中的 `semantic_key` 只对系统域字段使用；普通自定义字段不得直接映射到任意数据库表。V1 条件逻辑只允许回答条件驱动的显示、隐藏、必填和结束页跳转。
 
+FormVersion V1.1 冻结以下结构不变量：`fields[].id` 必须且只能对应一个
+`blocks[]` 项 `{ "type": "field", "field_key": "<field id>" }`；`blocks` 数组顺序
+就是公开表单和管理端预览的唯一展示顺序。读取旧快照时服务端和客户端会按字段顺序
+补齐缺失的字段块，但不会改写历史 Revision；重复字段块会在草稿/发布校验中报告错误。
+
 #### Entry
 
 一份提交者正在填写或已经提交的暂存数据。Entry 永远固定 `campaign_revision_id`，以便历史提交可以解释当时看到的表单。

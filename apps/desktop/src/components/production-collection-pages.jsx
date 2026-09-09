@@ -26,7 +26,7 @@ import { ResourcePage } from "@/components/resource-page";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { notify } from "@/components/ui/sonner";
-import { createCampaign, createCampaignRevision, getCampaign, listCampaigns, listCampaignTemplates, listWorkspaceCampaignTemplates, archiveCampaign } from "@/lib/campaign-api";
+import { createCampaign, createCampaignRevision, getCampaign, listCampaignRevisions, listCampaigns, listCampaignTemplates, listWorkspaceCampaignTemplates, archiveCampaign } from "@/lib/campaign-api";
 import { CampaignFormBuilder } from "@/components/campaign-form-builder";
 import { directProductionCampaignPath, productionCampaignPath, productionPath } from "@/lib/navigation";
 
@@ -298,7 +298,7 @@ function formatCampaignDate(value) {
   try { return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); } catch { return value; }
 }
 
-function CampaignDetailPanel({ tab, detail, onArchive, onRevisionSaved, onPublished, onCreateDraft, onReload, onOpenForm }) {
+function CampaignDetailPanel({ tab, detail, onArchive, onRevisionSaved, onPublished, onCreateDraft, onCloneRevision, onReload, onOpenForm }) {
   const campaign = detail?.campaign;
   const revision = detail?.draftRevision || detail?.publishedRevision;
   const policy = detail?.availabilityPolicy || {};
@@ -306,11 +306,11 @@ function CampaignDetailPanel({ tab, detail, onArchive, onRevisionSaved, onPublis
   const panels = {
     overview: <div className="grid gap-4 @min-[40rem]/campaign-detail:grid-cols-2"><PlaceholderCard icon={Gauge} title="状态与开放期" description="查看当前活动表单是否开放、何时截止以及名额状态。"><InfoRows rows={[["状态", CAMPAIGN_STATUS_LABELS[campaign?.status] || campaign?.status || "未设置"], ["开放时间", formatCampaignDate(policy.opens_at)], ["截止时间", formatCampaignDate(policy.closes_at)], ["收集上限", policy.submission_limit || policy.capacity || "未设置"], ["当前版本", revision ? `Revision ${revision.revisionNo}` : "未创建"]]} /></PlaceholderCard><PlaceholderCard icon={ClipboardList} title="收集漏斗" description="从访问、开始填写到通过和转化的阶段统计。"><InfoRows rows={[["已提交", stats.submittedEntries ?? 0], ["已确认", stats.acceptedEntries ?? 0], ["候补", stats.waitlistedEntries ?? 0], ["已转化", stats.convertedEntries ?? 0], ["全部 Entry", stats.totalEntries ?? 0]]} /></PlaceholderCard></div>,
     form: <div className="space-y-4"><CampaignFormBuilder revision={revision} campaign={campaign} onSaved={onRevisionSaved} onPublished={onPublished} onReload={onReload} />{revision?.status !== "draft" && campaign?.status !== "archived" ? <Button variant="outline" onClick={onCreateDraft}><Plus />创建新的草稿版本</Button> : null}</div>,
-    rules: <PlaceholderCard icon={SlidersHorizontal} title="收集规则" description="设置可见性、开放截止、提交次数、草稿和候补。" action={<Button variant="outline" size="sm" onClick={onOpenForm}>编辑规则</Button>}><InfoRows rows={[["可见性", policy.visibility || "公开链接"], ["重复提交", policy.max_submissions || "未设置"], ["候补策略", policy.waitlist_enabled ? "已启用" : "未设置"], ["截止条件", policy.closes_at || policy.submission_limit ? "已配置" : "未设置"]]} /></PlaceholderCard>,
-    review: <PlaceholderCard icon={ClipboardCheck} title="审核流程" description="当前审核快照由 ReviewRecipe 固定结构驱动。" action={<Button variant="outline" size="sm" onClick={onOpenForm}>编辑审核方案</Button>}><InfoRows rows={[["审核模式", revision?.reviewWorkflow?.mode || "AUTO_ACCEPT"], ["审核轮次", Array.isArray(revision?.reviewWorkflow?.rounds) ? revision.reviewWorkflow.rounds.length : 0], ["方案来源", revision?.reviewRecipeVersionId || "内联快照"], ["最终决定", revision?.reviewWorkflow?.final_decision || "auto_accept"]]} /></PlaceholderCard>,
+    rules: <CampaignFormBuilder section="rules" revision={revision} campaign={campaign} onSaved={onRevisionSaved} onPublished={onPublished} onReload={onReload} />,
+    review: <CampaignFormBuilder section="review" revision={revision} campaign={campaign} onSaved={onRevisionSaved} onPublished={onPublished} onReload={onReload} />,
     entries: <PlaceholderCard icon={ClipboardList} title="Entry 收件箱" description="提交记录会先进入暂存层，再根据决定转化为活动级业务数据。"><div className="flex min-h-36 items-center justify-center border border-dashed text-sm text-muted-foreground">尚未有提交记录</div></PlaceholderCard>,
-    results: <PlaceholderCard icon={CheckCircle2} title="收集结果" description="查看已确认、候补、已转化和异常条目。"><InfoRows rows={[["已确认", "—"], ["候补", "—"], ["已转化", "—"], ["异常", "—"]]} /></PlaceholderCard>,
-    settings: <PlaceholderCard icon={Settings} title="表单设置" description="管理归档、危险操作和保存为工作空间模板。" action={<Button variant="outline" onClick={() => notify.info("保存为工作空间模板将在模板编辑器接入后开放")}>保存为模板</Button>}><div className="flex min-h-24 flex-col items-start gap-3 border border-dashed px-4 py-4 text-sm text-muted-foreground"><p>来源模板：{campaign?.sourceTemplateId || "从空白创建"}</p><p>创建时间：{formatCampaignDate(campaign?.createdAt)}</p>{campaign?.status !== "archived" && <Button variant="destructive" size="sm" onClick={onArchive}>归档此表单</Button>}</div></PlaceholderCard>,
+    results: <CampaignFormBuilder section="results" revision={revision} campaign={campaign} onSaved={onRevisionSaved} onPublished={onPublished} onReload={onReload} />,
+    settings: <PlaceholderCard icon={Settings} title="表单设置" description="管理归档、版本历史和保存为工作空间模板。" action={<Button variant="outline" onClick={() => notify.info("保存为工作空间模板将在模板编辑器接入后开放")}>保存为模板</Button>}><div className="space-y-4 text-sm"><div className="flex min-h-24 flex-col items-start gap-3 border border-dashed px-4 py-4 text-muted-foreground"><p>来源模板：{campaign?.sourceTemplateId || "从空白创建"}</p><p>创建时间：{formatCampaignDate(campaign?.createdAt)}</p>{campaign?.status !== "archived" && <Button variant="destructive" size="sm" onClick={onArchive}>归档此表单</Button>}</div><div><p className="mb-2 font-medium text-foreground">Revision 历史</p><div className="divide-y rounded-md border">{(detail?.revisions || []).map((item) => <div key={item.id} className="flex flex-wrap items-center gap-2 px-3 py-2"><span className="font-medium">v{item.revisionNo}</span><Badge variant="outline">{CAMPAIGN_STATUS_LABELS[item.status] || item.status}</Badge><span className="min-w-0 flex-1 text-xs text-muted-foreground">{item.changeNote || "无变更说明"}</span>{item.status !== "draft" && campaign?.status !== "archived" ? <Button size="sm" variant="ghost" onClick={() => onCloneRevision?.(item)}>复制为草稿</Button> : null}</div>)}{!(detail?.revisions || []).length ? <p className="px-3 py-3 text-xs text-muted-foreground">暂无版本历史。</p> : null}</div></div></div></PlaceholderCard>,
   };
   return panels[tab] || panels.overview;
 }
@@ -323,7 +323,8 @@ export function ProductionCampaignDetailPage({ route, workspace, production }) {
   const loadDetail = async () => {
     setLoading(true);
     try {
-      setDetail(await getCampaign(route.campaignId));
+      const [campaignDetail, revisions] = await Promise.all([getCampaign(route.campaignId), listCampaignRevisions(route.campaignId)]);
+      setDetail({ ...campaignDetail, revisions: revisions.items });
     } catch (error) {
       setDetail(null);
       notify.error("无法加载表单详情", { description: error?.message || String(error) });
@@ -354,8 +355,17 @@ export function ProductionCampaignDetailPage({ route, workspace, production }) {
       // notify.promise 已经展示错误提示。
     }
   };
+  const cloneRevision = async (source) => {
+    try {
+      await notify.promise(createCampaignRevision(route.campaignId, { change_note: `从 Revision ${source.revisionNo} 复制`, form: source.formVersion, availability_policy: source.availabilityPolicy, review_recipe_version_id: source.reviewRecipeVersionId || null, review_workflow: source.reviewWorkflow, materialization_plan: source.materializationPlan }), { loading: "正在复制版本…", success: "已创建新的草稿版本", error: (error) => `复制版本失败：${error?.message || String(error)}` });
+      await loadDetail();
+      goToTab("form");
+    } catch {
+      // notify.promise 已经展示错误提示。
+    }
+  };
   return <div className="@container/production-campaign-detail min-w-0 space-y-6">
     <ProductionPageHeader workspace={workspace} production={production} title={detail?.campaign?.name || "表单详情"} subtitle={`${production?.name || "活动"} · ${detail?.campaign?.kind || "Campaign"}`} actions={<Button variant="outline" onClick={() => navigate(route.direct ? directProductionPath(production.id, "forms") : productionPath(workspace.id, production.id, "forms"))}>返回全部表单</Button>} />
-    {loading ? <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在加载表单详情…</CardContent></Card> : detail ? <SettingsTabs groups={CAMPAIGN_DETAIL_GROUPS} activeGroup={activeTab} onGroupChange={goToTab} ariaLabel="表单详情分类"><CampaignDetailPanel tab={activeTab} detail={detail} onArchive={archive} onRevisionSaved={(saved) => setDetail((current) => current ? ({ ...current, draftRevision: saved }) : current)} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onCreateDraft={createDraft} onReload={loadDetail} onOpenForm={() => goToTab("form")} /></SettingsTabs> : <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">暂时无法显示表单详情。</CardContent></Card>}
+    {loading ? <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在加载表单详情…</CardContent></Card> : detail ? <SettingsTabs groups={CAMPAIGN_DETAIL_GROUPS} activeGroup={activeTab} onGroupChange={goToTab} ariaLabel="表单详情分类"><CampaignDetailPanel tab={activeTab} detail={detail} onArchive={archive} onRevisionSaved={(saved) => setDetail((current) => current ? ({ ...current, draftRevision: saved }) : current)} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onCreateDraft={createDraft} onCloneRevision={cloneRevision} onReload={loadDetail} onOpenForm={() => goToTab("form")} /></SettingsTabs> : <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">暂时无法显示表单详情。</CardContent></Card>}
   </div>;
 }

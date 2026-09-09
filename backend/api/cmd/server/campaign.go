@@ -169,7 +169,58 @@ func normalizeFormDefinition(form formDefinition) formDefinition {
 	form.Fields = defaultJSON(form.Fields, "[]")
 	form.LogicRules = defaultJSON(form.LogicRules, "[]")
 	form.EndScreen = defaultJSON(form.EndScreen, "{}")
+	// Blocks are the canonical public order. Older snapshots may contain
+	// fields that were never represented by a field block; normalize them on
+	// read and when creating a new snapshot without mutating the historical row.
+	var blocks []map[string]any
+	var fields []map[string]any
+	if json.Unmarshal(form.Blocks, &blocks) == nil && json.Unmarshal(form.Fields, &fields) == nil {
+		fieldBlockKeys := make(map[string]bool, len(blocks))
+		for index, block := range blocks {
+			if strings.TrimSpace(stringValue(block, "id")) == "" {
+				if key := strings.TrimSpace(stringValue(block, "field_key")); key != "" {
+					block["id"] = "field_" + key
+				} else {
+					block["id"] = "block_" + strconv.Itoa(index+1)
+				}
+			}
+			if stringValue(block, "type") == "field" {
+				if key := strings.TrimSpace(stringValue(block, "field_key")); key != "" {
+					fieldBlockKeys[key] = true
+				}
+			}
+		}
+		for index, field := range fields {
+			fieldID := strings.TrimSpace(stringValue(field, "id"))
+			if fieldID == "" {
+				fieldID = strings.TrimSpace(stringValue(field, "key"))
+			}
+			if fieldID == "" {
+				// Keep malformed fields visible to semantic validation rather than
+				// inventing a value that would hide the error.
+				continue
+			}
+			if !fieldBlockKeys[fieldID] {
+				blocks = append(blocks, map[string]any{"id": "field_" + fieldID, "type": "field", "field_key": fieldID, "_legacy_index": index})
+			}
+		}
+		// _legacy_index is an internal normalization aid only; never expose it.
+		for _, block := range blocks {
+			delete(block, "_legacy_index")
+		}
+		if encoded, err := json.Marshal(blocks); err == nil {
+			form.Blocks = encoded
+		}
+	}
 	return form
+}
+
+func normalizeFormVersionItem(item *formVersionItem) {
+	if item == nil {
+		return
+	}
+	normalized := normalizeFormDefinition(formDefinition{SchemaVersion: item.SchemaVersion, Blocks: item.Blocks, Fields: item.Fields, LogicRules: item.LogicRules, EndScreen: item.EndScreen})
+	item.SchemaVersion, item.Blocks, item.Fields, item.LogicRules, item.EndScreen = normalized.SchemaVersion, normalized.Blocks, normalized.Fields, normalized.LogicRules, normalized.EndScreen
 }
 
 func normalizeDefinition(def templateDefinition) templateDefinition {
@@ -996,6 +1047,7 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		errorJSON(w, http.StatusNotFound, "campaign_revision_not_found", "表单版本不存在或无权访问")
 		return
 	}
+	form = normalizeFormDefinition(form)
 	if revisionStatus != "draft" {
 		errorJSON(w, http.StatusConflict, "revision_not_draft", "只有草稿版本可以发布")
 		return
@@ -1021,6 +1073,12 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		if !writeFormValidationError(w, err) {
 			serverError(w, err)
 		}
+		return
+	}
+	// Normalize legacy field/block snapshots at the revision boundary. This is
+	// the first point where mutating the draft snapshot is intentional.
+	if _, err := tx.Exec(r.Context(), `UPDATE form_versions SET schema_version=$1,blocks=$2,fields=$3,logic_rules=$4,end_screen=$5 WHERE id=$6 AND workspace_id=$7`, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.EndScreen, formVersionID, access.WorkspaceID); err != nil {
+		serverError(w, err)
 		return
 	}
 	parsedReview, normalizedReview, err := parseReviewRecipeDefinition(review, false)
@@ -1152,6 +1210,7 @@ func (app *application) queryCampaignRevisions(ctx context.Context, queryer inte
 			return nil, err
 		}
 		item.FormVersion = &form
+		normalizeFormVersionItem(item.FormVersion)
 		item.ETag = revisionETag(item)
 		items = append(items, item)
 	}
@@ -1176,6 +1235,7 @@ func (app *application) loadRevision(ctx context.Context, queryer interface {
 		return campaignRevisionItem{}, err
 	}
 	item.FormVersion = &form
+	normalizeFormVersionItem(item.FormVersion)
 	item.ETag = revisionETag(item)
 	return item, nil
 }

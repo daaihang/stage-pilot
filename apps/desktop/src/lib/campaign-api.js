@@ -251,8 +251,8 @@ export async function updateCampaignRevision(campaignId, revisionId, payload, op
   return mapRevision(result.revision || result);
 }
 
-export async function validateCampaignRevision(campaignId, revisionId) {
-  const result = await request(`/v1/campaigns/${encodeURIComponent(campaignId)}/revisions/${encodeURIComponent(revisionId)}/validate`, { method: "POST", body: "{}" });
+export async function validateCampaignRevision(campaignId, revisionId, options = {}) {
+  const result = await request(`/v1/campaigns/${encodeURIComponent(campaignId)}/revisions/${encodeURIComponent(revisionId)}/validate`, { method: "POST", body: "{}", ...revisionMutationOptions(options) });
   return {
     valid: Boolean(result.valid),
     etag: result.etag || "",

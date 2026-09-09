@@ -69,6 +69,7 @@ func validateFormDefinitionDraftValue(form formDefinition) error {
 		}
 	}
 	blockIDs := make(map[string]bool, len(blocks))
+	fieldBlockCounts := make(map[string]int, len(fields))
 	for _, block := range blocks {
 		blockID := stringValue(block, "id")
 		blockType := stringValue(block, "type")
@@ -80,8 +81,19 @@ func validateFormDefinitionDraftValue(form formDefinition) error {
 		if blockType == "field" && fieldKey == "" {
 			return &formValidationError{"missing_form_field_reference", "字段内容块必须引用字段"}
 		}
+		if blockType == "field" {
+			fieldBlockCounts[fieldKey]++
+			if fieldBlockCounts[fieldKey] > 1 {
+				return &formValidationError{"duplicate_field_block", "每个字段只能对应一个字段内容块"}
+			}
+		}
 		if fieldKey != "" && !fieldIDs[fieldKey] {
 			return &formValidationError{"unknown_form_field_reference", "内容块引用了不存在的字段"}
+		}
+	}
+	for fieldID := range fieldIDs {
+		if fieldBlockCounts[fieldID] == 0 {
+			return &formValidationError{"missing_field_block", "每个字段必须对应一个字段内容块"}
 		}
 	}
 	var rules []map[string]any
@@ -168,6 +180,7 @@ func validateFormDefinitionValue(form formDefinition) error {
 		}
 	}
 	blockIDs := make(map[string]bool, len(blocks))
+	fieldOrder := make(map[string]int)
 	for _, block := range blocks {
 		blockID := stringValue(block, "id")
 		blockType := stringValue(block, "type")
@@ -182,6 +195,9 @@ func validateFormDefinitionValue(form formDefinition) error {
 		if fieldKey != "" && !fieldIDs[fieldKey] {
 			return &formValidationError{"unknown_form_field_reference", "内容块引用了不存在的字段"}
 		}
+		if blockType == "field" && fieldKey != "" {
+			fieldOrder[fieldKey] = len(fieldOrder)
+		}
 	}
 	var rules []map[string]any
 	if err := json.Unmarshal(form.LogicRules, &rules); err != nil {
@@ -195,6 +211,9 @@ func validateFormDefinitionValue(form formDefinition) error {
 		if err := validateLogicRule(rule, fieldIDs, graph); err != nil {
 			return err
 		}
+		if err := validateLogicRuleOrder(rule, fieldOrder); err != nil {
+			return err
+		}
 	}
 	if hasFieldReferenceCycle(graph) {
 		return &formValidationError{"logic_cycle", "条件逻辑不能形成循环"}
@@ -203,6 +222,20 @@ func validateFormDefinitionValue(form formDefinition) error {
 		if stringValue(rule, "id") == "" {
 			return &formValidationError{"invalid_logic_rule", "条件逻辑规则必须包含唯一标识"}
 		}
+	}
+	return nil
+}
+
+func validateLogicRuleOrder(rule map[string]any, fieldOrder map[string]int) error {
+	from := firstReference(rule, "field_id", "field_key", "source_field_id", "depends_on")
+	to := firstReference(rule, "target_field_id", "target_field_key")
+	if from == "" || to == "" || from == to {
+		return nil
+	}
+	fromOrder, fromOK := fieldOrder[from]
+	toOrder, toOK := fieldOrder[to]
+	if fromOK && toOK && toOrder <= fromOrder {
+		return &formValidationError{"logic_target_order_invalid", "条件逻辑目标字段必须位于来源字段之后"}
 	}
 	return nil
 }
@@ -444,6 +477,11 @@ func validateAvailabilityPolicyValue(raw json.RawMessage) error {
 	if behavior := stringValue(policy, "close_behavior"); behavior != "" && behavior != "close_to_new_entries" && behavior != "accept_to_waitlist" {
 		return &formValidationError{"invalid_close_behavior", "表单关闭行为无效"}
 	}
+	if enabled, ok := policy["waitlist_enabled"]; ok && enabled != nil {
+		if _, ok := enabled.(bool); !ok {
+			return &formValidationError{"invalid_waitlist_policy", "候补开关格式无效"}
+		}
+	}
 	for _, key := range []string{"submission_limit", "per_actor_limit", "capacity", "target", "waitlist_limit"} {
 		if value, ok := policy[key]; ok && value != nil {
 			number, ok := value.(float64)
@@ -468,6 +506,23 @@ func validateAvailabilityPolicyValue(raw json.RawMessage) error {
 	}
 	if opensAt != nil && closesAt != nil && !opensAt.Before(*closesAt) {
 		return &formValidationError{"invalid_availability_window", "开放时间必须早于截止时间"}
+	}
+	if rawDraft, ok := policy["draft_policy"]; ok && rawDraft != nil {
+		draft, ok := rawDraft.(map[string]any)
+		if !ok {
+			return &formValidationError{"invalid_draft_policy", "草稿恢复规则格式无效"}
+		}
+		if enabled, exists := draft["enabled"]; exists {
+			if _, ok := enabled.(bool); !ok {
+				return &formValidationError{"invalid_draft_policy", "草稿恢复开关格式无效"}
+			}
+		}
+		if retention, exists := draft["retention_hours"]; exists && retention != nil {
+			number, ok := retention.(float64)
+			if !ok || number < 1 || number != float64(int64(number)) {
+				return &formValidationError{"invalid_draft_retention", "草稿保留时长必须是正整数"}
+			}
+		}
 	}
 	return nil
 }
