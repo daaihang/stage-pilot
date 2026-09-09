@@ -85,6 +85,7 @@ function reduceState(state, action) {
 
 export function CampaignRevisionDraftProvider({ campaign, revision, production, onSaved, onPublished, onReload, children }) {
   const [state, setState] = useState(() => stateFromRevision(revision));
+  const [toolbarAction, setToolbarAction] = useState(null);
   const stateRef = useRef(state);
   const revisionIdRef = useRef(revision?.id || "");
   const saveChainRef = useRef(Promise.resolve());
@@ -107,6 +108,11 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
     if (current.revisionStatus !== "draft" || campaign?.status === "archived") return current;
     return reduceState(current, { type: "set", key, value });
   }), [campaign?.status]);
+
+  const registerToolbarAction = useCallback((action) => {
+    setToolbarAction(() => action);
+    return () => setToolbarAction((current) => current === action ? null : current);
+  }, []);
 
   const enqueueSave = useCallback(({ force = false, withToast = false, reportAutoError = true } = {}) => {
     const operation = saveChainRef.current.then(async () => {
@@ -196,6 +202,8 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
     ...state,
     draft: currentSnapshot(state),
     readOnly: state.revisionStatus !== "draft" || campaign?.status === "archived",
+    toolbarAction,
+    registerToolbarAction,
     previewTriggerRef,
     setDraft,
     setForm: (value) => setDraft("form", normalizeFormVersion(value)),
@@ -255,5 +263,5 @@ export function RevisionEditorShell({ children, showPreview = false, previewButt
 
   if (draft.readOnly) return <div className="space-y-4"><div className="flex items-center justify-between"><Badge variant="secondary">Revision {draft.revisionNo} · 已锁定</Badge>{showPreview ? <Button ref={draft.previewTriggerRef} variant="outline" size="sm" aria-pressed={detailOpen} onClick={() => setDetailOpen(!detailOpen)}><Eye />{detailOpen ? "关闭预览" : previewButtonLabel}</Button> : null}</div><div className="pointer-events-none opacity-70">{children}</div></div>;
 
-  return <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge variant={draft.saveState === "存在冲突" ? "destructive" : "outline"}>草稿 · {draft.saveState}</Badge><span className="text-xs text-muted-foreground">Revision {draft.revisionNo}</span>{draft.saveState === "存在冲突" ? <Button type="button" variant="ghost" size="sm" onClick={() => void notify.promise(draft.reload(), { loading: "正在重新加载最新版本…", success: "已加载最新版本", error: "重新加载失败" }).catch(() => {})}><RefreshCw />重新加载最新版本</Button> : null}</div><div className="flex flex-wrap gap-2">{showPreview ? <Button ref={draft.previewTriggerRef} type="button" variant={detailOpen ? "secondary" : "outline"} size="sm" aria-pressed={detailOpen} onClick={() => setDetailOpen(!detailOpen)}><Eye />{detailOpen ? "关闭预览" : previewButtonLabel}</Button> : null}<Button type="button" variant="outline" size="sm" onClick={() => void draft.save().catch(() => {})} disabled={busy}><Save />保存</Button><Button type="button" variant="outline" size="sm" onClick={() => void draft.validate().catch(() => {})} disabled={busy}><CheckCircle2 />校验</Button><Button type="button" size="sm" onClick={() => void validateBeforePublish()} disabled={busy}><CheckCircle2 />发布</Button></div></div>{draft.issues.length ? <Card className="border-amber-500/40"><CardHeader className="pb-2"><CardTitle className="text-sm">校验结果</CardTitle><CardDescription>{errorCount} 个错误，{warningCount} 个警告</CardDescription></CardHeader><CardContent className="space-y-1.5">{draft.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className="flex gap-2 text-xs"><Badge variant={issue.severity === "error" ? "destructive" : "secondary"}>{issue.severity === "error" ? "错误" : "警告"}</Badge><span>{issue.message}{issue.path ? <span className="ml-1 text-muted-foreground">({issue.path})</span> : null}</span></div>)}</CardContent></Card> : null}{children}<Dialog open={confirmOpen} onOpenChange={(open) => !busy && setConfirmOpen(open)}><DialogContent><DialogHeader><DialogTitle>确认发布表单</DialogTitle><DialogDescription>发布后当前 Revision 和 FormVersion 将锁定，后续修改会创建新的草稿版本。</DialogDescription></DialogHeader><DialogFooter><Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>取消</Button><Button type="button" onClick={() => void confirmPublish()}>确认发布</Button></DialogFooter></DialogContent></Dialog></div>;
+  return <div className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge variant={draft.saveState === "存在冲突" ? "destructive" : "outline"}>草稿 · {draft.saveState}</Badge><span className="text-xs text-muted-foreground">Revision {draft.revisionNo}</span>{draft.saveState === "存在冲突" ? <Button type="button" variant="ghost" size="sm" onClick={() => void notify.promise(draft.reload(), { loading: "正在重新加载最新版本…", success: "已加载最新版本", error: "重新加载失败" }).catch(() => {})}><RefreshCw />重新加载最新版本</Button> : null}</div><div className="flex flex-wrap gap-2">{draft.toolbarAction}{showPreview ? <Button ref={draft.previewTriggerRef} type="button" variant={detailOpen ? "secondary" : "outline"} size="sm" aria-pressed={detailOpen} onClick={() => setDetailOpen(!detailOpen)}><Eye />{detailOpen ? "关闭预览" : previewButtonLabel}</Button> : null}<Button type="button" variant="outline" size="sm" onClick={() => void draft.save().catch(() => {})} disabled={busy}><Save />保存</Button><Button type="button" variant="outline" size="sm" onClick={() => void draft.validate().catch(() => {})} disabled={busy}><CheckCircle2 />校验</Button><Button type="button" size="sm" onClick={() => void validateBeforePublish()} disabled={busy}><CheckCircle2 />发布</Button></div></div>{draft.issues.length ? <Card className="border-amber-500/40"><CardHeader className="pb-2"><CardTitle className="text-sm">校验结果</CardTitle><CardDescription>{errorCount} 个错误，{warningCount} 个警告</CardDescription></CardHeader><CardContent className="space-y-1.5">{draft.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className="flex gap-2 text-xs"><Badge variant={issue.severity === "error" ? "destructive" : "secondary"}>{issue.severity === "error" ? "错误" : "警告"}</Badge><span>{issue.message}{issue.path ? <span className="ml-1 text-muted-foreground">({issue.path})</span> : null}</span></div>)}</CardContent></Card> : null}{children}<Dialog open={confirmOpen} onOpenChange={(open) => !busy && setConfirmOpen(open)}><DialogContent><DialogHeader><DialogTitle>确认发布表单</DialogTitle><DialogDescription>发布后当前 Revision 和 FormVersion 将锁定，后续修改会创建新的草稿版本。</DialogDescription></DialogHeader><DialogFooter><Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>取消</Button><Button type="button" onClick={() => void confirmPublish()}>确认发布</Button></DialogFooter></DialogContent></Dialog></div>;
 }
