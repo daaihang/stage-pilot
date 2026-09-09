@@ -119,7 +119,7 @@ func TestReviewRecipeLibraryAndCampaignPublish(t *testing.T) {
 	if draft["review_recipe_version_id"] != "review_recipe_auto_accept_v1" {
 		t.Fatalf("draft recipe source = %#v", draft["review_recipe_version_id"])
 	}
-	published := authedRequest(t, app, token, http.MethodPost, "/v1/campaigns/"+createdBody["campaign"].(map[string]any)["id"].(string)+"/revisions/"+draft["id"].(string)+"/publish", map[string]any{})
+	published := authedRequestWithHeaders(t, app, token, http.MethodPost, "/v1/campaigns/"+createdBody["campaign"].(map[string]any)["id"].(string)+"/revisions/"+draft["id"].(string)+"/publish", map[string]any{}, map[string]string{"If-Match": draft["etag"].(string)})
 	if published.Code != http.StatusOK || !strings.Contains(published.Body.String(), `"status":"published"`) {
 		t.Fatalf("publish auto campaign = %d: %s", published.Code, published.Body.String())
 	}
@@ -150,7 +150,7 @@ func TestReviewRecipeLibraryAndCampaignPublish(t *testing.T) {
 	_ = json.Unmarshal(inlineCampaign.Body.Bytes(), &inlineBody)
 	inlineCampaignID := inlineBody["campaign"].(map[string]any)["id"].(string)
 	inlineRevisionID := inlineBody["draft_revision"].(map[string]any)["id"].(string)
-	inlinePublished := authedRequest(t, app, token, http.MethodPost, "/v1/campaigns/"+inlineCampaignID+"/revisions/"+inlineRevisionID+"/publish", map[string]any{})
+	inlinePublished := authedRequestWithHeaders(t, app, token, http.MethodPost, "/v1/campaigns/"+inlineCampaignID+"/revisions/"+inlineRevisionID+"/publish", map[string]any{}, map[string]string{"If-Match": inlineBody["draft_revision"].(map[string]any)["etag"].(string)})
 	if inlinePublished.Code != http.StatusOK {
 		t.Fatalf("publish inline review campaign = %d: %s", inlinePublished.Code, inlinePublished.Body.String())
 	}
@@ -179,7 +179,7 @@ func TestReviewRecipeLibraryAndCampaignPublish(t *testing.T) {
 	}
 	var explicitBody map[string]any
 	_ = json.Unmarshal(explicitCampaign.Body.Bytes(), &explicitBody)
-	explicitPublished := authedRequest(t, app, token, http.MethodPost, "/v1/campaigns/"+explicitBody["campaign"].(map[string]any)["id"].(string)+"/revisions/"+explicitBody["draft_revision"].(map[string]any)["id"].(string)+"/publish", map[string]any{})
+	explicitPublished := authedRequestWithHeaders(t, app, token, http.MethodPost, "/v1/campaigns/"+explicitBody["campaign"].(map[string]any)["id"].(string)+"/revisions/"+explicitBody["draft_revision"].(map[string]any)["id"].(string)+"/publish", map[string]any{}, map[string]string{"If-Match": explicitBody["draft_revision"].(map[string]any)["etag"].(string)})
 	if explicitPublished.Code != http.StatusOK {
 		t.Fatalf("publish explicit reviewer campaign = %d: %s", explicitPublished.Code, explicitPublished.Body.String())
 	}

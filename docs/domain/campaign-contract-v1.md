@@ -155,6 +155,8 @@ Campaign 的配置版本。草稿可编辑；发布后的 Revision 不可原地�
 
 `status`：`draft`、`published`、`superseded`、`archived`。同一 Campaign 同时最多存在一个可编辑 draft 和一个 published Revision。
 
+Revision 编辑 API 使用完整 `FormVersion` 快照。读取、保存、校验和发布都会返回强 `ETag`；保存和发布必须携带匹配的 `If-Match`，缺失返回 `428 precondition_required`，过期返回 `412 revision_conflict`。校验接口返回结构化错误与警告；服务端校验通过后才可发布，发布会锁定 Revision 与 FormVersion。
+
 规则值对象的约定：
 
 - `visibility`：`public`、`workspace`、`invite_only`。

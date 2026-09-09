@@ -81,6 +81,7 @@ type campaignRevisionItem struct {
 	CreatedAt             time.Time        `json:"created_at"`
 	PublishedAt           *time.Time       `json:"published_at,omitempty"`
 	ArchivedAt            *time.Time       `json:"archived_at,omitempty"`
+	ETag                  string           `json:"etag,omitempty"`
 	FormVersion           *formVersionItem `json:"form_version,omitempty"`
 }
 
@@ -999,6 +1000,14 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		errorJSON(w, http.StatusConflict, "revision_not_draft", "只有草稿版本可以发布")
 		return
 	}
+	currentRevision, err := app.loadRevision(r.Context(), tx, revisionID, access.WorkspaceID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if !requireRevisionMatchWithSummary(w, r, currentRevision.ETag, &currentRevision) {
+		return
+	}
 	// Older revisions may contain a legacy stage-based JSON snapshot with no
 	// recipe source. They remain readable but cannot be published. A new draft
 	// may instead provide a complete V1 review_workflow inline without a source
@@ -1068,6 +1077,8 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		serverError(w, err)
 		return
 	}
+	revision.ETag = revisionETag(revision)
+	w.Header().Set("ETag", revision.ETag)
 	writeJSON(w, http.StatusOK, map[string]any{"campaign_id": campaignID, "revision": revision, "form_version_id": formVersionID})
 }
 
@@ -1141,6 +1152,7 @@ func (app *application) queryCampaignRevisions(ctx context.Context, queryer inte
 			return nil, err
 		}
 		item.FormVersion = &form
+		item.ETag = revisionETag(item)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -1164,5 +1176,6 @@ func (app *application) loadRevision(ctx context.Context, queryer interface {
 		return campaignRevisionItem{}, err
 	}
 	item.FormVersion = &form
+	item.ETag = revisionETag(item)
 	return item, nil
 }
