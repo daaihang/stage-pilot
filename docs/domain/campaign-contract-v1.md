@@ -226,7 +226,7 @@ FormVersion V1.1 冻结以下结构不变量：`fields[].id` 必须且只能对�
 }
 ```
 
-答案放在追加式 `entry_revisions` 存储中，至少记录 `revision_no`、`answers`、`schema_version`、`created_at` 和提交来源。公开填写者不需要先注册 StagePilot；草稿恢复使用高熵、可撤销、可过期的 Entry access token，服务端只保存 hash。
+答案放在追加式 `entry_revisions` 存储中，至少记录 `revision_no`、`answers`、`schema_version`、`created_at` 和提交来源。公开填写者不需要先注册 StagePilot。Campaign Intake Execution V1 的草稿只保存在浏览器本地；现有 Entry access token 字段保留给后续服务器草稿恢复功能，本阶段不会生成恢复 Token。
 
 `status`：`draft`、`submitted`、`in_review`、`needs_changes`、`accepted`、`waitlisted`、`rejected`、`withdrawn`、`converted`、`conversion_failed`。状态是当前投影，审核意见和决定历史不可覆盖。
 
@@ -309,8 +309,8 @@ COLLECTION    → FormResponse
 
 1. 管理 API 只允许 Production 可访问成员调用；Workspace OWNER/ADMIN 具备完整治理权限。
 2. V1 权限能力键冻结为：`campaign.view`、`campaign.manage`、`campaign.publish`、`campaign.review`、`campaign.decide`、`campaign.materialize`、`campaign.export`。初期可以映射到现有 `production.view` / `production.edit`，但 API 不应把它们混成一个概念。
-3. 公开 API 只返回发布 Revision 中标记为 public 的内容，不返回审核、决定、内部备注或 Workspace 资源敏感字段；必须支持速率限制、重复提交限制和隐私同意记录。
-4. 公开附件不能复用当前 Workspace 成员文件入口。上传 token 必须限定 Campaign、Entry 草稿、字段、字节数和过期时间，并保留扫描/隔离状态。
+3. 公开 API 只返回发布 Revision 中标记为 public 的内容，不返回审核、决定、内部备注或 Workspace 资源敏感字段；必须支持速率限制、重复提交限制和隐私同意记录。V1 通过 Campaign 长链接/短链接访问，链接稳定指向 Campaign 的当前 Published Revision，轮换或撤销才会失效。
+4. 公开附件不能复用当前 Workspace 成员文件入口。上传 token 必须限定 Campaign、Entry 草稿、字段、字节数和过期时间，并保留扫描/隔离状态。V1 暂不支持公开文件字段，含文件字段的版本不能生成公开链接。
 
 ## 4. V1 API 表面
 
@@ -353,14 +353,13 @@ POST   /v1/entries/{entryId}/materializations
 ### 4.2 公开填写 API
 
 ```text
-GET    /v1/public/campaigns/{publicSlug}
-POST   /v1/public/campaigns/{publicSlug}/entries
-PATCH  /v1/public/entries/{entryAccessToken}
-GET    /v1/public/entries/{entryAccessToken}
-POST   /v1/public/entries/{entryAccessToken}/withdraw
+GET    /v1/public/campaign-shares/{token}
+GET    /v1/public/campaign-shares/short/{shortCode}
+POST   /v1/public/campaign-shares/{token}/entries
+POST   /v1/public/campaign-shares/short/{shortCode}/entries
 ```
 
-公开 token 只在创建/恢复时返回一次；服务端保存 hash，响应禁止缓存。公开接口必须在服务端重新读取当前已发布 Revision 并执行所有校验，不能信任客户端携带的 `workspace_id`、`production_id`、`campaign_revision_id` 或结果目标。
+管理端通过 `GET/POST /v1/campaigns/{campaignId}/share-links` 创建和查看稳定长链接/短链接，通过 `POST /v1/campaign-share-links/{linkId}/rotate|revoke` 管理凭证。公开 token 只在创建或轮换时返回；服务端保存哈希并加密保存管理员可复制的凭证，公开响应禁止缓存。公开接口必须在服务端重新读取当前已发布 Revision 并执行所有校验，不能信任客户端携带的 `workspace_id`、`production_id`、`campaign_revision_id` 或结果目标。V1 的草稿只在浏览器本地保存，不提供服务器 Entry 恢复接口；提交只创建 `submitted` Entry，不自动产生 Decision 或 Materialization。
 
 ## 5. 数据库落地边界
 
@@ -397,6 +396,6 @@ form_responses
 
 1. 新增活动结果迁移，再新增 Campaign/Entry 迁移和服务端模型：Template、Campaign、Revision、FormVersion、Entry、Decision、Materialization 及六类结果对象。
 2. 先实现管理端 Campaign/Revision/Entry API 及租户、权限、发布校验、幂等约束。
-3. 再实现公开读取、草稿/提交、Entry access token 和受限附件。
+3. 再实现公开读取、浏览器本地草稿和 submitted Entry；Entry access token、服务器草稿和受限附件另行实现。
 4. 前端把当前静态页面替换为 Campaign/Template API；Form Builder 只编辑 draft Revision。
 5. 最后接入审核分配、评分和正式 Production 结果模型；每种结果都必须通过 EntryMaterialization。

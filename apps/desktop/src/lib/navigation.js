@@ -145,6 +145,10 @@ export function resolveAccountReturnTarget(search, fallback) {
 }
 
 export function matchStagePilotRoute(pathname, search = "") {
+  const publicCampaignLongMatch = pathname.match(/^\/share\/campaign\/([^/]+)\/?$/);
+  if (publicCampaignLongMatch) return { mode: "public-campaign", token: publicCampaignLongMatch[1], short: false, meta: { title: "公开表单" } };
+  const publicCampaignShortMatch = pathname.match(/^\/s\/c\/([^/]+)\/?$/);
+  if (publicCampaignShortMatch) return { mode: "public-campaign", token: publicCampaignShortMatch[1], short: true, meta: { title: "公开表单" } };
   const publicLongMatch = pathname.match(/^\/share\/program-sheet\/([^/]+)\/?$/);
   if (publicLongMatch) return { mode: "public-program-sheet", token: publicLongMatch[1], meta: { title: "节目单" } };
   const publicShortMatch = pathname.match(/^\/s\/ps\/([^/]+)\/?$/);

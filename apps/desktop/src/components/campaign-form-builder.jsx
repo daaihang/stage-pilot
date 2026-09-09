@@ -25,6 +25,7 @@ const EFFECTS = { show: "显示", hide: "隐藏", required: "设为必填", opti
 const RESULT_TARGETS = { production_registration: "活动报名", production_program: "活动节目", production_person: "活动人员", requirement: "活动需求", resource_commitment: "资源承诺", form_response: "通用表单响应" };
 const PRODUCTION_ROLES = { producer: "Producer", editor: "Editor", stage_manager: "Stage Manager", contributor: "Contributor", viewer: "Viewer" };
 const CHOICE_TYPES = new Set(["select", "radio", "checkbox", "multiselect"]);
+const EMPTY_ANSWERS = {};
 
 function optionsText(options) { return Array.isArray(options) ? options.map((item) => typeof item === "string" ? item : item.label || item.value || "").join("\n") : ""; }
 function optionsValue(text) { return String(text || "").split("\n").map((item) => item.trim()).filter(Boolean).map((item) => ({ value: item, label: item })); }
@@ -35,27 +36,29 @@ function orderedFields(form) {
   return [...ordered, ...form.fields.filter((field) => !ordered.some((item) => item.id === field.id))];
 }
 
-export function CampaignFormPreview({ form, title = "表单预览" }) {
+export function CampaignFormPreview({ form, title = "表单预览", mode = "preview", initialAnswers = EMPTY_ANSWERS, onAnswersChange, onSubmit, submitting = false }) {
   const model = normalizeFormVersion(form);
-  const [answers, setAnswers] = useState({});
+  const [answers, setAnswers] = useState(initialAnswers || {});
+  useEffect(() => { setAnswers(initialAnswers || {}); }, [initialAnswers]);
   const state = useMemo(() => evaluateLogic(model, answers), [model, answers]);
-  const setAnswer = (id, value) => setAnswers((current) => ({ ...current, [id]: value }));
+  const setAnswer = (id, value) => setAnswers((current) => { const next = { ...current, [id]: value }; onAnswersChange?.(next); return next; });
   const input = (field) => {
     if (["select", "multiselect"].includes(field.type)) return <select className="min-h-9 w-full rounded-md border bg-background px-3 py-2 text-sm" multiple={field.type === "multiselect"} value={field.type === "multiselect" ? (Array.isArray(answers[field.id]) ? answers[field.id] : []) : (answers[field.id] ?? "")} onChange={(event) => setAnswer(field.id, field.type === "multiselect" ? Array.from(event.target.selectedOptions).map((option) => option.value) : event.target.value)}>{(field.options || []).map((option) => <option key={option.value || option.label} value={option.value || option.label}>{option.label || option.value}</option>)}</select>;
     if (field.type === "radio") return <div className="space-y-1">{(field.options || []).map((option) => <label key={option.value || option.label} className="flex items-center gap-2 text-sm"><input type="radio" name={field.id} checked={answers[field.id] === option.value} onChange={() => setAnswer(field.id, option.value)} />{option.label || option.value}</label>)}</div>;
     if (field.type === "checkbox") return <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(answers[field.id])} onChange={(event) => setAnswer(field.id, event.target.checked)} />确认</label>;
     if (field.type === "textarea") return <Textarea value={answers[field.id] || ""} onChange={(event) => setAnswer(field.id, event.target.value)} rows={3} />;
-    if (field.type === "file") return <Input type="file" onChange={(event) => setAnswer(field.id, event.target.files?.[0]?.name || "")} />;
+    if (field.type === "file") return mode === "public" ? <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">公开表单暂不支持文件上传。</p> : <Input type="file" onChange={(event) => setAnswer(field.id, event.target.files?.[0]?.name || "")} />;
     return <Input type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "url" ? "url" : field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text"} value={answers[field.id] || ""} placeholder={field.placeholder || ""} onChange={(event) => setAnswer(field.id, event.target.value)} />;
   };
-  return <Card className="border-dashed"><CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle className="text-base">{title}</CardTitle><CardDescription>预览使用同一份规范化 FormVersion，不会创建 Entry。</CardDescription></div><Button type="button" variant="ghost" size="sm" onClick={() => setAnswers({})}><X />重置答案</Button></CardHeader><CardContent className="space-y-5">{model.blocks.map((block) => {
+  const reset = () => { setAnswers({}); onAnswersChange?.({}); };
+  return <Card className="border-dashed"><CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle className="text-base">{title}</CardTitle><CardDescription>{mode === "public" ? "请填写以下信息并提交。" : "预览使用同一份规范化 FormVersion，不会创建 Entry。"}</CardDescription></div><Button type="button" variant="ghost" size="sm" onClick={reset}><X />重置答案</Button></CardHeader><CardContent className="space-y-5">{model.blocks.map((block) => {
     if (block.type === "divider") return <hr key={block.id} />;
     if (block.type === "end") return <div key={block.id} className="rounded-md bg-muted p-4 text-center text-sm"><p className="font-medium">{block.title || model.endScreen?.title || "感谢您的提交"}</p>{block.body || model.endScreen?.body ? <p className="mt-1 text-xs text-muted-foreground">{block.body || model.endScreen.body}</p> : null}</div>;
     if (block.type !== "field") return <div key={block.id} className={block.type === "section" ? "border-b pb-2 text-sm font-medium" : "space-y-1"}><p className="text-sm font-medium">{block.title || BLOCK_TYPES[block.type]}</p>{block.body ? <p className="whitespace-pre-wrap text-xs text-muted-foreground">{block.body}</p> : null}</div>;
     const field = model.fields.find((item) => item.id === block.field_key);
     if (!field || state[field.id]?.visible === false || field.type === "hidden") return null;
     return <label key={block.id} className="block space-y-1.5"><span className="text-sm font-medium">{field.label || "未命名字段"}{(state[field.id]?.required ?? field.required) ? <span className="ml-1 text-destructive">*</span> : null}</span>{field.helpText ? <span className="block text-xs text-muted-foreground">{field.helpText}</span> : null}{input(field)}</label>;
-  })}{!model.blocks.length ? <p className="py-8 text-center text-sm text-muted-foreground">暂无内容块。</p> : null}</CardContent></Card>;
+  })}{!model.blocks.length ? <p className="py-8 text-center text-sm text-muted-foreground">暂无内容块。</p> : null}{mode === "public" ? <div className="border-t pt-4"><Button type="button" className="w-full" disabled={submitting || !onSubmit} onClick={() => onSubmit?.(answers)}>{submitting ? "提交中…" : "提交表单"}</Button></div> : null}</CardContent></Card>;
 }
 
 export function CampaignPreviewRegistration({ campaign }) {

@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30-32 时运行；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30-33 时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -36,8 +36,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
-	if version != "30" && version != "31" && version != "32" {
-		t.Skipf("campaign migration schema is %s, want 30, 31 or 32", version)
+	if version != "30" && version != "31" && version != "32" && version != "33" {
+		t.Skipf("campaign migration schema is %s, want 30, 31, 32 or 33", version)
 	}
 	for _, table := range []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
@@ -45,6 +45,7 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 		"entries", "entry_revisions", "decisions", "entry_materializations", "form_responses",
 		"api_idempotency_keys",
 		"review_recipe_templates", "review_recipe_versions",
+		"campaign_share_links", "campaign_public_submission_idempotency",
 	} {
 		var registered *string
 		if err := app.db.QueryRow(t.Context(), `SELECT to_regclass($1)`, "public."+table).Scan(&registered); err != nil {
@@ -59,8 +60,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 func TestCampaignFormBlocksV2TemplateInvariant(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || version != "32" {
-		t.Skipf("campaign form blocks v2 requires schema 32 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "32" && version != "33") {
+		t.Skipf("campaign form blocks v2 requires schema 32 or 33 (got %s)", version)
 	}
 	rows, err := app.db.Query(t.Context(), `
 		SELECT ctv.definition->'form'->'fields', ctv.definition->'form'->'blocks', ctv.review_recipe_version_id
@@ -275,5 +276,19 @@ func TestCampaignSystemTemplateSeedAndIdempotencyTable(t *testing.T) {
 	}
 	if versionCount != 4 {
 		t.Fatalf("system template version count = %d, want 4", versionCount)
+	}
+}
+
+func TestCampaignPublicIntakeSchema(t *testing.T) {
+	app := newIntegrationApp(t)
+	var version string
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || version != "33" {
+		t.Skipf("campaign public intake requires schema 33 (got %s)", version)
+	}
+	for _, table := range []string{"campaign_share_links", "campaign_public_submission_idempotency"} {
+		var registered *string
+		if err := app.db.QueryRow(t.Context(), `SELECT to_regclass($1)`, "public."+table).Scan(&registered); err != nil || registered == nil {
+			t.Fatalf("public intake table %s missing", table)
+		}
 	}
 }
