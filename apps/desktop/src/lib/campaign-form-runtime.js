@@ -30,6 +30,16 @@ function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isValidDateOnly(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day;
+}
+
 function fieldById(form) {
   return new Map((Array.isArray(form?.fields) ? form.fields : []).map((field) => [field.id, field]));
 }
@@ -101,7 +111,9 @@ export function evaluateFormState(form, answers = EMPTY) {
   }
   for (const field of fields) {
     const item = state[field.id];
-    item.visible = hidden.has(field.id) ? false : shown.has(field.id) ? true : true;
+    const fieldIndex = order.get(field.id);
+    const afterEnd = Number.isInteger(fieldIndex) && runtimePastEnd(fieldIndex, endBlockIndex);
+    item.visible = afterEnd || hidden.has(field.id) ? false : shown.has(field.id) ? true : true;
     item.required = required.has(field.id) ? true : optional.has(field.id) ? false : Boolean(field.required);
     if (!item.visible) item.required = false;
   }
@@ -138,13 +150,15 @@ export function normalizeAnswers(form, answers = EMPTY, { timezone = "Asia/Shang
     } else if (STRING_TYPES.has(field.type)) {
       if (raw === "") continue;
       if (typeof raw !== "string") issues.push({ code: "invalid_string_answer", path: `/answers/${id}`, message: `${field.label || id} 格式无效` });
-      else if (field.type === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(raw)) issues.push({ code: "invalid_date_answer", path: `/answers/${id}`, message: `${field.label || id} 日期格式无效` });
+      else if (field.type === "date" && !isValidDateOnly(raw)) issues.push({ code: "invalid_date_answer", path: `/answers/${id}`, message: `${field.label || id} 日期格式无效` });
       else if (field.type === "datetime") {
-        const canonical = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(raw) ? localDateTimeToUtc(raw, timezone) : raw;
-        if (!canonical || Number.isNaN(Date.parse(canonical))) issues.push({ code: "invalid_datetime_answer", path: `/answers/${id}`, message: `${field.label || id} 日期时间格式无效` });
-        else normalized[id] = canonical;
+        const localValue = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(raw) ? localDateTimeToUtc(raw, timezone) : raw;
+        const parsed = localValue ? new Date(localValue) : null;
+        if (!parsed || Number.isNaN(parsed.getTime())) issues.push({ code: "invalid_datetime_answer", path: `/answers/${id}`, message: `${field.label || id} 日期时间格式无效` });
+        else normalized[id] = parsed.toISOString().replace(".000Z", "Z");
       } else normalized[id] = field.type === "email" ? raw.trim().toLowerCase() : raw;
     } else if (field.type === "select" || field.type === "radio") {
+      if (raw === "") continue;
       if (typeof raw !== "string" || !optionsFor(field).includes(raw)) issues.push({ code: "invalid_option_answer", path: `/answers/${id}`, message: `${field.label || id} 选项无效` });
       else normalized[id] = raw;
     } else if (field.type === "checkbox") {
@@ -155,6 +169,8 @@ export function normalizeAnswers(form, answers = EMPTY, { timezone = "Asia/Shang
       else if (raw.length) normalized[id] = [...raw];
     } else if (field.type === "file") {
       issues.push({ code: "file_upload_unavailable", path: `/answers/${id}`, message: "当前公开表单暂不支持文件字段" });
+    } else {
+      issues.push({ code: "invalid_field_type", path: `/answers/${id}`, message: `${field.label || id} 类型无效` });
     }
   }
 
@@ -167,6 +183,8 @@ export function normalizeAnswers(form, answers = EMPTY, { timezone = "Asia/Shang
     }
   }
   for (const block of blocks.filter((item) => item?.type === "consent")) {
+    const blockIndex = blocks.indexOf(block);
+    if (runtimePastEnd(blockIndex, state.endBlockIndex)) continue;
     if (block.required && normalized[block.id] !== true) issues.push({ code: "consent_required", path: `/answers/${block.id}`, message: `${block.title || "同意确认"} 必须勾选` });
   }
   return { answers: normalized, issues, state, valid: issues.length === 0 };

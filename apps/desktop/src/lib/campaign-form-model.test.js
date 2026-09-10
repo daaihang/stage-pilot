@@ -52,9 +52,9 @@ test("runtime keeps strict number types and omits optional empty values", () => 
 test("runtime applies hidden priority, dynamic required, consent and end state", () => {
   const form = normalizeFormVersion({
     blocks: [
+      { id: "consent_block", type: "consent", title: "规则", required: true },
       { id: "kind_block", type: "field", field_key: "kind" },
       { id: "detail_block", type: "field", field_key: "detail" },
-      { id: "consent_block", type: "consent", title: "规则", required: true },
       { id: "last_block", type: "field", field_key: "last" },
     ],
     fields: [
@@ -71,7 +71,7 @@ test("runtime applies hidden priority, dynamic required, consent and end state",
   const state = evaluateFormState(form, { kind: "skip" });
   assert.equal(state.fields.detail.visible, false);
   assert.equal(state.endTriggered, true);
-  assert.equal(state.fields.last.visible, true);
+  assert.equal(state.fields.last.visible, false);
   const invalid = validateAnswers(form, { kind: "skip", consent_block: false });
   assert.equal(invalid.valid, false);
   assert.equal(invalid.issues.some((issue) => issue.code === "consent_required"), true);
@@ -86,4 +86,28 @@ test("runtime converts activity-local datetime to UTC", () => {
   const result = validateAnswers(form, { when: "2026-01-01T12:00" }, { timezone: "Asia/Shanghai" });
   assert.equal(result.valid, true);
   assert.equal(result.answers.when, "2026-01-01T04:00:00Z");
+});
+
+test("runtime canonicalizes offset datetimes and rejects impossible dates", () => {
+  const form = normalizeFormVersion({
+    blocks: [{ id: "date_block", type: "field", field_key: "date" }, { id: "when_block", type: "field", field_key: "when" }],
+    fields: [{ id: "date", type: "date", label: "日期" }, { id: "when", type: "datetime", label: "时间" }],
+  });
+  const invalid = validateAnswers(form, { date: "2026-02-29" });
+  assert.equal(invalid.valid, false);
+  assert.equal(invalid.issues[0].code, "invalid_date_answer");
+  const normalized = validateAnswers(form, { date: "2026-02-28", when: "2026-01-01T12:00:00+08:00" });
+  assert.equal(normalized.valid, true);
+  assert.equal(normalized.answers.when, "2026-01-01T04:00:00Z");
+});
+
+test("runtime omits optional empty choices while keeping boolean checkbox semantics", () => {
+  const form = normalizeFormVersion({
+    blocks: [{ id: "choice_block", type: "field", field_key: "choice" }, { id: "flag_block", type: "field", field_key: "flag" }],
+    fields: [{ id: "choice", type: "select", label: "选项", options: [{ value: "a", label: "A" }] }, { id: "flag", type: "checkbox", label: "确认" }],
+  });
+  const result = validateAnswers(form, { choice: "", flag: false });
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.answers, { flag: false });
+  assert.equal(clientValidateForm(form).filter((issue) => issue.severity === "error").length, 0);
 });

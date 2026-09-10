@@ -183,7 +183,7 @@ export function clientValidateForm(form) {
     ids.add(field.id);
     if (!FIELD_TYPES.has(field.type)) issues.push({ severity: "error", code: "invalid_form_field", path: `/fields/${index}/type`, message: "字段类型无效" });
     if (!String(field.label || "").trim()) issues.push({ severity: "error", code: "missing_required_field", path: `/fields/${index}/label`, message: "字段标签不能为空" });
-    if (["select", "radio", "checkbox", "multiselect"].includes(field.type)) {
+    if (["select", "radio", "multiselect"].includes(field.type)) {
       if (!Array.isArray(field.options) || field.options.length === 0) issues.push({ severity: "error", code: "field_options_required", path: `/fields/${index}/options`, message: "选择字段必须配置选项" });
       else {
         const optionValues = field.options.map((option) => typeof option === "string" ? option.trim() : String(option?.value || "").trim());

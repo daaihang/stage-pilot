@@ -180,7 +180,7 @@ func validateFormDefinitionValue(form formDefinition) error {
 				return &formValidationError{"semantic_field_type_mismatch", "语义字段类型不兼容"}
 			}
 		}
-		if fieldType == "select" || fieldType == "radio" || fieldType == "checkbox" || fieldType == "multiselect" {
+		if fieldType == "select" || fieldType == "radio" || fieldType == "multiselect" {
 			if err := validateFieldOptions(field); err != nil {
 				return err
 			}

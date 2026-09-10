@@ -261,6 +261,11 @@ func (runtime publicFormRuntime) evaluate(answers map[string]any) publicFormRunt
 		}
 	}
 	for id := range runtime.fields {
+		if order, exists := runtime.fieldOrder[id]; exists && runtimePastEnd(order, state.EndBlockIndex) {
+			state.Visible[id] = false
+			state.Required[id] = false
+			continue
+		}
 		state.Visible[id] = !hidden[id]
 		if !state.Visible[id] {
 			state.Required[id] = false
@@ -304,7 +309,11 @@ func runtimeNormalizeDatetime(value any, timezone string) (string, error) {
 	}
 	location, err := time.LoadLocation(timezone)
 	if err != nil {
-		location = time.UTC
+		// Keep the same fallback as the desktop runtime. Production timezones
+		// are validated at the campaign boundary, but a malformed legacy value
+		// should not make the two runtimes interpret a wall-clock answer
+		// differently.
+		location, _ = time.LoadLocation("Asia/Shanghai")
 	}
 	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05"} {
 		if parsed, parseErr := time.ParseInLocation(layout, text, location); parseErr == nil {
