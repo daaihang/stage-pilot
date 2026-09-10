@@ -53,6 +53,7 @@ type programSheetItem struct {
 	Title                   string         `json:"title,omitempty"`
 	DurationSeconds         int            `json:"duration_seconds,omitempty"`
 	ProgramSnapshot         map[string]any `json:"program_snapshot,omitempty"`
+	SegmentTypeSnapshot     map[string]any `json:"segment_type_snapshot,omitempty"`
 }
 type programSheetAssignment struct {
 	OccurrenceID string    `json:"occurrence_id"`
@@ -69,6 +70,9 @@ type programRelease struct {
 	Snapshot     json.RawMessage `json:"snapshot"`
 	PublishedBy  string          `json:"published_by"`
 	PublishedAt  time.Time       `json:"published_at"`
+	RetractedAt  *time.Time      `json:"retracted_at,omitempty"`
+	RetractedBy  *string         `json:"retracted_by,omitempty"`
+	RetractNote  string          `json:"retract_note,omitempty"`
 }
 type programShareLink struct {
 	ID             string     `json:"id"`
@@ -138,6 +142,14 @@ func (app *application) loadProgramSheet(ctx context.Context, id string) (progra
 				s.Items[len(s.Items)-1].Title = name
 				s.Items[len(s.Items)-1].DurationSeconds = duration
 				s.Items[len(s.Items)-1].ProgramSnapshot = map[string]any{"id": *i.ProductionProgramID, "name": name, "program_type_name": typeName, "performers": performerValues, "duration_seconds": duration, "description": description, "technical_notes": technicalNotes}
+			}
+		}
+		if i.SegmentTypeID != nil {
+			var key, name, category, color string
+			var dur int
+			var counts, audience, execute, active bool
+			if err := app.db.QueryRow(ctx, `SELECT COALESCE(system_key,''),name,category,color,default_duration_seconds,counts_toward_duration,audience_visible,requires_execution,is_active FROM program_sheet_segment_types WHERE id=$1 AND deleted_at IS NULL`, *i.SegmentTypeID).Scan(&key, &name, &category, &color, &dur, &counts, &audience, &execute, &active); err == nil {
+				s.Items[len(s.Items)-1].SegmentTypeSnapshot = map[string]any{"id": *i.SegmentTypeID, "system_key": key, "name": name, "category": category, "color": color, "default_duration_seconds": dur, "counts_toward_duration": counts, "audience_visible": audience, "requires_execution": execute, "is_active": active}
 			}
 		}
 	}
@@ -623,7 +635,7 @@ func (app *application) copyProgramSheet(w http.ResponseWriter, r *http.Request)
 	}
 	defer tx.Rollback(r.Context())
 	id := newID()
-	if _, e = tx.Exec(r.Context(), `INSERT INTO program_sheets (id,workspace_id,production_id,name,revision,change_note,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)`, id, access.WorkspaceID, src.ProductionID, in.Name, "复制自 "+src.Name, claims(r).Subject); e != nil {
+	if _, e = tx.Exec(r.Context(), `INSERT INTO program_sheets (id,workspace_id,production_id,name,revision,change_note,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)`, id, access.WorkspaceID, src.ProductionID, in.Name, newRev, "复制自 "+src.Name, claims(r).Subject); e != nil {
 		serverError(w, e)
 		return
 	}
@@ -721,8 +733,9 @@ func (app *application) publishProgramSheet(w http.ResponseWriter, r *http.Reque
 		errorJSON(w, 409, "invalid_status", "归档节目单不能发布")
 		return
 	}
-	if len(s.Items) == 0 {
-		errorJSON(w, 400, "invalid_sheet", "节目单至少需要一个条目")
+	check := app.programSheetPublishCheck(s)
+	if !check.CanPublish {
+		errorJSON(w, 400, "invalid_sheet", strings.Join(check.Errors, "；"))
 		return
 	}
 	snapshot, _ := json.Marshal(map[string]any{"id": s.ID, "name": s.Name, "revision": s.Revision, "items": s.Items, "assignments": s.Assignments, "published_at": time.Now().UTC()})
@@ -748,8 +761,57 @@ func (app *application) publishProgramSheet(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, 201, map[string]any{"release": map[string]any{"id": rid, "sheet_id": s.ID, "revision": s.Revision, "snapshot": json.RawMessage(snapshot), "published_at": now}})
 }
+
+type programSheetPublishCheckResult struct {
+	CanPublish bool           `json:"can_publish"`
+	Errors     []string       `json:"errors"`
+	Warnings   []string       `json:"warnings"`
+	Summary    map[string]any `json:"summary"`
+}
+
+func (app *application) programSheetPublishCheck(s programSheet) programSheetPublishCheckResult {
+	result := programSheetPublishCheckResult{CanPublish: true, Errors: []string{}, Warnings: []string{}, Summary: map[string]any{"item_count": len(s.Items), "assigned_occurrences": len(s.Assignments)}}
+	if len(s.Items) == 0 {
+		result.Errors = append(result.Errors, "节目单至少需要一个条目")
+	}
+	duration, visible := 0, 0
+	for _, item := range s.Items {
+		if item.Kind == "program" && item.ProductionProgramID == nil {
+			result.Errors = append(result.Errors, "节目条目缺少活动节目引用")
+		}
+		seconds := item.DurationSeconds
+		if item.DurationSecondsOverride != nil {
+			seconds = *item.DurationSecondsOverride
+		}
+		if seconds < 0 {
+			result.Errors = append(result.Errors, "条目时长不能为负数")
+		}
+		if item.CountsTowardDuration {
+			duration += seconds
+		}
+		if item.AudienceVisible {
+			visible++
+		}
+	}
+	if visible == 0 {
+		result.Warnings = append(result.Warnings, "没有面向观众的条目，公开预览将为空")
+	}
+	result.Summary["duration_seconds"] = duration
+	result.CanPublish = len(result.Errors) == 0
+	return result
+}
+
+func (app *application) previewPublishProgramSheet(w http.ResponseWriter, r *http.Request) {
+	s, err := app.loadProgramSheet(r.Context(), r.PathValue("sheetId"))
+	if err != nil {
+		errorJSON(w, 404, "not_found", "节目单不存在")
+		return
+	}
+	writeJSON(w, 200, app.programSheetPublishCheck(s))
+}
+
 func (app *application) listProgramReleases(w http.ResponseWriter, r *http.Request) {
-	rows, e := app.db.Query(r.Context(), `SELECT id,workspace_id,production_id,sheet_id,revision,snapshot,published_by,published_at FROM program_sheet_releases WHERE sheet_id=$1 ORDER BY published_at DESC`, r.PathValue("sheetId"))
+	rows, e := app.db.Query(r.Context(), `SELECT id,workspace_id,production_id,sheet_id,revision,snapshot,published_by,published_at,retracted_at,retracted_by,retract_note FROM program_sheet_releases WHERE sheet_id=$1 ORDER BY published_at DESC`, r.PathValue("sheetId"))
 	if e != nil {
 		serverError(w, e)
 		return
@@ -758,7 +820,7 @@ func (app *application) listProgramReleases(w http.ResponseWriter, r *http.Reque
 	out := []programRelease{}
 	for rows.Next() {
 		var p programRelease
-		if e = rows.Scan(&p.ID, &p.WorkspaceID, &p.ProductionID, &p.SheetID, &p.Revision, &p.Snapshot, &p.PublishedBy, &p.PublishedAt); e != nil {
+		if e = rows.Scan(&p.ID, &p.WorkspaceID, &p.ProductionID, &p.SheetID, &p.Revision, &p.Snapshot, &p.PublishedBy, &p.PublishedAt, &p.RetractedAt, &p.RetractedBy, &p.RetractNote); e != nil {
 			serverError(w, e)
 			return
 		}
@@ -768,7 +830,7 @@ func (app *application) listProgramReleases(w http.ResponseWriter, r *http.Reque
 }
 func (app *application) getProgramRelease(w http.ResponseWriter, r *http.Request) {
 	var p programRelease
-	e := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,production_id,sheet_id,revision,snapshot,published_by,published_at FROM program_sheet_releases WHERE id=$1`, r.PathValue("releaseId")).Scan(&p.ID, &p.WorkspaceID, &p.ProductionID, &p.SheetID, &p.Revision, &p.Snapshot, &p.PublishedBy, &p.PublishedAt)
+	e := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,production_id,sheet_id,revision,snapshot,published_by,published_at,retracted_at,retracted_by,retract_note FROM program_sheet_releases WHERE id=$1`, r.PathValue("releaseId")).Scan(&p.ID, &p.WorkspaceID, &p.ProductionID, &p.SheetID, &p.Revision, &p.Snapshot, &p.PublishedBy, &p.PublishedAt, &p.RetractedAt, &p.RetractedBy, &p.RetractNote)
 	if e != nil {
 		errorJSON(w, 404, "not_found", "发布版本不存在")
 		return
@@ -778,6 +840,130 @@ func (app *application) getProgramRelease(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, 200, p)
+}
+
+func (app *application) retractProgramRelease(w http.ResponseWriter, r *http.Request) {
+	releaseID := r.PathValue("releaseId")
+	var productionID string
+	if err := app.db.QueryRow(r.Context(), `SELECT production_id FROM program_sheet_releases WHERE id=$1`, releaseID).Scan(&productionID); err != nil {
+		errorJSON(w, 404, "not_found", "发布版本不存在")
+		return
+	}
+	access, accessErr := app.productionAccessFor(r.Context(), claims(r).Subject, productionID)
+	if accessErr != nil || !access.Permissions[productionPublish] {
+		errorJSON(w, 403, "forbidden", "无权撤回发布版本")
+		return
+	}
+	var note string
+	var in struct {
+		Note string `json:"note"`
+	}
+	if decodeJSON(w, r, &in) {
+		note = in.Note
+	}
+	tx, err := app.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	now := time.Now().UTC()
+	if _, err = tx.Exec(r.Context(), `UPDATE program_sheet_releases SET retracted_at=$1,retracted_by=$2,retract_note=$3 WHERE id=$4 AND retracted_at IS NULL`, now, claims(r).Subject, note, releaseID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE program_sheet_share_links SET revoked_at=$1 WHERE release_id=$2 AND revoked_at IS NULL`, now, releaseID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE program_sheets SET status='draft',updated_at=$1 WHERE id=(SELECT sheet_id FROM program_sheet_releases WHERE id=$2) AND status='published'`, now, releaseID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "retracted"})
+}
+
+func (app *application) reviseProgramSheet(w http.ResponseWriter, r *http.Request) {
+	src, err := app.loadProgramSheet(r.Context(), r.PathValue("sheetId"))
+	if err != nil {
+		errorJSON(w, 404, "not_found", "节目单不存在")
+		return
+	}
+	var in struct {
+		Name       string `json:"name"`
+		ChangeNote string `json:"change_note"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if strings.TrimSpace(in.Name) == "" {
+		in.Name = src.Name + " 修订"
+	}
+	access := currentProductionAccess(r)
+	var rev int
+	if err = app.db.QueryRow(r.Context(), `SELECT COALESCE(MAX(revision),0)+1 FROM program_sheets WHERE production_id=$1`, src.ProductionID).Scan(&rev); err != nil {
+		serverError(w, err)
+		return
+	}
+	tx, err := app.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	id := newID()
+	if _, err = tx.Exec(r.Context(), `INSERT INTO program_sheets (id,workspace_id,production_id,name,revision,change_note,created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)`, id, access.WorkspaceID, src.ProductionID, in.Name, rev, in.ChangeNote, claims(r).Subject); err != nil {
+		serverError(w, err)
+		return
+	}
+	for _, item := range src.Items {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO program_sheet_items (id,workspace_id,production_id,sheet_id,kind,sort_order,production_program_id,segment_type_id,title_override,duration_seconds_override,counts_toward_duration,audience_visible,requires_execution,notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, newID(), access.WorkspaceID, src.ProductionID, id, item.Kind, item.SortOrder, item.ProductionProgramID, item.SegmentTypeID, item.TitleOverride, item.DurationSecondsOverride, item.CountsTowardDuration, item.AudienceVisible, item.RequiresExecution, item.Notes); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
+		return
+	}
+	created, _ := app.loadProgramSheet(r.Context(), id)
+	writeJSON(w, 201, created)
+}
+
+func (app *application) diffProgramRelease(w http.ResponseWriter, r *http.Request) {
+	var left, right json.RawMessage
+	var productionID string
+	if err := app.db.QueryRow(r.Context(), `SELECT production_id,snapshot FROM program_sheet_releases WHERE id=$1`, r.PathValue("releaseId")).Scan(&productionID, &left); err != nil {
+		errorJSON(w, 404, "not_found", "发布版本不存在")
+		return
+	}
+	if _, err := app.productionAccessFor(r.Context(), claims(r).Subject, productionID); err != nil {
+		errorJSON(w, 404, "not_found", "发布版本不存在")
+		return
+	}
+	other := r.URL.Query().Get("compare_release_id")
+	if other == "" {
+		errorJSON(w, 400, "invalid_input", "缺少对比版本")
+		return
+	}
+	if err := app.db.QueryRow(r.Context(), `SELECT snapshot FROM program_sheet_releases WHERE id=$1`, other).Scan(&right); err != nil {
+		errorJSON(w, 404, "not_found", "对比版本不存在")
+		return
+	}
+	var a, b map[string]any
+	_ = json.Unmarshal(left, &a)
+	_ = json.Unmarshal(right, &b)
+	changed := []string{}
+	for _, key := range []string{"name", "revision", "items", "assignments"} {
+		if fmt.Sprint(a[key]) != fmt.Sprint(b[key]) {
+			changed = append(changed, key)
+		}
+	}
+	writeJSON(w, 200, map[string]any{"release_id": r.PathValue("releaseId"), "compare_release_id": other, "changed_fields": changed, "same": len(changed) == 0})
 }
 
 const shareAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -981,7 +1167,7 @@ func (app *application) publicProgramSheetShare(w http.ResponseWriter, r *http.R
 		}
 	}
 	var snapshot json.RawMessage
-	e = app.db.QueryRow(r.Context(), `SELECT r.snapshot FROM program_sheet_releases r JOIN program_sheets s ON s.id=r.sheet_id WHERE r.id=$1 AND s.status='published'`, release).Scan(&snapshot)
+	e = app.db.QueryRow(r.Context(), `SELECT r.snapshot FROM program_sheet_releases r JOIN program_sheets s ON s.id=r.sheet_id WHERE r.id=$1 AND s.status='published' AND r.retracted_at IS NULL`, release).Scan(&snapshot)
 	if e != nil {
 		errorJSON(w, 404, "share_unavailable", "发布版本不存在")
 		return

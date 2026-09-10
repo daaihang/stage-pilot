@@ -53,6 +53,7 @@ import {
   createShareLink,
   listProgramReleases,
   listShareLinks,
+  rotateShareLink,
   revokeShareLink,
 } from "@/lib/program-sheet-api";
 import { notify } from "@/components/ui/sonner";
@@ -718,16 +719,17 @@ export function ProgramSheetDetail({
             </Button>
             {shareLinks.map((link) => (
               <div key={link.id} className="space-y-1 border p-3 text-xs">
-                <p className="break-all">{link.long_url || link.longUrl}</p>
-                <p className="text-muted-foreground">
-                  短链接：{link.short_url || link.shortUrl}
-                </p>
+                {(link.long_url || link.longUrl) ? <p className="break-all">{link.long_url || link.longUrl}</p> : <p className="text-muted-foreground">完整链接仅在创建或轮换时显示；刷新后请轮换生成新的可复制链接。</p>}
+                {(link.short_url || link.shortUrl) ? <p className="text-muted-foreground">短链接：{link.short_url || link.shortUrl}</p> : null}
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <Button size="sm" variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(link.long_url || link.longUrl || ""); notify.success("长期分享链接已复制"); } catch (error) { notify.error("复制分享链接失败", { description: error?.message || String(error) }); } }}>
+                  <Button size="sm" variant="outline" disabled={!link.long_url && !link.longUrl} onClick={async () => { try { await navigator.clipboard.writeText(link.long_url || link.longUrl || ""); notify.success("长期分享链接已复制"); } catch (error) { notify.error("复制分享链接失败", { description: error?.message || String(error) }); } }}>
                     <Copy />复制长期链接
                   </Button>
-                  <Button size="sm" variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(link.short_url || link.shortUrl || ""); notify.success("短分享链接已复制"); } catch (error) { notify.error("复制分享链接失败", { description: error?.message || String(error) }); } }}>
+                  <Button size="sm" variant="outline" disabled={!link.short_url && !link.shortUrl} onClick={async () => { try { await navigator.clipboard.writeText(link.short_url || link.shortUrl || ""); notify.success("短分享链接已复制"); } catch (error) { notify.error("复制分享链接失败", { description: error?.message || String(error) }); } }}>
                     <Copy />复制短链接
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={async () => { try { const next = await rotateShareLink(link.id); setShareLinks((items) => [next, ...items.filter((item) => item.id !== link.id)]); notify.success("分享链接已轮换"); } catch (error) { notify.error("轮换分享链接失败", { description: error?.message || String(error) }); } }}>
+                    轮换链接
                   </Button>
                 </div>
                 <Button

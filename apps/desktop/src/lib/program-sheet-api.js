@@ -18,12 +18,23 @@ export const archiveProgramSheet = (sheetId) => request(`/v1/program-sheets/${en
 export const getProgramSheetOccurrences = (sheetId) => request(`/v1/program-sheets/${enc(sheetId)}/occurrences`);
 export const updateProgramSheetOccurrences = (sheetId, occurrenceIds) => request(`/v1/program-sheets/${enc(sheetId)}/occurrences`, { method: "PUT", body: JSON.stringify({ occurrence_ids: occurrenceIds }) });
 export const publishProgramSheet = (sheetId) => request(`/v1/program-sheets/${enc(sheetId)}/publish`, { method: "POST", body: JSON.stringify({}) });
+export const previewPublishProgramSheet = (sheetId) => request(`/v1/program-sheets/${enc(sheetId)}/publish/preview`, { method: "POST", body: JSON.stringify({}) });
+export const reviseProgramSheet = (sheetId, payload = {}) => request(`/v1/program-sheets/${enc(sheetId)}/revise`, { method: "POST", body: JSON.stringify(payload) });
 export const listProgramReleases = (sheetId) => request(`/v1/program-sheets/${enc(sheetId)}/releases`);
 export const getProgramRelease = (releaseId) => request(`/v1/program-sheet-releases/${enc(releaseId)}`);
+export const retractProgramRelease = (releaseId, note = "") => request(`/v1/program-sheet-releases/${enc(releaseId)}/retract`, { method: "POST", body: JSON.stringify({ note }) });
 export const listShareLinks = (releaseId) => request(`/v1/program-sheet-releases/${enc(releaseId)}/share-links`);
 export const createShareLink = (releaseId, accessScope) => request(`/v1/program-sheet-releases/${enc(releaseId)}/share-links`, { method: "POST", body: JSON.stringify({ access_scope: accessScope }) });
 export const rotateShareLink = (linkId) => request(`/v1/program-sheet-share-links/${enc(linkId)}/rotate`, { method: "POST", body: JSON.stringify({}) });
 export const revokeShareLink = (linkId) => request(`/v1/program-sheet-share-links/${enc(linkId)}/revoke`, { method: "POST", body: JSON.stringify({}) });
+
+export const listSegmentTypes = (workspaceId) => request(`/v1/workspaces/${enc(workspaceId)}/program-sheet-segment-types`);
+export const createSegmentType = (workspaceId, payload) => request(`/v1/workspaces/${enc(workspaceId)}/program-sheet-segment-types`, { method: "POST", body: JSON.stringify(payload) });
+export const updateSegmentType = (workspaceId, id, payload) => request(`/v1/workspaces/${enc(workspaceId)}/program-sheet-segment-types/${enc(id)}`, { method: "PATCH", body: JSON.stringify(payload) });
+export const reorderSegmentTypes = (workspaceId, items) => request(`/v1/workspaces/${enc(workspaceId)}/program-sheet-segment-types/order`, { method: "PATCH", body: JSON.stringify({ items: items.map((item, index) => ({ id: item.id || item, sort_order: index })) }) }).then((result) => result?.items || result || []);
+export const deleteSegmentType = (workspaceId, id) => request(`/v1/workspaces/${enc(workspaceId)}/program-sheet-segment-types/${enc(id)}/delete`, { method: "POST", body: JSON.stringify({}) });
+export const restoreSegmentTypes = (workspaceId) => request(`/v1/workspaces/${enc(workspaceId)}/program-sheet-segment-types/restore`, { method: "POST", body: JSON.stringify({}) }).then((result) => result?.items || result || []);
+export const migrateSegmentTypes = (workspaceId, items) => request(`/v1/workspaces/${enc(workspaceId)}/program-sheet-segment-types/migrate`, { method: "POST", body: JSON.stringify({ items }) });
 
 export function normalizeProgramSheetResponse(value, productionId) {
   const source = value?.items || value || [];

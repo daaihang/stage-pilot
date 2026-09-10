@@ -11,7 +11,7 @@ import { ProductionPageHeader } from "@/components/production-page-shell";
 import { TimeText } from "@/components/time-text";
 import { useWindowDetail, useWindowDetailRegistration } from "@/components/window-detail-context";
 import { listProductionOccurrences } from "@/lib/production-api";
-import { createProgramSheet, listProductionPrograms, listProgramSheets, normalizeProductionProgramsResponse, normalizeProgramSheetResponse, updateProgramSheet, archiveProgramSheet as archiveProgramSheetApi, copyProgramSheet as copyProgramSheetApi, publishProgramSheet as publishProgramSheetApi, updateProgramSheetOccurrences } from "@/lib/program-sheet-api";
+import { createProgramSheet, listProductionPrograms, listProgramSheets, normalizeProductionProgramsResponse, normalizeProgramSheetResponse, updateProgramSheet, archiveProgramSheet as archiveProgramSheetApi, copyProgramSheet as copyProgramSheetApi, publishProgramSheet as publishProgramSheetApi, previewPublishProgramSheet, updateProgramSheetOccurrences } from "@/lib/program-sheet-api";
 import { listResource, listResourceTypes } from "@/lib/resource-api";
 import { makeProgramSheet, makeSheetItem, makePublishedSnapshot, normalizeProgramSheetState, nowIso } from "@/lib/program-sheet-store";
 import { programSheetSegmentTypePanelPath, workspacePath } from "@/lib/navigation";
@@ -19,7 +19,8 @@ import { assignedOccurrenceIds, formatDuration, getProgramItemCount, getTotalDur
 import { notify } from "@/components/ui/sonner";
 import { ArchiveProgramSheetDialog, AssignOccurrencesDialog, CopyProgramSheetDialog, NewProgramSheetDialog, PublishProgramSheetDialog } from "@/components/program-sheet-dialogs";
 import { ProgramSheetDetail } from "@/components/program-sheet-detail";
-import { loadSegmentTypes } from "@/lib/program-sheet-segment-type-store";
+import { listSegmentTypes } from "@/lib/program-sheet-api";
+import { migrateLegacySegmentTypes } from "@/lib/program-sheet-segment-type-migration";
 import { migrateLegacyProgramSheets } from "@/lib/program-sheet-migration";
 
 function canWriteProgramSheets(workspace, production) {
@@ -113,7 +114,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     let active = true;
     setSegmentTypeLoading(true);
     setSegmentTypeError(null);
-    loadSegmentTypes(workspace.id).then((nextTypes) => {
+    migrateLegacySegmentTypes(workspace.id, { isAdmin: ["owner", "admin"].includes(workspace?.role) }).then(() => listSegmentTypes(workspace.id)).then((result) => (result?.items || result || []).map((item) => ({ ...item, systemKey: item.system_key || item.systemKey, isSystem: item.is_system ?? item.isSystem, isActive: item.is_active ?? item.isActive, sortOrder: item.sort_order ?? item.sortOrder, defaultDurationSeconds: item.default_duration_seconds ?? item.defaultDurationSeconds, countsTowardDuration: item.counts_toward_duration ?? item.countsTowardDuration, audienceVisible: item.audience_visible ?? item.audienceVisible, requiresExecution: item.requires_execution ?? item.requiresExecution }))).then((nextTypes) => {
       if (active) setSegmentTypes(nextTypes);
     }).catch((nextError) => {
       if (active) {
@@ -136,24 +137,30 @@ export function ProgramSheetsPage({ route, workspace, production }) {
   }, [load]);
 
   const selectedSheet = useMemo(() => state.sheets.find((item) => item.id === selectedId) || null, [selectedId, state.sheets]);
-  const commit = useCallback((nextState, message) => {
+  const commit = useCallback(async (nextState, message) => {
+    const previous = stateRef.current;
     const normalized = normalizeProgramSheetState(nextState, production.id);
     stateRef.current = normalized;
     setState(normalized);
     const toastId = message ? notify.loading(message) : null;
-    return Promise.all(normalized.sheets.filter((sheet) => sheet.status !== "published" && sheet.status !== "archived").map((sheet) => updateProgramSheet(sheet.id, {
-      name: sheet.name,
-      change_note: sheet.changeNote,
-      status: sheet.status,
-      items: sheet.items.map((item, index) => ({ ...item, id: item.id, sort_order: index })),
-      assignments: sheet.assignments.map((assignment) => ({ occurrence_id: assignment.occurrenceId, role: assignment.role })),
-    }))).then(() => {
+    try {
+      const results = await Promise.all(normalized.sheets.filter((sheet) => sheet.status !== "published" && sheet.status !== "archived").map((sheet) => updateProgramSheet(sheet.id, {
+        name: sheet.name,
+        change_note: sheet.changeNote,
+        status: sheet.status,
+        items: sheet.items.map((item, index) => ({ ...item, id: item.id, sort_order: index })),
+        assignments: sheet.assignments.map((assignment) => ({ occurrence_id: assignment.occurrenceId, role: assignment.role })),
+      })));
       if (toastId) notify.success("节目单已保存到云端", { id: toastId });
-    }).catch((nextError) => {
-      if (toastId) notify.error("节目单云端保存失败", { id: toastId, description: nextError?.message || String(nextError) });
-      else notify.error("节目单云端保存失败", { description: nextError?.message || String(nextError) });
-    });
-  }, [production.id, workspace.id]);
+      return results;
+    } catch (nextError) {
+      stateRef.current = previous;
+      setState(previous);
+      if (toastId) notify.error("节目单云端保存失败，已恢复原内容", { id: toastId, description: nextError?.message || String(nextError) });
+      else notify.error("节目单云端保存失败，已恢复原内容", { description: nextError?.message || String(nextError) });
+      throw nextError;
+    }
+  }, [production.id]);
   const changeSheet = useCallback((sheetId, updater, options = {}) => {
     const current = stateRef.current;
     const existing = current.sheets.find((item) => item.id === sheetId);
@@ -236,10 +243,15 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     const targetIds = assignedOccurrenceIds(sheet);
     return occurrences.filter((occurrence) => targetIds.has(occurrence.id) && stateRef.current.sheets.some((candidate) => candidate.id !== sheet.id && candidate.status === "published" && assignedOccurrenceIds(candidate).has(occurrence.id)));
   };
-  const publishSheet = (sheet) => {
+  const publishSheet = async (sheet) => {
     if (!canPublish) return notify.error("当前账号没有发布节目单的权限");
     const targetIds = assignedOccurrenceIds(sheet);
     if (!targetIds.size) return notify.error("请先关联至少一个场次");
+    try {
+      const check = await previewPublishProgramSheet(sheet.id);
+      if (!check?.can_publish) return notify.error("节目单未通过发布检查", { description: (check?.errors || []).join("；") || "请检查条目和场次关联" });
+      if (check?.warnings?.length) notify.info("发布检查有提示", { description: check.warnings.join("；") });
+    } catch (error) { return notify.error("发布检查失败", { description: error?.message || String(error) }); }
     const publishedAt = nowIso();
     const nextSheets = stateRef.current.sheets.map((candidate) => {
       if (candidate.id === sheet.id) return { ...candidate, status: "published", publishedAt, publishedSnapshot: makePublishedSnapshot(candidate, { occurrenceOverrides: [] }), updatedAt: publishedAt };

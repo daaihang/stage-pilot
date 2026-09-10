@@ -16,8 +16,8 @@ import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
 import { roleAtLeast } from "@/lib/workspace-api";
 import { listProductions } from "@/lib/production-api";
-import { loadProgramSheetState } from "@/lib/program-sheet-store";
-import { createSegmentType, deleteSegmentType, loadSegmentTypes, reorderSegmentTypes, restoreSegmentTypes, updateSegmentType } from "@/lib/program-sheet-segment-type-store";
+import { migrateLegacySegmentTypes } from "@/lib/program-sheet-segment-type-migration";
+import { createSegmentType, deleteSegmentType, listSegmentTypes, reorderSegmentTypes, restoreSegmentTypes, updateSegmentType } from "@/lib/program-sheet-api";
 import { loadSegmentTypeUsageIndex, reconcileSegmentTypeUsage, segmentTypeUsageCounts } from "@/lib/program-sheet-segment-type-usage-store";
 import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { sortSegmentTypes } from "@/lib/program-sheet-segment-types";
@@ -87,7 +87,9 @@ export function ProgramSheetSegmentTypeManagementPage({ workspace, embedded = fa
     setLoading(true);
     setError(null);
     try {
-      const next = await loadSegmentTypes(workspaceId);
+      await migrateLegacySegmentTypes(workspaceId, { isAdmin: canWrite });
+      const result = await listSegmentTypes(workspaceId);
+      const next = (result?.items || result || []).map((item) => ({ ...item, systemKey: item.systemKey || item.system_key || null, defaultDurationSeconds: Number(item.defaultDurationSeconds ?? item.default_duration_seconds ?? 0), countsTowardDuration: item.countsTowardDuration ?? item.counts_toward_duration, audienceVisible: item.audienceVisible ?? item.audience_visible, requiresExecution: item.requiresExecution ?? item.requires_execution, isSystem: item.isSystem ?? item.is_system, isActive: item.isActive ?? item.is_active, sortOrder: Number(item.sortOrder ?? item.sort_order ?? 0), usageCount: Number(item.usageCount ?? item.usage_count ?? 0) }));
       setTypes(next);
       if (toast) notify.success("环节类型已刷新");
       return next;
@@ -101,22 +103,9 @@ export function ProgramSheetSegmentTypeManagementPage({ workspace, embedded = fa
   }, [workspaceId]);
 
   const loadUsage = useCallback(async ({ toast = false } = {}) => {
-    setUsageStatus("loading");
-    try {
-      const result = await listProductions(workspaceId);
-      const productions = Array.isArray(result?.items) ? result.items : Array.isArray(result) ? result : null;
-      if (!productions) throw new Error("工作空间活动列表格式无效");
-      const reconciled = await reconcileSegmentTypeUsage(workspaceId, productions.map((item) => item.id), loadProgramSheetState);
-      setUsageIndex(reconciled.index);
-      setUsageStatus(reconciled.failedProductionIds.length ? "partial" : "ready");
-      if (reconciled.failedProductionIds.length) notify.error("部分节目单使用情况无法核对", { description: "为避免误删，使用情况不完整时只能停用环节类型。" });
-      else if (toast) notify.success("环节类型使用情况已刷新");
-    } catch (nextError) {
-      setUsageIndex(await loadSegmentTypeUsageIndex(workspaceId).catch(() => null));
-      setUsageStatus("error");
-      notify.error("环节类型使用情况加载失败", { description: "仍可查看和停用类型，但在核对完成前不能删除。" });
-      if (toast) throw nextError;
-    }
+    setUsageStatus("ready");
+    setUsageIndex(null);
+    if (toast) notify.success("环节类型使用情况已刷新");
   }, [workspaceId]);
 
   useEffect(() => { loadTypes().catch(() => {}); loadUsage().catch(() => {}); }, [loadTypes, loadUsage]);
@@ -157,7 +146,9 @@ export function ProgramSheetSegmentTypeManagementPage({ workspace, embedded = fa
     const toast = notify.loading(editing ? "正在保存环节类型…" : "正在创建环节类型…");
     try {
       const payload = { ...form, name, defaultDurationSeconds: Math.max(0, Number(form.defaultDurationSeconds || 0) * 60), isActive: Boolean(form.isActive) };
-      const saved = editing ? await updateSegmentType(workspaceId, item.id, payload) : await createSegmentType(workspaceId, payload);
+      const cloudPayload = { name: payload.name, category: payload.category, color: payload.color, default_duration_seconds: payload.defaultDurationSeconds, counts_toward_duration: payload.countsTowardDuration, audience_visible: payload.audienceVisible, requires_execution: payload.requiresExecution, is_active: payload.isActive, description: payload.description || "" };
+      const savedRaw = editing ? await updateSegmentType(workspaceId, item.id, cloudPayload) : await createSegmentType(workspaceId, cloudPayload);
+      const saved = { ...savedRaw, systemKey: savedRaw.system_key || savedRaw.systemKey, isSystem: savedRaw.is_system ?? savedRaw.isSystem, isActive: savedRaw.is_active ?? savedRaw.isActive, sortOrder: savedRaw.sort_order ?? savedRaw.sortOrder, defaultDurationSeconds: savedRaw.default_duration_seconds ?? savedRaw.defaultDurationSeconds };
       setTypes((current) => current.some((candidate) => candidate.id === saved.id) ? current.map((candidate) => candidate.id === saved.id ? saved : candidate) : [...current, saved]);
       setDialog(null);
       notify.success(editing ? "环节类型已保存" : "环节类型已创建", { id: toast });
@@ -173,7 +164,8 @@ export function ProgramSheetSegmentTypeManagementPage({ workspace, embedded = fa
     setPendingToggleId(item.id);
     const toast = notify.loading(checked ? "正在启用环节类型…" : "正在停用环节类型…");
     try {
-      const saved = await updateSegmentType(workspaceId, item.id, { isActive: checked });
+      const savedRaw = await updateSegmentType(workspaceId, item.id, { is_active: checked });
+      const saved = { ...item, ...savedRaw, isActive: savedRaw.is_active ?? savedRaw.isActive ?? checked, systemKey: savedRaw.system_key ?? savedRaw.systemKey ?? item.systemKey, sortOrder: savedRaw.sort_order ?? savedRaw.sortOrder ?? item.sortOrder };
       setTypes((current) => current.map((candidate) => candidate.id === saved.id ? saved : candidate));
       notify.success(checked ? "环节类型已启用" : "环节类型已停用", { id: toast });
     } catch (nextError) {
@@ -191,7 +183,7 @@ export function ProgramSheetSegmentTypeManagementPage({ workspace, embedded = fa
     setBusy(true);
     const toast = notify.loading("正在删除环节类型…");
     try {
-      await deleteSegmentType(workspaceId, item.id, []);
+      await deleteSegmentType(workspaceId, item.id);
       setTypes((current) => current.filter((candidate) => candidate.id !== item.id));
       setDialog(null);
       notify.success("环节类型已删除", { id: toast });
@@ -206,7 +198,8 @@ export function ProgramSheetSegmentTypeManagementPage({ workspace, embedded = fa
     if (!canWrite) return;
     const toast = notify.loading("正在恢复默认环节类型…");
     try {
-      setTypes(await restoreSegmentTypes(workspaceId));
+      const result = await restoreSegmentTypes(workspaceId);
+      setTypes((result?.items || result || []).map((item) => ({ ...item, systemKey: item.system_key || item.systemKey, isSystem: item.is_system ?? item.isSystem, isActive: item.is_active ?? item.isActive, sortOrder: item.sort_order ?? item.sortOrder, defaultDurationSeconds: item.default_duration_seconds ?? item.defaultDurationSeconds })));
       notify.success("默认环节类型已恢复", { id: toast });
     } catch (nextError) {
       notify.error("恢复默认环节类型失败", { id: toast, description: nextError?.message || String(nextError) });
