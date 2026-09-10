@@ -423,15 +423,32 @@ func validateLogicRuleFieldTypes(rule map[string]any, fieldTypes map[string]stri
 			if fieldType != "text" && fieldType != "textarea" && fieldType != "phone" && fieldType != "url" && fieldType != "select" && fieldType != "radio" && fieldType != "multiselect" {
 				return &formValidationError{"logic_operator_type_mismatch", "包含操作只能用于文本或选择字段"}
 			}
+			if _, ok := item["value"].(string); !ok {
+				return &formValidationError{"logic_value_type_mismatch", "包含条件必须使用文本或选项值"}
+			}
 		case "equals", "not_equals":
-			if fieldType == "number" {
-				if _, ok := item["value"].(float64); !ok {
-					return &formValidationError{"logic_value_type_mismatch", "数字条件必须使用数字"}
-				}
+			if !logicValueMatchesFieldType(fieldType, item["value"]) {
+				return &formValidationError{"logic_value_type_mismatch", "条件值类型与字段类型不匹配"}
 			}
 		}
 	}
 	return nil
+}
+
+func logicValueMatchesFieldType(fieldType string, value any) bool {
+	switch fieldType {
+	case "number":
+		_, ok := value.(float64)
+		return ok
+	case "checkbox":
+		_, ok := value.(bool)
+		return ok
+	case "text", "textarea", "email", "phone", "url", "date", "datetime", "select", "radio", "multiselect", "file", "hidden":
+		_, ok := value.(string)
+		return ok
+	default:
+		return false
+	}
 }
 
 func collectFieldReferences(value any, refs *[]string) {

@@ -57,3 +57,22 @@ func TestPublicFormRuntimeDatetimeUsesActivityTimezone(t *testing.T) {
 		t.Fatalf("unexpected datetime: %#v", result.Answers["when"])
 	}
 }
+
+func TestLogicValueTypesMatchFieldTypes(t *testing.T) {
+	if err := validateLogicRuleFieldTypes(map[string]any{
+		"conditions": map[string]any{
+			"match": "all",
+			"items": []any{map[string]any{"field_id": "flag", "operator": "equals", "value": "true"}},
+		},
+	}, map[string]string{"flag": "checkbox"}); err == nil {
+		t.Fatal("expected checkbox/string comparison to be rejected")
+	}
+	if err := validateLogicRuleFieldTypes(map[string]any{
+		"conditions": map[string]any{
+			"match": "all",
+			"items": []any{map[string]any{"field_id": "flag", "operator": "equals", "value": true}},
+		},
+	}, map[string]string{"flag": "checkbox"}); err != nil {
+		t.Fatalf("expected checkbox/bool comparison to be accepted: %v", err)
+	}
+}

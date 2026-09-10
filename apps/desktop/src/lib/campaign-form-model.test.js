@@ -110,4 +110,6 @@ test("runtime omits optional empty choices while keeping boolean checkbox semant
   assert.equal(result.valid, true);
   assert.deepEqual(result.answers, { flag: false });
   assert.equal(clientValidateForm(form).filter((issue) => issue.severity === "error").length, 0);
+  const invalidLogic = clientValidateForm({ ...form, logicRules: [{ id: "r1", conditions: { match: "all", items: [{ field_id: "flag", operator: "equals", value: "true" }] }, effect: "show", target_field_id: "choice" }] });
+  assert.equal(invalidLogic.some((issue) => issue.code === "logic_value_type_mismatch"), true);
 });

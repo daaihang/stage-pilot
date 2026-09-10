@@ -218,12 +218,19 @@ export function clientValidateForm(form) {
       const source = fieldById.get(item.field_id);
       if (numericOperators.has(item.operator) && source?.type !== "number") issues.push({ severity: "error", code: "logic_operator_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/operator`, message: "数字比较只能用于数字字段" });
       if (numericOperators.has(item.operator) && typeof item.value !== "number") issues.push({ severity: "error", code: "logic_value_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/value`, message: "数字比较条件必须使用数字" });
-      if (["equals", "not_equals"].includes(item.operator) && source?.type === "number" && typeof item.value !== "number") issues.push({ severity: "error", code: "logic_value_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/value`, message: "数字条件必须使用数字" });
+      if (["equals", "not_equals"].includes(item.operator) && source && !logicValueMatchesFieldType(source.type, item.value)) issues.push({ severity: "error", code: "logic_value_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/value`, message: "条件值类型与字段类型不匹配" });
+      if (item.operator === "contains" && source && (!["text", "textarea", "phone", "url", "select", "radio", "multiselect"].includes(source.type) || typeof item.value !== "string")) issues.push({ severity: "error", code: "logic_value_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/value`, message: "包含条件必须使用文本或选项值" });
     });
   });
   referencedFieldIds(next).forEach((id) => { if (!ids.has(id)) issues.push({ severity: "error", code: "unknown_logic_field", path: "/logicRules", message: "条件逻辑引用了不存在的字段" }); });
   if (next.fields.length === 0) issues.push({ severity: "warning", code: "no_fields", path: "/fields", message: "表单尚未添加字段" });
   return issues;
+}
+
+function logicValueMatchesFieldType(type, value) {
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "checkbox") return typeof value === "boolean";
+  return ["text", "textarea", "email", "phone", "url", "date", "datetime", "select", "radio", "multiselect", "file", "hidden"].includes(type) && typeof value === "string";
 }
 
 export { FIELD_TYPES, BLOCK_TYPES };
