@@ -231,225 +231,17 @@ type publicCampaignPayload struct {
 	Answers map[string]any `json:"answers"`
 }
 
-func jsonScalarEqual(value any, expected any) bool { return fmt.Sprint(value) == fmt.Sprint(expected) }
-
-func publicOptionAllowed(field map[string]any, value any) bool {
-	allowed := map[string]bool{}
-	if options, ok := field["options"].([]any); ok {
-		for _, raw := range options {
-			switch option := raw.(type) {
-			case string:
-				allowed[option] = true
-			case map[string]any:
-				if optionValue, ok := option["value"].(string); ok {
-					allowed[optionValue] = true
-				}
-			}
-		}
-	}
-	if values, ok := value.([]any); ok {
-		for _, item := range values {
-			if text, ok := item.(string); !ok || !allowed[text] {
-				return false
-			}
-		}
-		return len(values) > 0
-	}
-	text, ok := value.(string)
-	return ok && allowed[text]
-}
-
-func publicFieldVisible(field map[string]any, answers map[string]any, rules []map[string]any) bool {
-	visible := true
-	for _, rule := range rules {
-		if stringValue(rule, "effect") != "show" && stringValue(rule, "effect") != "hide" {
-			continue
-		}
-		target := firstReference(rule, "target_field_id", "target_field_key")
-		if target != stringValue(field, "id") {
-			continue
-		}
-		conditions, _ := rule["conditions"].(map[string]any)
-		items, _ := conditions["items"].([]any)
-		matches := []bool{}
-		for _, raw := range items {
-			item, _ := raw.(map[string]any)
-			source := stringValue(item, "field_id")
-			current, exists := answers[source]
-			op := stringValue(item, "operator")
-			expected := item["value"]
-			ok := false
-			switch op {
-			case "empty":
-				ok = !exists || current == nil || current == ""
-			case "not_empty":
-				ok = exists && current != nil && current != ""
-			case "equals":
-				ok = exists && jsonScalarEqual(current, expected)
-			case "not_equals":
-				ok = !exists || !jsonScalarEqual(current, expected)
-			case "contains":
-				ok = exists && strings.Contains(fmt.Sprint(current), fmt.Sprint(expected))
-			default:
-				ok = false
-			}
-			matches = append(matches, ok)
-		}
-		match := stringValue(conditions, "match")
-		conditionResult := match != "any"
-		if match == "any" {
-			conditionResult = false
-		}
-		for _, itemResult := range matches {
-			if match == "any" {
-				conditionResult = conditionResult || itemResult
-			} else {
-				conditionResult = conditionResult && itemResult
-			}
-		}
-		if conditionResult {
-			visible = stringValue(rule, "effect") == "show"
-		}
-	}
-	return visible
-}
-
-func publicFieldRequired(field map[string]any, answers map[string]any, rules []map[string]any) bool {
-	required, _ := field["required"].(bool)
-	for _, rule := range rules {
-		effect := stringValue(rule, "effect")
-		if effect != "required" && effect != "optional" {
-			continue
-		}
-		if firstReference(rule, "target_field_id", "target_field_key") != stringValue(field, "id") {
-			continue
-		}
-		conditions, _ := rule["conditions"].(map[string]any)
-		items, _ := conditions["items"].([]any)
-		match := stringValue(conditions, "match")
-		result := match != "any"
-		if match == "any" {
-			result = false
-		}
-		for _, raw := range items {
-			item, _ := raw.(map[string]any)
-			source := stringValue(item, "field_id")
-			current, exists := answers[source]
-			expected := item["value"]
-			ok := false
-			switch stringValue(item, "operator") {
-			case "empty":
-				ok = !exists || current == nil || current == ""
-			case "not_empty":
-				ok = exists && current != nil && current != ""
-			case "equals":
-				ok = exists && jsonScalarEqual(current, expected)
-			case "not_equals":
-				ok = !exists || !jsonScalarEqual(current, expected)
-			case "contains":
-				ok = exists && strings.Contains(fmt.Sprint(current), fmt.Sprint(expected))
-			}
-			if match == "any" {
-				result = result || ok
-			} else {
-				result = result && ok
-			}
-		}
-		if result {
-			required = effect == "required"
-		}
-	}
-	return required
-}
-
 func validatePublicAnswers(form json.RawMessage, answers map[string]any) (string, error) {
-	var definition map[string]any
-	if err := json.Unmarshal(form, &definition); err != nil {
-		return "", errors.New("表单定义不存在")
+	runtime, err := newPublicFormRuntime(form)
+	if err != nil {
+		return "", err
 	}
-	fieldsRaw, _ := definition["fields"].([]any)
-	rulesRaw, _ := definition["logic_rules"].([]any)
-	rules := make([]map[string]any, 0, len(rulesRaw))
-	for _, raw := range rulesRaw {
-		if rule, ok := raw.(map[string]any); ok {
-			rules = append(rules, rule)
-		}
+	result, err := runtime.normalizeAnswers(answers, "Asia/Shanghai")
+	if err != nil {
+		return "", err
 	}
-	known := map[string]bool{}
-	contact := ""
-	for _, raw := range fieldsRaw {
-		field, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		id, typ := stringValue(field, "id"), stringValue(field, "type")
-		if id == "" {
-			continue
-		}
-		known[id] = true
-		if typ == "file" {
-			return "", errors.New("当前公开表单暂不支持文件字段")
-		}
-		value, exists := answers[id]
-		visible := publicFieldVisible(field, answers, rules)
-		required := publicFieldRequired(field, answers, rules)
-		if visible && required && (!exists || value == nil || value == "" || (typ == "multiselect" && lenAny(value) == 0)) {
-			return "", fmt.Errorf("字段 %s 为必填项", id)
-		}
-		if !exists || value == nil {
-			continue
-		}
-		switch typ {
-		case "number":
-			if _, ok := value.(float64); !ok {
-				return "", fmt.Errorf("字段 %s 必须是数字", id)
-			}
-		case "email":
-			text, ok := value.(string)
-			if !ok || !validEmail(normalizeEmail(text)) {
-				return "", fmt.Errorf("字段 %s 邮箱格式无效", id)
-			}
-			if contact == "" {
-				contact = normalizeEmail(text)
-			}
-		case "text", "textarea", "phone", "url", "date", "datetime", "hidden":
-			if _, ok := value.(string); !ok {
-				return "", fmt.Errorf("字段 %s 格式无效", id)
-			}
-		case "select", "radio":
-			if !publicOptionAllowed(field, value) {
-				return "", fmt.Errorf("字段 %s 选项无效", id)
-			}
-		case "checkbox":
-			if _, ok := value.(bool); !ok {
-				return "", fmt.Errorf("字段 %s 必须是布尔值", id)
-			}
-		case "multiselect":
-			if !publicOptionAllowed(field, value) {
-				return "", fmt.Errorf("字段 %s 选项无效", id)
-			}
-		}
-		if stringValue(field, "semantic_key") == "CONTACT_EMAIL" && contact == "" {
-			if text, ok := value.(string); ok && validEmail(normalizeEmail(text)) {
-				contact = normalizeEmail(text)
-			}
-		}
-	}
-	for id := range answers {
-		if !known[id] {
-			return "", fmt.Errorf("未知字段 %s", id)
-		}
-	}
-	return contact, nil
+	return result.Contact, nil
 }
-
-func lenAny(value any) int {
-	if values, ok := value.([]any); ok {
-		return len(values)
-	}
-	return 0
-}
-
 func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 	if !app.allowWindow(r, "campaign-public-read:"+requestClientIP(r), 60, time.Minute) {
 		errorJSON(w, 429, "too_many_requests", "公开表单访问过于频繁")
@@ -574,12 +366,12 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 	if short {
 		column = "short_code_hash"
 	}
-	var shareID, workspaceID, campaignID, productionID, campaignStatus string
+	var shareID, workspaceID, campaignID, productionID, campaignStatus, timezone string
 	var revisionID, formVersionID string
 	var schemaVersion int
 	var form json.RawMessage
 	var policy json.RawMessage
-	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,c.published_revision_id,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'end_screen',fv.end_screen),cr.availability_policy FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &revisionID, &formVersionID, &schemaVersion, &form, &policy); err != nil {
+	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,p.timezone,c.published_revision_id,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'end_screen',fv.end_screen),cr.availability_policy FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN productions p ON p.workspace_id=c.workspace_id AND p.id=c.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &timezone, &revisionID, &formVersionID, &schemaVersion, &form, &policy); err != nil {
 		errorJSON(w, 404, "share_unavailable", "公开链接不可用")
 		return
 	}
@@ -632,11 +424,18 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		errorJSON(w, 422, "file_upload_unavailable", "当前公开表单暂不支持文件字段")
 		return
 	}
-	contact, validationErr := validatePublicAnswers(form, in.Answers)
+	runtime, runtimeErr := newPublicFormRuntime(form)
+	if runtimeErr != nil {
+		errorJSON(w, 422, "invalid_form_definition", runtimeErr.Error())
+		return
+	}
+	runtimeResult, validationErr := runtime.normalizeAnswers(in.Answers, timezone)
 	if validationErr != nil {
 		errorJSON(w, 422, "invalid_answers", validationErr.Error())
 		return
 	}
+	contact := runtimeResult.Contact
+	answerBytes, _ = json.Marshal(runtimeResult.Answers)
 	if raw, ok := policyMap["submission_limit"].(float64); ok && raw > 0 {
 		var count int
 		if err = tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND deleted_at IS NULL AND status<>'withdrawn'`, workspaceID, campaignID).Scan(&count); err != nil {

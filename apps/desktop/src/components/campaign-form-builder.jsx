@@ -15,7 +15,8 @@ import { notify } from "@/components/ui/sonner";
 import { listReviewRecipes, listReviewRecipeVersions, listWorkspaceReviewRecipes } from "@/lib/campaign-api";
 import { listProductionMembers } from "@/lib/production-api";
 import { formatInstantInTimeZone, resolveWallClockTime } from "@/lib/timezone";
-import { addContentBlock, addField, clientValidateForm, duplicateBlock, duplicateField, evaluateLogic, normalizeFormVersion, removeBlock, removeField, updateBlock, updateField } from "@/lib/campaign-form-model";
+import { addContentBlock, addField, clientValidateForm, duplicateBlock, duplicateField, normalizeFormVersion, removeBlock, removeField, updateBlock, updateField } from "@/lib/campaign-form-model";
+import { evaluateFormState, localDateTimeToUtc, utcToLocalDateTime, validateAnswers } from "@/lib/campaign-form-runtime";
 import { useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
 
 const FIELD_TYPES = { text: "单行文本", textarea: "长文本", number: "数字", email: "邮箱", phone: "电话", url: "网址", date: "日期", datetime: "日期时间", select: "下拉选择", radio: "单选", checkbox: "复选", multiselect: "多选", file: "文件", hidden: "隐藏字段" };
@@ -36,34 +37,62 @@ function orderedFields(form) {
   return [...ordered, ...form.fields.filter((field) => !ordered.some((item) => item.id === field.id))];
 }
 
-export function CampaignFormPreview({ form, title = "表单预览", mode = "preview", initialAnswers = EMPTY_ANSWERS, onAnswersChange, onSubmit, submitting = false, readOnly = false }) {
+export function CampaignFormPreview({ form, title = "表单预览", mode = "preview", initialAnswers = EMPTY_ANSWERS, onAnswersChange, onSubmit, submitting = false, readOnly = false, timezone = "Asia/Shanghai" }) {
   const model = normalizeFormVersion(form);
   const [answers, setAnswers] = useState(initialAnswers || {});
+  const [issues, setIssues] = useState([]);
   useEffect(() => { setAnswers(initialAnswers || {}); }, [initialAnswers]);
-  const state = useMemo(() => evaluateLogic(model, answers), [model, answers]);
-  const setAnswer = (id, value) => setAnswers((current) => { const next = { ...current, [id]: value }; onAnswersChange?.(next); return next; });
+  const runtime = useMemo(() => evaluateFormState(model, answers), [model, answers]);
+  const state = runtime.fields;
+  const setAnswer = (id, value) => setAnswers((current) => {
+    const next = { ...current };
+    if (value === undefined || value === null || value === "") delete next[id];
+    else next[id] = value;
+    setIssues([]);
+    onAnswersChange?.(next);
+    return next;
+  });
   const input = (field) => {
     if (["select", "multiselect"].includes(field.type)) return <select disabled={readOnly} className="min-h-9 w-full rounded-md border bg-background px-3 py-2 text-sm" multiple={field.type === "multiselect"} value={field.type === "multiselect" ? (Array.isArray(answers[field.id]) ? answers[field.id] : []) : (answers[field.id] ?? "")} onChange={(event) => setAnswer(field.id, field.type === "multiselect" ? Array.from(event.target.selectedOptions).map((option) => option.value) : event.target.value)}>{(field.options || []).map((option) => <option key={option.value || option.label} value={option.value || option.label}>{option.label || option.value}</option>)}</select>;
     if (field.type === "radio") return <div className="space-y-1">{(field.options || []).map((option) => <label key={option.value || option.label} className="flex items-center gap-2 text-sm"><input disabled={readOnly} type="radio" name={field.id} checked={answers[field.id] === option.value} onChange={() => setAnswer(field.id, option.value)} />{option.label || option.value}</label>)}</div>;
     if (field.type === "checkbox") return <label className="flex items-center gap-2 text-sm"><input disabled={readOnly} type="checkbox" checked={Boolean(answers[field.id])} onChange={(event) => setAnswer(field.id, event.target.checked)} />确认</label>;
     if (field.type === "textarea") return <Textarea readOnly={readOnly} value={answers[field.id] || ""} onChange={(event) => setAnswer(field.id, event.target.value)} rows={3} />;
     if (field.type === "file") return mode === "public" ? <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">公开表单暂不支持文件上传。</p> : <Input disabled={readOnly} type="file" onChange={(event) => setAnswer(field.id, event.target.files?.[0]?.name || "")} />;
-    return <Input readOnly={readOnly} type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "url" ? "url" : field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text"} value={answers[field.id] || ""} placeholder={field.placeholder || ""} onChange={(event) => setAnswer(field.id, event.target.value)} />;
+    const value = field.type === "datetime" ? utcToLocalDateTime(answers[field.id], timezone) : (answers[field.id] ?? "");
+    const onChange = (event) => {
+      if (field.type === "number") {
+        const number = event.target.value === "" ? undefined : event.target.valueAsNumber;
+        return setAnswer(field.id, Number.isFinite(number) ? number : undefined);
+      }
+      if (field.type === "datetime") return setAnswer(field.id, localDateTimeToUtc(event.target.value, timezone));
+      setAnswer(field.id, event.target.value);
+    };
+    return <Input readOnly={readOnly} type={field.type === "number" ? "number" : field.type === "email" ? "email" : field.type === "url" ? "url" : field.type === "date" ? "date" : field.type === "datetime" ? "datetime-local" : "text"} value={value} placeholder={field.placeholder || ""} onChange={onChange} />;
   };
-  const reset = () => { setAnswers({}); onAnswersChange?.({}); };
-  return <Card className="border-dashed"><CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle className="text-base">{title}</CardTitle><CardDescription>{mode === "public" ? "请填写以下信息并提交。" : "预览使用同一份规范化 FormVersion，不会创建 Entry。"}</CardDescription></div>{!readOnly ? <Button type="button" variant="ghost" size="sm" onClick={reset}><X />重置答案</Button> : null}</CardHeader><CardContent className="space-y-5">{model.blocks.map((block) => {
+  const submit = () => {
+    const result = validateAnswers(model, answers, { timezone });
+    if (!result.valid) { setIssues(result.issues); return; }
+    setIssues([]);
+    onSubmit?.(result.answers);
+  };
+  const reset = () => { setAnswers({}); setIssues([]); onAnswersChange?.({}); };
+  const endBlock = (block) => <div key={block.id} className="rounded-md bg-muted p-4 text-center text-sm"><p className="font-medium">{block.title || model.endScreen?.title || "感谢您的提交"}</p>{block.body || model.endScreen?.body ? <p className="mt-1 text-xs text-muted-foreground">{block.body || model.endScreen.body}</p> : null}</div>;
+  const visibleEndBlock = model.blocks.some((block, index) => block.type === "end" && !(runtime.endTriggered && runtime.endBlockIndex >= 0 && index > runtime.endBlockIndex));
+  return <Card className="border-dashed"><CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardTitle className="text-base">{title}</CardTitle><CardDescription>{mode === "public" ? "请填写以下信息并提交。" : "预览使用同一份规范化 FormVersion，不会创建 Entry。"}</CardDescription></div>{!readOnly ? <Button type="button" variant="ghost" size="sm" onClick={reset}><X />重置答案</Button> : null}</CardHeader><CardContent className="space-y-5">{model.blocks.map((block, index) => {
+    if (runtime.endTriggered && runtime.endBlockIndex >= 0 && index > runtime.endBlockIndex) return null;
     if (block.type === "divider") return <hr key={block.id} />;
-    if (block.type === "end") return <div key={block.id} className="rounded-md bg-muted p-4 text-center text-sm"><p className="font-medium">{block.title || model.endScreen?.title || "感谢您的提交"}</p>{block.body || model.endScreen?.body ? <p className="mt-1 text-xs text-muted-foreground">{block.body || model.endScreen.body}</p> : null}</div>;
+    if (block.type === "end") return endBlock(block);
+    if (block.type === "consent") return <label key={block.id} className="block space-y-1.5"><span className="text-sm font-medium">{block.title || "同意确认"}{block.required ? <span className="ml-1 text-destructive">*</span> : null}</span>{block.body ? <span className="block text-xs text-muted-foreground">{block.body}</span> : null}<span className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={readOnly} checked={answers[block.id] === true} onChange={(event) => setAnswer(block.id, event.target.checked)} />我已阅读并同意</span></label>;
     if (block.type !== "field") return <div key={block.id} className={block.type === "section" ? "border-b pb-2 text-sm font-medium" : "space-y-1"}><p className="text-sm font-medium">{block.title || BLOCK_TYPES[block.type]}</p>{block.body ? <p className="whitespace-pre-wrap text-xs text-muted-foreground">{block.body}</p> : null}</div>;
     const field = model.fields.find((item) => item.id === block.field_key);
     if (!field || state[field.id]?.visible === false || field.type === "hidden") return null;
     return <label key={block.id} className="block space-y-1.5"><span className="text-sm font-medium">{field.label || "未命名字段"}{(state[field.id]?.required ?? field.required) ? <span className="ml-1 text-destructive">*</span> : null}</span>{field.helpText ? <span className="block text-xs text-muted-foreground">{field.helpText}</span> : null}{input(field)}</label>;
-  })}{!model.blocks.length ? <p className="py-8 text-center text-sm text-muted-foreground">暂无内容块。</p> : null}{mode === "public" ? <div className="border-t pt-4"><Button type="button" className="w-full" disabled={submitting || !onSubmit} onClick={() => onSubmit?.(answers)}>{submitting ? "提交中…" : "提交表单"}</Button></div> : null}</CardContent></Card>;
+  })}{runtime.endTriggered && !visibleEndBlock ? endBlock({ id: "runtime-end" }) : null}{!model.blocks.length ? <p className="py-8 text-center text-sm text-muted-foreground">暂无内容块。</p> : null}{issues.length ? <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert"><ul className="list-disc space-y-1 pl-4">{issues.map((issue, index) => <li key={`${issue.code}-${issue.path}-${index}`}>{issue.message}</li>)}</ul></div> : null}{mode === "public" ? <div className="border-t pt-4"><Button type="button" className="w-full" disabled={submitting || !onSubmit} onClick={submit}>{submitting ? "提交中…" : "提交表单"}</Button></div> : null}</CardContent></Card>;
 }
 
 export function CampaignPreviewRegistration({ campaign }) {
   const draft = useCampaignRevisionDraft();
-  useWindowDetailRegistration({ key: `campaign-preview:${campaign?.id}`, storageKey: "detailPane:campaign-preview:v1", detailLabel: "表单预览", triggerRef: draft.previewTriggerRef, getDetail: () => <div className="min-h-full space-y-4"><div><p className="text-xs text-muted-foreground">本地测试预览</p><h2 className="text-lg font-semibold">{campaign?.name || "表单"}</h2></div><CampaignFormPreview form={draft.form} title="公开表单效果" /></div> });
+  useWindowDetailRegistration({ key: `campaign-preview:${campaign?.id}`, storageKey: "detailPane:campaign-preview:v1", detailLabel: "表单预览", triggerRef: draft.previewTriggerRef, getDetail: () => <div className="min-h-full space-y-4"><div><p className="text-xs text-muted-foreground">本地测试预览</p><h2 className="text-lg font-semibold">{campaign?.name || "表单"}</h2></div><CampaignFormPreview form={draft.form} timezone={draft.production?.timezone || "Asia/Shanghai"} title="公开表单效果" /></div> });
   return null;
 }
 
@@ -86,9 +115,9 @@ function FieldDialog({ open, onOpenChange, field, initialType = "text", onSave }
 
 function BlockDialog({ open, onOpenChange, block, initialType = "text", onSave }) {
   const [draft, setDraft] = useState({});
-  useEffect(() => { if (open) setDraft({ type: block?.type || initialType, title: block?.title || "", body: block?.body || "" }); }, [block, initialType, open]);
+  useEffect(() => { if (open) setDraft({ type: block?.type || initialType, title: block?.title || "", body: block?.body || "", required: Boolean(block?.required) }); }, [block, initialType, open]);
   const save = (event) => { event.preventDefault(); onSave({ ...draft, title: String(draft.title || "").trim() }); onOpenChange(false); };
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{block ? "编辑内容块" : "添加内容块"}</DialogTitle><DialogDescription>内容块用于组织公开表单，不需要 JSON 配置。</DialogDescription></DialogHeader><form className="space-y-3" onSubmit={save}><label className="space-y-1 text-xs"><span>类型</span><Select value={draft.type || "text"} onValueChange={(type) => setDraft((current) => ({ ...current, type }))} disabled={Boolean(block)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(BLOCK_TYPES).filter(([value]) => value !== "field").map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>{draft.type !== "divider" ? <><label className="space-y-1 text-xs"><span>标题</span><Input autoFocus value={draft.title || ""} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} /></label><label className="space-y-1 text-xs"><span>内容</span><Textarea value={draft.body || ""} onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))} rows={3} /></label></> : null}<DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit">保存内容块</Button></DialogFooter></form></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-md"><DialogHeader><DialogTitle>{block ? "编辑内容块" : "添加内容块"}</DialogTitle><DialogDescription>内容块用于组织公开表单，不需要 JSON 配置。</DialogDescription></DialogHeader><form className="space-y-3" onSubmit={save}><label className="space-y-1 text-xs"><span>类型</span><Select value={draft.type || "text"} onValueChange={(type) => setDraft((current) => ({ ...current, type }))} disabled={Boolean(block)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(BLOCK_TYPES).filter(([value]) => value !== "field").map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label>{draft.type !== "divider" ? <><label className="space-y-1 text-xs"><span>标题</span><Input autoFocus value={draft.title || ""} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} /></label><label className="space-y-1 text-xs"><span>内容</span><Textarea value={draft.body || ""} onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))} rows={3} /></label>{draft.type === "consent" ? <label className="flex items-center gap-2 text-xs"><Switch checked={Boolean(draft.required)} onCheckedChange={(required) => setDraft((current) => ({ ...current, required }))} />必须勾选才能提交</label> : null}</> : null}<DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit">保存内容块</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
 function LogicValue({ field, value, onChange }) {

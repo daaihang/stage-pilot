@@ -204,6 +204,17 @@ FormVersion V1.1 冻结以下结构不变量：`fields[].id` 必须且只能对�
 就是公开表单和管理端预览的唯一展示顺序。读取旧快照时服务端和客户端会按字段顺序
 补齐缺失的字段块，但不会改写历史 Revision；重复字段块会在草稿/发布校验中报告错误。
 
+Form Runtime V1.1 进一步冻结答案语义：`number` 必须是 JSON number；选择字段使用
+字符串或字符串数组；`checkbox` 和 `consent` 使用 boolean；`date` 使用
+`YYYY-MM-DD`；`datetime` 按 Production 时区解释后保存为 UTC RFC3339。可选空值从
+`answers` 中省略，未知字段拒绝，当前被逻辑隐藏的字段答案在提交时清理。`consent`
+内容块可通过 `required` 配置是否必须勾选；命中 `end` 后停止展示后续内容，但仍由
+填写者显式点击提交。`hide` 优先于 `show`，隐藏字段不参与必填校验。
+
+Builder、管理端 Preview、公开 Renderer 和公开提交校验必须遵循同一份 Runtime 契约。
+客户端校验只用于即时反馈，服务端始终重新校验并保存规范化后的答案；历史
+`EntryRevision` 继续使用提交时绑定的 FormVersion，不会被新 Runtime 规则重解释。
+
 #### Entry
 
 一份提交者正在填写或已经提交的暂存数据。Entry 永远固定 `campaign_revision_id`，以便历史提交可以解释当时看到的表单。

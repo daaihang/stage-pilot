@@ -41,3 +41,20 @@ func TestNormalizeFormDefinitionPreservesExistingBlockOrder(t *testing.T) {
 		t.Fatalf("existing block order was not preserved: %#v", blocks)
 	}
 }
+
+func TestNormalizeFormDefinitionPromotesLegacyFieldKeyToID(t *testing.T) {
+	form := normalizeFormDefinition(formDefinition{
+		SchemaVersion: 1,
+		Blocks:        json.RawMessage(`[]`),
+		Fields:        json.RawMessage(`[{"key":"legacy_name","type":"text","label":"姓名"}]`),
+		LogicRules:    json.RawMessage(`[]`),
+		EndScreen:     json.RawMessage(`{}`),
+	})
+	var fields []map[string]any
+	if err := json.Unmarshal(form.Fields, &fields); err != nil {
+		t.Fatalf("decode normalized fields: %v", err)
+	}
+	if len(fields) != 1 || fields[0]["id"] != "legacy_name" {
+		t.Fatalf("legacy field key was not promoted: %#v", fields)
+	}
+}

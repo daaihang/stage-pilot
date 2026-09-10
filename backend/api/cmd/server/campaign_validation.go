@@ -87,6 +87,16 @@ func validateFormDefinitionDraftValue(form formDefinition) error {
 				return &formValidationError{"duplicate_field_block", "每个字段只能对应一个字段内容块"}
 			}
 		}
+		if blockType == "consent" {
+			if fieldIDs[blockID] {
+				return &formValidationError{"duplicate_form_answer_key", "同意确认标识不能与字段标识重复"}
+			}
+			if required, ok := block["required"]; ok && required != nil {
+				if _, ok := required.(bool); !ok {
+					return &formValidationError{"invalid_consent_block", "同意确认的必选标记无效"}
+				}
+			}
+		}
 		if fieldKey != "" && !fieldIDs[fieldKey] {
 			return &formValidationError{"unknown_form_field_reference", "内容块引用了不存在的字段"}
 		}
@@ -135,6 +145,7 @@ func validateFormDefinitionValue(form formDefinition) error {
 		return &formValidationError{"invalid_form_fields", "表单字段格式无效"}
 	}
 	fieldIDs := make(map[string]bool, len(fields))
+	fieldTypes := make(map[string]string, len(fields))
 	semanticKeys := make(map[string]bool)
 	for _, field := range fields {
 		fieldID := stringValue(field, "id")
@@ -146,6 +157,7 @@ func validateFormDefinitionValue(form formDefinition) error {
 			return &formValidationError{"invalid_form_field", "表单字段标识或类型无效"}
 		}
 		fieldIDs[fieldID] = true
+		fieldTypes[fieldID] = fieldType
 		label, labelOK := field["label"].(string)
 		if !labelOK || strings.TrimSpace(label) == "" {
 			return &formValidationError{"invalid_form_field_label", "表单字段标签不能为空"}
@@ -209,6 +221,9 @@ func validateFormDefinitionValue(form formDefinition) error {
 			return &formValidationError{"invalid_logic_rule", "条件逻辑规则不能为空"}
 		}
 		if err := validateLogicRule(rule, fieldIDs, graph); err != nil {
+			return err
+		}
+		if err := validateLogicRuleFieldTypes(rule, fieldTypes); err != nil {
 			return err
 		}
 		if err := validateLogicRuleOrder(rule, fieldOrder); err != nil {
@@ -377,6 +392,44 @@ func validateLogicRule(rule map[string]any, fields map[string]bool, graph map[st
 		graph[from] = append(graph[from], to)
 	} else if from != "" && to != "" && from == to {
 		return &formValidationError{"logic_self_reference", "条件逻辑不能引用自身"}
+	}
+	return nil
+}
+
+func validateLogicRuleFieldTypes(rule map[string]any, fieldTypes map[string]string) error {
+	conditions, ok := rule["conditions"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	items, ok := conditions["items"].([]any)
+	if !ok {
+		return nil
+	}
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		fieldType := fieldTypes[stringValue(item, "field_id")]
+		switch operator := stringValue(item, "operator"); operator {
+		case "greater_than", "greater_or_equal", "less_than", "less_or_equal":
+			if fieldType != "number" {
+				return &formValidationError{"logic_operator_type_mismatch", "数字比较只能用于数字字段"}
+			}
+			if _, ok := item["value"].(float64); !ok {
+				return &formValidationError{"logic_value_type_mismatch", "数字比较条件必须使用数字"}
+			}
+		case "contains":
+			if fieldType != "text" && fieldType != "textarea" && fieldType != "phone" && fieldType != "url" && fieldType != "select" && fieldType != "radio" && fieldType != "multiselect" {
+				return &formValidationError{"logic_operator_type_mismatch", "包含操作只能用于文本或选择字段"}
+			}
+		case "equals", "not_equals":
+			if fieldType == "number" {
+				if _, ok := item["value"].(float64); !ok {
+					return &formValidationError{"logic_value_type_mismatch", "数字条件必须使用数字"}
+				}
+			}
+		}
 	}
 	return nil
 }

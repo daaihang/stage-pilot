@@ -1,3 +1,5 @@
+import { evaluateFormState } from "./campaign-form-runtime.js";
+
 const FIELD_TYPES = new Set(["text", "textarea", "number", "email", "phone", "url", "date", "datetime", "select", "radio", "checkbox", "multiselect", "file", "hidden"]);
 const BLOCK_TYPES = new Set(["welcome", "text", "section", "field", "consent", "upload", "divider", "end"]);
 
@@ -16,8 +18,8 @@ export function normalizeFormVersion(value = {}) {
   const fields = Array.isArray(source.fields) ? source.fields : [];
   const blocks = Array.isArray(source.blocks) ? source.blocks : [];
   const logicRules = Array.isArray(source.logicRules || source.logic_rules) ? (source.logicRules || source.logic_rules) : [];
-  const normalizedFields = fields.map((field, index) => ({ id: field.id || field.key || `field_${index + 1}`, type: field.type || "text", label: field.label || "", required: Boolean(field.required), ...field }));
-  const normalizedBlocks = blocks.map((block, index) => ({ id: block.id || `block_${index + 1}`, type: block.type || "text", ...block }));
+  const normalizedFields = fields.map((field, index) => ({ ...field, id: field.id || field.key || `field_${index + 1}`, type: field.type || "text", label: field.label || "", required: Boolean(field.required) }));
+  const normalizedBlocks = blocks.map((block, index) => ({ ...block, id: block.id || `block_${index + 1}`, type: block.type || "text" }));
   const blockFieldKeys = new Set(normalizedBlocks.filter((block) => block.type === "field" && typeof block.field_key === "string").map((block) => block.field_key));
   // Older system templates only contained section blocks while fields lived in
   // the parallel fields array. Keep their order, then append stable field
@@ -32,7 +34,7 @@ export function normalizeFormVersion(value = {}) {
     schemaVersion: Number(source.schemaVersion ?? source.schema_version ?? 1) || 1,
     blocks: normalizedBlocks,
     fields: normalizedFields,
-    logicRules: logicRules.map((rule, index) => ({ id: rule.id || `rule_${index + 1}`, ...rule })),
+    logicRules: logicRules.map((rule, index) => ({ ...rule, id: rule.id || `rule_${index + 1}` })),
     endScreen: source.endScreen || source.end_screen || {},
   };
 }
@@ -168,32 +170,7 @@ export function repairReferences(form) {
 }
 
 export function evaluateLogic(form, answers = {}) {
-  const next = withArrays(form);
-  const state = Object.fromEntries(next.fields.map((field) => [field.id, { visible: true, required: Boolean(field.required) }]));
-  const compare = (value, operator, expected) => {
-    if (operator === "empty") return value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
-    if (operator === "not_empty") return !compare(value, "empty");
-    if (operator === "contains") return Array.isArray(value) ? value.includes(expected) : String(value ?? "").includes(String(expected ?? ""));
-    if (operator === "equals") return Array.isArray(value) ? value.includes(expected) : value === expected;
-    if (operator === "not_equals") return !compare(value, "equals", expected);
-    if (operator === "greater_than") return Number(value) > Number(expected);
-    if (operator === "greater_or_equal") return Number(value) >= Number(expected);
-    if (operator === "less_than") return Number(value) < Number(expected);
-    if (operator === "less_or_equal") return Number(value) <= Number(expected);
-    return false;
-  };
-  for (const rule of next.logicRules) {
-    const conditions = rule.conditions?.items || [];
-    const matches = conditions.length ? (rule.conditions.match === "any" ? conditions.some((item) => compare(answers[item.field_id], item.operator, item.value)) : conditions.every((item) => compare(answers[item.field_id], item.operator, item.value))) : false;
-    const target = rule.target_field_id || rule.target_field_key;
-    if (target && state[target] && matches) {
-      if (rule.effect === "show") state[target].visible = true;
-      if (rule.effect === "hide") state[target].visible = false;
-      if (rule.effect === "required") state[target].required = true;
-      if (rule.effect === "optional") state[target].required = false;
-    }
-  }
-  return state;
+  return evaluateFormState(withArrays(form), answers).fields;
 }
 
 export function clientValidateForm(form) {
@@ -206,23 +183,43 @@ export function clientValidateForm(form) {
     ids.add(field.id);
     if (!FIELD_TYPES.has(field.type)) issues.push({ severity: "error", code: "invalid_form_field", path: `/fields/${index}/type`, message: "字段类型无效" });
     if (!String(field.label || "").trim()) issues.push({ severity: "error", code: "missing_required_field", path: `/fields/${index}/label`, message: "字段标签不能为空" });
-    if (["select", "radio", "checkbox", "multiselect"].includes(field.type) && (!Array.isArray(field.options) || field.options.length === 0)) issues.push({ severity: "error", code: "field_options_required", path: `/fields/${index}/options`, message: "选择字段必须配置选项" });
+    if (["select", "radio", "checkbox", "multiselect"].includes(field.type)) {
+      if (!Array.isArray(field.options) || field.options.length === 0) issues.push({ severity: "error", code: "field_options_required", path: `/fields/${index}/options`, message: "选择字段必须配置选项" });
+      else {
+        const optionValues = field.options.map((option) => typeof option === "string" ? option.trim() : String(option?.value || "").trim());
+        if (optionValues.some((value) => !value) || new Set(optionValues).size !== optionValues.length) issues.push({ severity: "error", code: "invalid_field_options", path: `/fields/${index}/options`, message: "字段选项值必须唯一且非空" });
+      }
+    }
+    if (field.type === "file" && (!(Number(field.max_bytes) > 0) || !Array.isArray(field.accept) || field.accept.length === 0)) issues.push({ severity: "warning", code: "file_constraints_required", path: `/fields/${index}`, message: "文件字段需要配置大小和类型限制" });
   });
   const blockIds = new Set();
   const fieldBlockCounts = new Map();
   next.blocks.forEach((block, index) => {
     if (!block.id || blockIds.has(block.id)) issues.push({ severity: "error", code: "invalid_form_block", path: `/blocks/${index}/id`, message: "内容块标识必须唯一" });
     blockIds.add(block.id);
+    if (block.type === "consent" && ids.has(block.id)) issues.push({ severity: "error", code: "duplicate_form_answer_key", path: `/blocks/${index}/id`, message: "同意确认标识不能与字段标识重复" });
     if (!BLOCK_TYPES.has(block.type)) issues.push({ severity: "error", code: "invalid_form_block", path: `/blocks/${index}/type`, message: "内容块类型无效" });
     if (block.type === "field") {
       if (!ids.has(block.field_key)) issues.push({ severity: "error", code: "unknown_form_field_reference", path: `/blocks/${index}/field_key`, message: "内容块引用了不存在的字段" });
       fieldBlockCounts.set(block.field_key, (fieldBlockCounts.get(block.field_key) || 0) + 1);
     }
+    if (block.type === "consent" && block.required != null && typeof block.required !== "boolean") issues.push({ severity: "error", code: "invalid_consent_block", path: `/blocks/${index}/required`, message: "同意确认的必选标记无效" });
   });
   next.fields.forEach((field, index) => {
     const count = fieldBlockCounts.get(field.id) || 0;
     if (count === 0) issues.push({ severity: "error", code: "missing_field_block", path: `/fields/${index}/id`, message: "每个字段必须对应一个字段内容块" });
     if (count > 1) issues.push({ severity: "error", code: "duplicate_field_block", path: `/fields/${index}/id`, message: "每个字段只能对应一个字段内容块" });
+  });
+  const fieldById = new Map(next.fields.map((field) => [field.id, field]));
+  const numericOperators = new Set(["greater_than", "greater_or_equal", "less_than", "less_or_equal"]);
+  next.logicRules.forEach((rule, index) => {
+    const items = Array.isArray(rule.conditions?.items) ? rule.conditions.items : [];
+    items.forEach((item, itemIndex) => {
+      const source = fieldById.get(item.field_id);
+      if (numericOperators.has(item.operator) && source?.type !== "number") issues.push({ severity: "error", code: "logic_operator_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/operator`, message: "数字比较只能用于数字字段" });
+      if (numericOperators.has(item.operator) && typeof item.value !== "number") issues.push({ severity: "error", code: "logic_value_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/value`, message: "数字比较条件必须使用数字" });
+      if (["equals", "not_equals"].includes(item.operator) && source?.type === "number" && typeof item.value !== "number") issues.push({ severity: "error", code: "logic_value_type_mismatch", path: `/logicRules/${index}/conditions/items/${itemIndex}/value`, message: "数字条件必须使用数字" });
+    });
   });
   referencedFieldIds(next).forEach((id) => { if (!ids.has(id)) issues.push({ severity: "error", code: "unknown_logic_field", path: "/logicRules", message: "条件逻辑引用了不存在的字段" }); });
   if (next.fields.length === 0) issues.push({ severity: "warning", code: "no_fields", path: "/fields", message: "表单尚未添加字段" });

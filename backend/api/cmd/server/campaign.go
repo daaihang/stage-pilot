@@ -200,6 +200,9 @@ func normalizeFormDefinition(form formDefinition) formDefinition {
 				// inventing a value that would hide the error.
 				continue
 			}
+			if strings.TrimSpace(stringValue(field, "id")) == "" {
+				field["id"] = fieldID
+			}
 			if !fieldBlockKeys[fieldID] {
 				blocks = append(blocks, map[string]any{"id": "field_" + fieldID, "type": "field", "field_key": fieldID, "_legacy_index": index})
 			}
@@ -210,6 +213,9 @@ func normalizeFormDefinition(form formDefinition) formDefinition {
 		}
 		if encoded, err := json.Marshal(blocks); err == nil {
 			form.Blocks = encoded
+		}
+		if encoded, err := json.Marshal(fields); err == nil {
+			form.Fields = encoded
 		}
 	}
 	return form
