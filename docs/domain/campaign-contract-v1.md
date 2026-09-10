@@ -343,6 +343,8 @@ POST   /v1/campaigns/{campaignId}/revisions/{revisionId}/publish
 
 GET    /v1/campaigns/{campaignId}/entries
 GET    /v1/entries/{entryId}
+GET    /v1/entries/{entryId}/revisions
+PATCH  /v1/entries/{entryId}/inbox-state
 POST   /v1/entries/{entryId}/decisions
 GET    /v1/entries/{entryId}/materializations
 POST   /v1/entries/{entryId}/materializations
@@ -381,6 +383,7 @@ production_registrations
 requirements
 resource_commitments
 form_responses
+entry_inbox_user_states              管理端 Entry Inbox 的用户级整理状态
 ```
 
 所有表采用现有 TEXT ID、UTC 时间戳、软删除/归档和 Workspace 复合约束风格。`entry_revisions.answers`、`form_versions.blocks/fields/logic_rules`、Revision 中三个策略值对象使用 JSONB，但必须有服务端 schema 校验和版本号，不能把 JSONB 当作无约束扩展点。
@@ -399,3 +402,9 @@ form_responses
 3. 再实现公开读取、浏览器本地草稿和 submitted Entry；Entry access token、服务器草稿和受限附件另行实现。
 4. 前端把当前静态页面替换为 Campaign/Template API；Form Builder 只编辑 draft Revision。
 5. 最后接入审核分配、评分和正式 Production 结果模型；每种结果都必须通过 EntryMaterialization。
+
+## 8. Entry Inbox 与通信领域边界
+
+Entry Inbox 是 Campaign 内的管理端查询投影，不是新的业务聚合，也不保存一份新的提交答案。它从 `entries`、`entry_revisions`、当前 `decisions` 和已有 `entry_materializations` 聚合列表与详情；历史答案始终按提交时绑定的 FormVersion 解释。`entry_inbox_user_states` 只保存当前用户自己的已读和星标状态，不能改变 `Entry.status`，不同用户之间互不影响。
+
+通知中心可以引用 `entry_id` 作为事件上下文，但不保存 Entry 答案；站内信/会话是独立的 Communication 领域；审核任务收件箱则属于未来 Review runtime 的用户工作队列。三者都不能通过复用 Entry Inbox 表来建模。

@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30-33 时运行；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30-34 时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -36,17 +36,21 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
-	if version != "30" && version != "31" && version != "32" && version != "33" {
-		t.Skipf("campaign migration schema is %s, want 30, 31, 32 or 33", version)
+	if version != "30" && version != "31" && version != "32" && version != "33" && version != "34" {
+		t.Skipf("campaign migration schema is %s, want 30, 31, 32, 33 or 34", version)
 	}
-	for _, table := range []string{
+	tables := []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
 		"campaign_templates", "campaign_template_versions", "form_versions", "campaigns", "campaign_revisions",
 		"entries", "entry_revisions", "decisions", "entry_materializations", "form_responses",
 		"api_idempotency_keys",
 		"review_recipe_templates", "review_recipe_versions",
 		"campaign_share_links", "campaign_public_submission_idempotency",
-	} {
+	}
+	if version == "34" {
+		tables = append(tables, "entry_inbox_user_states")
+	}
+	for _, table := range tables {
 		var registered *string
 		if err := app.db.QueryRow(t.Context(), `SELECT to_regclass($1)`, "public."+table).Scan(&registered); err != nil {
 			t.Fatalf("inspect table %s: %v", table, err)
@@ -60,8 +64,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 func TestCampaignFormBlocksV2TemplateInvariant(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "32" && version != "33") {
-		t.Skipf("campaign form blocks v2 requires schema 32 or 33 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "32" && version != "33" && version != "34") {
+		t.Skipf("campaign form blocks v2 requires schema 32, 33 or 34 (got %s)", version)
 	}
 	rows, err := app.db.Query(t.Context(), `
 		SELECT ctv.definition->'form'->'fields', ctv.definition->'form'->'blocks', ctv.review_recipe_version_id
@@ -282,13 +286,28 @@ func TestCampaignSystemTemplateSeedAndIdempotencyTable(t *testing.T) {
 func TestCampaignPublicIntakeSchema(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || version != "33" {
-		t.Skipf("campaign public intake requires schema 33 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "33" && version != "34") {
+		t.Skipf("campaign public intake requires schema 33 or 34 (got %s)", version)
 	}
 	for _, table := range []string{"campaign_share_links", "campaign_public_submission_idempotency"} {
 		var registered *string
 		if err := app.db.QueryRow(t.Context(), `SELECT to_regclass($1)`, "public."+table).Scan(&registered); err != nil || registered == nil {
 			t.Fatalf("public intake table %s missing", table)
 		}
+	}
+}
+
+func TestEntryInboxUserStateSchema(t *testing.T) {
+	app := newIntegrationApp(t)
+	var version string
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || version != "34" {
+		t.Skipf("entry inbox schema requires schema 34 (got %s)", version)
+	}
+	var uniqueCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT count(*) FROM pg_indexes WHERE tablename='entry_inbox_user_states' AND indexdef LIKE '%workspace_id, entry_id, user_id%'`).Scan(&uniqueCount); err != nil {
+		t.Fatal(err)
+	}
+	if uniqueCount == 0 {
+		t.Fatal("entry inbox user state uniqueness index missing")
 	}
 }

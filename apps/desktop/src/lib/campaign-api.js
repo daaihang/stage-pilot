@@ -156,6 +156,99 @@ function mapCampaign(value) {
   };
 }
 
+function mapInboxState(value) {
+  return {
+    isRead: Boolean(value?.is_read ?? value?.isRead),
+    isStarred: Boolean(value?.is_starred ?? value?.isStarred),
+  };
+}
+
+function mapEntry(value) {
+  if (!value) return null;
+  return {
+    id: value.id,
+    workspaceId: value.workspace_id,
+    productionId: value.production_id,
+    campaignId: value.campaign_id,
+    campaignRevisionId: value.campaign_revision_id,
+    status: value.status,
+    contactEmail: value.contact_email || "",
+    submittedAt: value.submitted_at,
+    lastActivityAt: value.last_activity_at,
+    currentRevisionNo: value.current_revision_no ?? 0,
+    anonymized: Boolean(value.anonymized),
+    anonymizedAt: value.anonymized_at,
+    createdAt: value.created_at,
+    updatedAt: value.updated_at,
+  };
+}
+
+function mapEntryInboxItem(value) {
+  return {
+    ...mapEntry(value),
+    inboxState: mapInboxState(value?.inbox_state),
+    flags: {
+      anonymized: Boolean(value?.flags?.anonymized),
+      needsChanges: Boolean(value?.flags?.needs_changes),
+      conversionFailed: Boolean(value?.flags?.conversion_failed),
+    },
+  };
+}
+
+function mapEntryRevision(value) {
+  if (!value) return null;
+  return {
+    id: value.id,
+    revisionNo: value.revision_no,
+    schemaVersion: value.schema_version,
+    answers: value.answers || {},
+    source: value.source,
+    createdAt: value.created_at,
+  };
+}
+
+function mapDecision(value) {
+  if (!value) return null;
+  return {
+    id: value.id,
+    type: value.type,
+    reason: value.reason || "",
+    decidedBy: value.decided_by,
+    decidedAt: value.decided_at,
+    metadata: value.metadata || {},
+  };
+}
+
+function mapMaterialization(value) {
+  return {
+    id: value.id,
+    decisionId: value.decision_id,
+    targetKind: value.target_kind,
+    operation: value.operation,
+    status: value.status,
+    idempotencyKey: value.idempotency_key,
+    targetId: value.target_id,
+    errorCode: value.error_code,
+    errorMessage: value.error_message,
+    createdAt: value.created_at,
+    startedAt: value.started_at,
+    completedAt: value.completed_at,
+  };
+}
+
+function mapEntryDetail(value) {
+  if (!value) return null;
+  return {
+    entry: mapEntry(value.entry),
+    formVersion: mapFormVersion(value.form_version),
+    currentRevision: mapEntryRevision(value.current_revision),
+    decision: mapDecision(value.decision),
+    materializations: Array.isArray(value.materializations) ? value.materializations.map(mapMaterialization) : [],
+    inboxState: mapInboxState(value.inbox_state),
+    review: value.review || null,
+  };
+}
+
 function mutationOptions(options = {}) {
   const key = options.idempotencyKey || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
   return { headers: { "Idempotency-Key": key } };
@@ -290,4 +383,41 @@ export async function listReviewRecipeVersions(recipeId) {
   const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions`);
   const list = normalizeList(result);
   return { ...list, items: list.items.map(mapReviewRecipeVersion) };
+}
+
+export async function listCampaignEntries(campaignId, filters = {}) {
+  const result = await request(`/v1/campaigns/${encodeURIComponent(campaignId)}/entries${queryString(filters)}`);
+  const list = normalizeList(result);
+  return {
+    ...list,
+    items: list.items.map(mapEntryInboxItem),
+    summary: result?.summary || {},
+  };
+}
+
+export async function getEntry(entryId) {
+  const result = await request(`/v1/entries/${encodeURIComponent(entryId)}`);
+  return mapEntryDetail(result);
+}
+
+export async function listEntryRevisions(entryId) {
+  const result = await request(`/v1/entries/${encodeURIComponent(entryId)}/revisions`);
+  const list = normalizeList(result);
+  return { ...list, items: list.items.map(mapEntryRevision) };
+}
+
+export async function updateEntryInboxState(entryId, payload) {
+  const result = await request(`/v1/entries/${encodeURIComponent(entryId)}/inbox-state`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      ...(payload?.isRead !== undefined ? { is_read: payload.isRead } : {}),
+      ...(payload?.isStarred !== undefined ? { is_starred: payload.isStarred } : {}),
+    }),
+  });
+  return {
+    entryId: result.entry_id,
+    isRead: Boolean(result.is_read),
+    isStarred: Boolean(result.is_starred),
+    updatedAt: result.updated_at,
+  };
 }
