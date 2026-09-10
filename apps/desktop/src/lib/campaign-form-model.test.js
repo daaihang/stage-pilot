@@ -113,3 +113,17 @@ test("runtime omits optional empty choices while keeping boolean checkbox semant
   const invalidLogic = clientValidateForm({ ...form, logicRules: [{ id: "r1", conditions: { match: "all", items: [{ field_id: "flag", operator: "equals", value: "true" }] }, effect: "show", target_field_id: "choice" }] });
   assert.equal(invalidLogic.some((issue) => issue.code === "logic_value_type_mismatch"), true);
 });
+
+test("runtime applies the same email and datetime formats as public submission", () => {
+  const form = normalizeFormVersion({
+    blocks: [{ id: "email_block", type: "field", field_key: "email" }, { id: "when_block", type: "field", field_key: "when" }],
+    fields: [{ id: "email", type: "email", label: "邮箱", required: true }, { id: "when", type: "datetime", label: "时间" }],
+  });
+  assert.equal(validateAnswers(form, { email: "bad" }).issues[0].code, "invalid_email_answer");
+  const invalidDatetime = validateAnswers(form, { email: "person@example.com", when: "2026-01-01" });
+  assert.equal(invalidDatetime.issues[0].code, "invalid_datetime_answer");
+  const valid = validateAnswers(form, { email: " Person@Example.COM ", when: "2026-01-01T12:00:00+08:00" });
+  assert.equal(valid.valid, true);
+  assert.equal(valid.answers.email, "person@example.com");
+  assert.equal(valid.answers.when, "2026-01-01T04:00:00Z");
+});

@@ -56,6 +56,13 @@ func TestPublicFormRuntimeDatetimeUsesActivityTimezone(t *testing.T) {
 	if result.Answers["when"] != "2026-01-01T04:00:00Z" {
 		t.Fatalf("unexpected datetime: %#v", result.Answers["when"])
 	}
+	result, err = runtime.normalizeAnswers(map[string]any{"when": "2026-01-01T12:00:00+08:00"}, "Asia/Shanghai")
+	if err != nil || result.Answers["when"] != "2026-01-01T04:00:00Z" {
+		t.Fatalf("unexpected RFC3339 datetime: %#v, %v", result.Answers["when"], err)
+	}
+	if _, err = runtime.normalizeAnswers(map[string]any{"when": "2026-01-01"}, "Asia/Shanghai"); err == nil {
+		t.Fatal("expected date-only datetime to be rejected")
+	}
 }
 
 func TestLogicValueTypesMatchFieldTypes(t *testing.T) {

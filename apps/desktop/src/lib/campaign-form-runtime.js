@@ -30,6 +30,10 @@ function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function isValidEmail(value) {
+  return typeof value === "string" && value.includes("@") && value.length >= 5;
+}
+
 function isValidDateOnly(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
   if (!match) return false;
@@ -152,11 +156,18 @@ export function normalizeAnswers(form, answers = EMPTY, { timezone = "Asia/Shang
       if (typeof raw !== "string") issues.push({ code: "invalid_string_answer", path: `/answers/${id}`, message: `${field.label || id} 格式无效` });
       else if (field.type === "date" && !isValidDateOnly(raw)) issues.push({ code: "invalid_date_answer", path: `/answers/${id}`, message: `${field.label || id} 日期格式无效` });
       else if (field.type === "datetime") {
-        const localValue = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(raw) ? localDateTimeToUtc(raw, timezone) : raw;
+        const localFormat = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/;
+        const rfc3339Format = /^(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+        const localValue = localFormat.test(raw) ? localDateTimeToUtc(raw, timezone) : raw;
+        const rfcDate = rfc3339Format.exec(raw);
         const parsed = localValue ? new Date(localValue) : null;
-        if (!parsed || Number.isNaN(parsed.getTime())) issues.push({ code: "invalid_datetime_answer", path: `/answers/${id}`, message: `${field.label || id} 日期时间格式无效` });
-        else normalized[id] = parsed.toISOString().replace(".000Z", "Z");
-      } else normalized[id] = field.type === "email" ? raw.trim().toLowerCase() : raw;
+        if ((!localFormat.test(raw) && !rfcDate) || (rfcDate && !isValidDateOnly(rfcDate[1])) || !parsed || Number.isNaN(parsed.getTime())) issues.push({ code: "invalid_datetime_answer", path: `/answers/${id}`, message: `${field.label || id} 日期时间格式无效` });
+        else normalized[id] = parsed.toISOString().replace(/\.\d{3}Z$/, "Z");
+      } else if (field.type === "email") {
+        const email = raw.trim().toLowerCase();
+        if (!isValidEmail(email)) issues.push({ code: "invalid_email_answer", path: `/answers/${id}`, message: `${field.label || id} 邮箱格式无效` });
+        else normalized[id] = email;
+      } else normalized[id] = raw;
     } else if (field.type === "select" || field.type === "radio") {
       if (raw === "") continue;
       if (typeof raw !== "string" || !optionsFor(field).includes(raw)) issues.push({ code: "invalid_option_answer", path: `/answers/${id}`, message: `${field.label || id} 选项无效` });
