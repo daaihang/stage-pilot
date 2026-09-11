@@ -218,7 +218,7 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
     validate,
     publish,
     reload,
-  }), [campaign, flushPendingSave, production, publish, reload, save, setDraft, state, validate]);
+  }), [campaign, flushPendingSave, production, publish, reload, save, setDraft, state, toolbarAction, registerToolbarAction, validate]);
 
   return <DraftContext.Provider value={contextValue}>{children}</DraftContext.Provider>;
 }
