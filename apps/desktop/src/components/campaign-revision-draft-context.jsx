@@ -158,6 +158,16 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
     return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
   }, [enqueueSave, state.dirty, state.revisionStatus, state.form, state.policy, state.reviewRecipeVersionId, state.reviewWorkflow, state.materializationPlan]);
 
+  // SPA navigation unmounts the editor without firing beforeunload. Flush a
+  // pending draft so changes made immediately before returning to the list do
+  // not remain only in React state after the autosave timer is cancelled.
+  useEffect(() => () => {
+    const current = stateRef.current;
+    if (current.dirty && current.revisionId && current.revisionStatus === "draft") {
+      void enqueueSave({ reportAutoError: true }).catch(() => {});
+    }
+  }, [enqueueSave]);
+
   useEffect(() => {
     if (!state.dirty) return undefined;
     const handler = (event) => { event.preventDefault(); event.returnValue = true; };

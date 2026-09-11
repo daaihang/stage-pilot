@@ -230,6 +230,14 @@ func (app *application) updateCampaignRevision(w http.ResponseWriter, r *http.Re
 		serverError(w, err)
 		return
 	}
+	// Keep the campaign summary's recency in sync with edits to its draft
+	// revision. The list endpoint intentionally returns campaign summaries, so
+	// this timestamp is the lightweight signal used to order recently edited
+	// forms without loading every FormVersion into the list response.
+	if _, err := tx.Exec(r.Context(), `UPDATE campaigns SET updated_at=NOW() WHERE id=$1 AND workspace_id=$2`, campaignID, access.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
 	updated, err := app.loadRevision(r.Context(), tx, revisionID, access.WorkspaceID)
 	if err != nil {
 		serverError(w, err)
