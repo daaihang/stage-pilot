@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addField, clientValidateForm, emptyFormVersion, evaluateLogic, normalizeFormVersion, removeField } from "./campaign-form-model.js";
+import { addField, clientValidateForm, emptyFormVersion, evaluateLogic, normalizeFormVersion, removeField, resolveEndingContent } from "./campaign-form-model.js";
 import { evaluateFormState, localDateTimeToUtc, validateAnswers } from "./campaign-form-runtime.js";
 
 test("normalizes legacy orphan fields into stable field blocks", () => {
@@ -12,6 +12,30 @@ test("normalizes legacy orphan fields into stable field blocks", () => {
   assert.equal(normalized.blocks.filter((block) => block.id === "field_title").length, 1);
   assert.equal(normalized.blocks.filter((block) => block.id === "field_email").length, 1);
   assert.equal(clientValidateForm(normalized).filter((issue) => issue.severity === "error").length, 0);
+});
+
+test("promotes legacy welcome and end blocks into presentation settings", () => {
+  const normalized = normalizeFormVersion({
+    blocks: [
+      { id: "welcome", type: "welcome", title: "开始报名", body: "请先阅读说明" },
+      { id: "name_block", type: "field", field_key: "name" },
+      { id: "end", type: "end", title: "收到啦", body: "等待审核" },
+    ],
+    fields: [{ id: "name", type: "text", label: "姓名" }],
+  });
+  assert.equal(normalized.blocks.some((block) => ["welcome", "end"].includes(block.type)), false);
+  assert.equal(normalized.presentation.welcome.enabled, true);
+  assert.equal(normalized.presentation.welcome.titleMode, "custom");
+  assert.equal(normalized.presentation.welcome.titleOverride, "开始报名");
+  assert.equal(normalized.presentation.ending.title, "收到啦");
+  assert.equal(normalized.endScreen.body, "等待审核");
+});
+
+test("default presentation keeps collection forms one-step and resolves safe ending copy", () => {
+  const form = emptyFormVersion();
+  assert.equal(form.presentation.welcome.enabled, false);
+  assert.equal(form.presentation.ending.mode, "default");
+  assert.equal(resolveEndingContent(form, { campaignKind: "RECRUITMENT", reviewWorkflow: { mode: "MANUAL_DECISION" } }).title, "已收到，等待审核");
 });
 
 test("normalizes a form and keeps field block references stable", () => {

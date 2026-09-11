@@ -81,12 +81,31 @@ function mapReviewRecipeVersion(value) {
 
 function mapFormVersion(value) {
   if (!value) return null;
+  const rawPresentation = value.presentation || {};
+  const welcome = rawPresentation.welcome || {};
+  const ending = rawPresentation.ending || {};
   return {
     id: value.id,
     schemaVersion: value.schema_version,
     blocks: value.blocks || [],
     fields: value.fields || [],
     logicRules: value.logic_rules || [],
+    presentation: {
+      publicTitle: rawPresentation.public_title ?? rawPresentation.publicTitle ?? "",
+      welcome: {
+        enabled: Boolean(welcome.enabled),
+        titleMode: welcome.title_mode ?? welcome.titleMode ?? "inherit",
+        titleOverride: welcome.title_override ?? welcome.titleOverride ?? "",
+        description: welcome.description || "",
+        startLabel: welcome.start_label ?? welcome.startLabel ?? "开始填写",
+      },
+      ending: {
+        mode: ending.mode || "default",
+        title: ending.title || "",
+        body: ending.body || "",
+        redirectUrl: ending.redirect_url ?? ending.redirectUrl ?? "",
+      },
+    },
     endScreen: value.end_screen || {},
     createdAt: value.created_at,
   };
@@ -94,11 +113,30 @@ function mapFormVersion(value) {
 
 function wireFormVersion(value) {
   if (!value) return value;
+  const presentation = value.presentation || {};
+  const welcome = presentation.welcome || {};
+  const ending = presentation.ending || {};
   return {
     schema_version: value.schema_version ?? value.schemaVersion ?? 1,
     blocks: value.blocks || [],
     fields: value.fields || [],
     logic_rules: value.logic_rules || value.logicRules || [],
+    presentation: {
+      public_title: presentation.public_title ?? presentation.publicTitle ?? "",
+      welcome: {
+        enabled: Boolean(welcome.enabled),
+        title_mode: welcome.title_mode ?? welcome.titleMode ?? "inherit",
+        title_override: welcome.title_override ?? welcome.titleOverride ?? "",
+        description: welcome.description || "",
+        start_label: welcome.start_label ?? welcome.startLabel ?? "开始填写",
+      },
+      ending: {
+        mode: ending.mode || "default",
+        title: ending.title || "",
+        body: ending.body || "",
+        redirect_url: ending.redirect_url ?? ending.redirectUrl ?? "",
+      },
+    },
     end_screen: value.end_screen || value.endScreen || {},
   };
 }

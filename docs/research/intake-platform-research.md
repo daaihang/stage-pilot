@@ -146,7 +146,7 @@ Conditional rule
 Ending（确认、下一步、公开追踪链接）
 ```
 
-Typeform 将欢迎页、说明内容和结束页视为表单体验的一部分；Tally 也将表单组织为 blocks，并允许逻辑按回答显示、隐藏或跳过内容。这支持 StagePilot 的“公开说明与输入字段自由混排”方向，而无需额外引入 Campaign Public Page。参见 [Typeform Welcome Screen](https://help.typeform.com/hc/en-us/articles/360052366812-Welcome-Screen)、[Typeform End Screens](https://help.typeform.com/hc/en-us/articles/360051791392-End-Screens-and-redirects)、[Tally input blocks](https://tally.so/help/input-blocks) 和 [Tally conditional logic](https://tally.so/help/conditional-form-logic)。
+Typeform 将欢迎页、说明内容和结束页视为表单体验的一部分；其 Welcome Screen 是每个表单一个的开始设置，结束页支持默认、自定义和重定向。Jotform 与 Google Forms 也将 Thank You/Confirmation 放在设置或 Presentation，而不是普通问题列表中。因此 StagePilot 将 welcome/ending 提升为 FormVersion `presentation` 设置，内容 blocks 只保留可排序的说明、分组、同意和上传提示；仍无需额外引入 Campaign Public Page。参见 [Typeform Welcome Screen](https://help.typeform.com/hc/en-us/articles/360052366812-Welcome-Screen)、[Typeform End Screens](https://help.typeform.com/hc/en-us/articles/360051791392-End-Screens-and-redirects)、[Jotform Thank You Page](https://www.jotform.com/help/211-Setting-Up-the-Thank-You-Page/)、[Google Forms Presentation](https://support.google.com/docs/answer/2839588?hl=en)、[Tally input blocks](https://tally.so/help/input-blocks) 和 [Tally conditional logic](https://tally.so/help/conditional-form-logic)。
 
 ### 首版字段范围
 
@@ -319,7 +319,7 @@ Campaign Revision 2 (新 Entry 使用；旧 Entry 仍关联 Revision 1)
 - 从任何普通表单自动创建 Workspace 长期资产。
 - 把真实工作人员、登录用户和审核人合并成同一张成员表。
 - 公开上传大文件、音视频转码、病毒扫描、外部存储连接器和支付同时上线。
-- 首版即建设 Production 公共官网；小型活动直接使用 Campaign 的 welcome/content blocks 即可。未来公共活动页可以聚合多个 Campaign，但它是另一个领域。
+- 首版即建设 Production 公共官网；小型活动直接使用 Campaign 的 presentation 欢迎页、内容 blocks 和结束页即可。未来公共活动页可以聚合多个 Campaign，但它是另一个领域。
 
 ## 决策清单
 

@@ -117,7 +117,7 @@ func (app *application) createCampaignShareLink(w http.ResponseWriter, r *http.R
 	var status, visibility string
 	var revisionID *string
 	var form json.RawMessage
-	err := app.db.QueryRow(r.Context(), `SELECT c.status,COALESCE(cr.availability_policy->>'visibility','public'),c.published_revision_id, jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'end_screen',fv.end_screen)
+	err := app.db.QueryRow(r.Context(), `SELECT c.status,COALESCE(cr.availability_policy->>'visibility','public'),c.published_revision_id, jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen)
 		FROM campaigns c LEFT JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id LEFT JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE c.id=$1 AND c.workspace_id=$2 AND c.production_id=$3 AND c.deleted_at IS NULL`, campaignID, access.WorkspaceID, access.ProductionID).Scan(&status, &visibility, &revisionID, &form)
 	if err != nil || revisionID == nil {
 		errorJSON(w, http.StatusConflict, "campaign_not_published", "表单必须先发布后才能生成公开链接")
@@ -272,8 +272,8 @@ func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 	var revisionID *string
 	var revisionNo *int
 	var form json.RawMessage
-	var policy json.RawMessage
-	err = app.db.QueryRow(r.Context(), `SELECT c.name,c.description,c.kind,c.status,c.production_id,p.name,p.timezone,p.planned_start_at,p.planned_end_at,c.published_revision_id,cr.revision_no, jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'end_screen',fv.end_screen),cr.availability_policy FROM campaigns c JOIN productions p ON p.id=c.production_id AND p.workspace_id=c.workspace_id LEFT JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id LEFT JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE c.id=$1 AND c.workspace_id=$2 AND c.deleted_at IS NULL`, campaignID, workspaceID).Scan(&name, &description, &kind, &campaignStatus, &productionID, &productionName, &timezone, &plannedStart, &plannedEnd, &revisionID, &revisionNo, &form, &policy)
+	var policy, reviewWorkflow json.RawMessage
+	err = app.db.QueryRow(r.Context(), `SELECT c.name,c.description,c.kind,c.status,c.production_id,p.name,p.timezone,p.planned_start_at,p.planned_end_at,c.published_revision_id,cr.revision_no, jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.availability_policy,cr.review_workflow FROM campaigns c JOIN productions p ON p.id=c.production_id AND p.workspace_id=c.workspace_id LEFT JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id LEFT JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE c.id=$1 AND c.workspace_id=$2 AND c.deleted_at IS NULL`, campaignID, workspaceID).Scan(&name, &description, &kind, &campaignStatus, &productionID, &productionName, &timezone, &plannedStart, &plannedEnd, &revisionID, &revisionNo, &form, &policy, &reviewWorkflow)
 	if err != nil || revisionID == nil || campaignStatus == "archived" {
 		errorJSON(w, 404, "share_unavailable", "公开表单不可用")
 		return
@@ -316,7 +316,7 @@ func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 	_ = app.db.QueryRow(r.Context(), `UPDATE campaign_share_links SET last_accessed_at=NOW() WHERE id=$1`, shareID)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	writeJSON(w, 200, map[string]any{"campaign": map[string]any{"name": name, "description": description, "kind": kind, "status": campaignStatus}, "production": map[string]any{"name": productionName, "timezone": timezone, "planned_start_at": plannedStart, "planned_end_at": plannedEnd}, "revision": map[string]any{"id": *revisionID, "revision_no": revisionNo}, "form": form, "availability": policyMap, "accepting": accepting, "accepting_reason": reason})
+	writeJSON(w, 200, map[string]any{"campaign": map[string]any{"name": name, "description": description, "kind": kind, "status": campaignStatus}, "production": map[string]any{"name": productionName, "timezone": timezone, "planned_start_at": plannedStart, "planned_end_at": plannedEnd}, "revision": map[string]any{"id": *revisionID, "revision_no": revisionNo}, "form": form, "availability": policyMap, "review_workflow": reviewWorkflow, "accepting": accepting, "accepting_reason": reason})
 }
 
 func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Request) {
@@ -371,7 +371,7 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 	var schemaVersion int
 	var form json.RawMessage
 	var policy json.RawMessage
-	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,p.timezone,c.published_revision_id,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'end_screen',fv.end_screen),cr.availability_policy FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN productions p ON p.workspace_id=c.workspace_id AND p.id=c.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &timezone, &revisionID, &formVersionID, &schemaVersion, &form, &policy); err != nil {
+	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,p.timezone,c.published_revision_id,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.availability_policy FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN productions p ON p.workspace_id=c.workspace_id AND p.id=c.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &timezone, &revisionID, &formVersionID, &schemaVersion, &form, &policy); err != nil {
 		errorJSON(w, 404, "share_unavailable", "公开链接不可用")
 		return
 	}

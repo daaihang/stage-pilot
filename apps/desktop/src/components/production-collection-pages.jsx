@@ -12,6 +12,7 @@ import {
   Info,
   LayoutTemplate,
   Pencil,
+  LayoutPanelTop,
   Plus,
   Settings,
   SlidersHorizontal,
@@ -32,7 +33,7 @@ import { SettingsTabs } from "@/components/settings-tabs";
 import { notify } from "@/components/ui/sonner";
 import { createCampaign, createCampaignRevision, getCampaign, listCampaignRevisions, listCampaigns, listCampaignTemplates, listWorkspaceCampaignTemplates, archiveCampaign, updateCampaign } from "@/lib/campaign-api";
 import { createCampaignShareLink, listCampaignShareLinks, revokeCampaignShareLink, rotateCampaignShareLink } from "@/lib/campaign-public-api";
-import { CampaignFormBuilder, CampaignPreviewRegistration, CampaignResultsEditor, CampaignReviewEditor, CampaignRulesEditor } from "@/components/campaign-form-builder";
+import { CampaignFormBuilder, CampaignPresentationEditor, CampaignPreviewRegistration, CampaignResultsEditor, CampaignReviewEditor, CampaignRulesEditor } from "@/components/campaign-form-builder";
 import { CampaignRevisionDraftProvider, RevisionEditorShell, useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
 import { CampaignEntryInbox } from "@/components/campaign-entry-inbox";
 import { directProductionCampaignPath, productionCampaignPath, productionPath } from "@/lib/navigation";
@@ -47,6 +48,7 @@ const ACTIVITY_INFO_GROUPS = [
 const CAMPAIGN_DETAIL_GROUPS = [
   ["overview", "概览", Gauge],
   ["form", "表单", FileText],
+  ["presentation", "展示", LayoutPanelTop],
   ["rules", "规则", SlidersHorizontal],
   ["review", "审核", ClipboardCheck],
   ["entries", "提交记录", ClipboardList],
@@ -367,6 +369,7 @@ function CampaignDetailPanel({ tab, detail, production, onArchive, onPublished, 
   const panels = {
     overview: <CampaignOverviewEditor campaign={campaign} production={production} policy={policy} stats={stats} revision={revision} onCampaignUpdated={onCampaignUpdated} onOpenActivityInfo={onOpenActivityInfo} />,
     form: <div className="space-y-4"><CampaignPreviewRegistration campaign={campaign} /><RevisionEditorShell showPreview><CampaignFormBuilder /></RevisionEditorShell>{revision?.status !== "draft" && campaign?.status !== "archived" ? <Button variant="outline" onClick={onCreateDraft}><Plus />创建新的草稿版本</Button> : null}</div>,
+    presentation: <RevisionEditorShell><CampaignPresentationEditor /></RevisionEditorShell>,
     rules: <RevisionEditorShell><CampaignRulesEditor /></RevisionEditorShell>,
     review: <RevisionEditorShell><CampaignReviewEditor /></RevisionEditorShell>,
     entries: <CampaignEntryInbox campaignId={campaign?.id} />,

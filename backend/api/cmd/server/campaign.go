@@ -61,6 +61,7 @@ type formVersionItem struct {
 	Blocks        json.RawMessage `json:"blocks"`
 	Fields        json.RawMessage `json:"fields"`
 	LogicRules    json.RawMessage `json:"logic_rules"`
+	Presentation  json.RawMessage `json:"presentation"`
 	EndScreen     json.RawMessage `json:"end_screen"`
 	CreatedAt     time.Time       `json:"created_at"`
 }
@@ -144,6 +145,7 @@ type formDefinition struct {
 	Blocks        json.RawMessage `json:"blocks"`
 	Fields        json.RawMessage `json:"fields"`
 	LogicRules    json.RawMessage `json:"logic_rules"`
+	Presentation  json.RawMessage `json:"presentation"`
 	EndScreen     json.RawMessage `json:"end_screen"`
 }
 
@@ -169,12 +171,25 @@ func normalizeFormDefinition(form formDefinition) formDefinition {
 	form.Fields = defaultJSON(form.Fields, "[]")
 	form.LogicRules = defaultJSON(form.LogicRules, "[]")
 	form.EndScreen = defaultJSON(form.EndScreen, "{}")
+	form.Presentation = normalizePresentationJSON(form.Presentation, form.EndScreen, form.Blocks)
 	// Blocks are the canonical public order. Older snapshots may contain
 	// fields that were never represented by a field block; normalize them on
 	// read and when creating a new snapshot without mutating the historical row.
 	var blocks []map[string]any
 	var fields []map[string]any
 	if json.Unmarshal(form.Blocks, &blocks) == nil && json.Unmarshal(form.Fields, &fields) == nil {
+		// Welcome and end were historically represented as sortable blocks. They
+		// are now lifecycle presentation settings. Keep the raw historical rows
+		// intact in the database, but expose canonical drafts without these
+		// special blocks so they cannot be re-ordered or duplicated.
+		filtered := blocks[:0]
+		for _, block := range blocks {
+			if blockType := stringValue(block, "type"); blockType == "welcome" || blockType == "end" {
+				continue
+			}
+			filtered = append(filtered, block)
+		}
+		blocks = filtered
 		fieldBlockKeys := make(map[string]bool, len(blocks))
 		for index, block := range blocks {
 			if strings.TrimSpace(stringValue(block, "id")) == "" {
@@ -218,6 +233,7 @@ func normalizeFormDefinition(form formDefinition) formDefinition {
 			form.Fields = encoded
 		}
 	}
+	form.EndScreen = legacyEndScreenFromPresentation(form.Presentation)
 	return form
 }
 
@@ -225,8 +241,8 @@ func normalizeFormVersionItem(item *formVersionItem) {
 	if item == nil {
 		return
 	}
-	normalized := normalizeFormDefinition(formDefinition{SchemaVersion: item.SchemaVersion, Blocks: item.Blocks, Fields: item.Fields, LogicRules: item.LogicRules, EndScreen: item.EndScreen})
-	item.SchemaVersion, item.Blocks, item.Fields, item.LogicRules, item.EndScreen = normalized.SchemaVersion, normalized.Blocks, normalized.Fields, normalized.LogicRules, normalized.EndScreen
+	normalized := normalizeFormDefinition(formDefinition{SchemaVersion: item.SchemaVersion, Blocks: item.Blocks, Fields: item.Fields, LogicRules: item.LogicRules, Presentation: item.Presentation, EndScreen: item.EndScreen})
+	item.SchemaVersion, item.Blocks, item.Fields, item.LogicRules, item.Presentation, item.EndScreen = normalized.SchemaVersion, normalized.Blocks, normalized.Fields, normalized.LogicRules, normalized.Presentation, normalized.EndScreen
 }
 
 func normalizeDefinition(def templateDefinition) templateDefinition {
@@ -255,8 +271,14 @@ func validJSONType(raw json.RawMessage, expected string) bool {
 }
 
 func validateFormDefinition(w http.ResponseWriter, form formDefinition) bool {
-	if form.SchemaVersion < 1 || !validJSONType(form.Blocks, "array") || !validJSONType(form.Fields, "array") || !validJSONType(form.LogicRules, "array") || !validJSONType(form.EndScreen, "object") {
-		errorJSON(w, http.StatusUnprocessableEntity, "invalid_form_definition", "表单定义的内容块、字段、逻辑规则和结束页格式无效")
+	if form.SchemaVersion < 1 || !validJSONType(form.Blocks, "array") || !validJSONType(form.Fields, "array") || !validJSONType(form.LogicRules, "array") || !validJSONType(form.Presentation, "object") || !validJSONType(form.EndScreen, "object") {
+		errorJSON(w, http.StatusUnprocessableEntity, "invalid_form_definition", "表单定义的内容块、字段、逻辑规则、展示设置和结束页格式无效")
+		return false
+	}
+	if err := validatePresentationValue(form); err != nil {
+		if !writeFormValidationError(w, err) {
+			serverError(w, err)
+		}
 		return false
 	}
 	return true
@@ -700,9 +722,25 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	form := templateDefinitionValue.Form
+	if input.TemplateID == "" {
+		// Blank campaigns use the same lifecycle defaults as the built-in system
+		// templates. A caller can still turn the welcome page off immediately in
+		// the draft presentation settings.
+		var presentation map[string]any
+		if json.Unmarshal(form.Presentation, &presentation) == nil {
+			welcome, _ := presentation["welcome"].(map[string]any)
+			if welcome != nil {
+				welcome["enabled"] = kind != "COLLECTION"
+				presentation["welcome"] = welcome
+				form.Presentation = marshalNormalizedPresentation(presentation)
+				form.EndScreen = legacyEndScreenFromPresentation(form.Presentation)
+			}
+		}
+	}
+	setFormPublicTitle(&form, input.Name)
 	if _, err := tx.Exec(r.Context(), `INSERT INTO form_versions
-		(id,workspace_id,schema_version,blocks,fields,logic_rules,end_screen,created_by)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, formVersionID, access.WorkspaceID, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.EndScreen, claims(r).Subject); err != nil {
+		(id,workspace_id,schema_version,blocks,fields,logic_rules,presentation,end_screen,created_by)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, formVersionID, access.WorkspaceID, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.Presentation, form.EndScreen, claims(r).Subject); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -896,8 +934,8 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 		writeJSONBytes(w, outcome.status, outcome.body)
 		return
 	}
-	var currentStatus string
-	if err := tx.QueryRow(r.Context(), `SELECT status FROM campaigns WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL FOR UPDATE`, campaignID, access.WorkspaceID).Scan(&currentStatus); err != nil {
+	var currentStatus, campaignName string
+	if err := tx.QueryRow(r.Context(), `SELECT status,name FROM campaigns WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL FOR UPDATE`, campaignID, access.WorkspaceID).Scan(&currentStatus, &campaignName); err != nil {
 		errorJSON(w, http.StatusNotFound, "campaign_not_found", "表单不存在")
 		return
 	}
@@ -921,11 +959,11 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 		var source formDefinition
 		var sourceAvailability, sourceReview, sourceMaterialization []byte
 		var sourceRecipeID *string
-		err := tx.QueryRow(r.Context(), `SELECT fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.end_screen,
+		err := tx.QueryRow(r.Context(), `SELECT fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen,
 			cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan
 			FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
 			WHERE cr.workspace_id=$1 AND cr.campaign_id=$2 AND cr.status='published'`, access.WorkspaceID, campaignID).
-			Scan(&source.SchemaVersion, &source.Blocks, &source.Fields, &source.LogicRules, &source.EndScreen, &sourceRecipeID, &sourceAvailability, &sourceReview, &sourceMaterialization)
+			Scan(&source.SchemaVersion, &source.Blocks, &source.Fields, &source.LogicRules, &source.Presentation, &source.EndScreen, &sourceRecipeID, &sourceAvailability, &sourceReview, &sourceMaterialization)
 		if err == nil {
 			form = normalizeFormDefinition(source)
 			sourceRecipeVersionID = sourceRecipeID
@@ -940,6 +978,10 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 	} else {
 		form = normalizeFormDefinition(*input.Form)
 	}
+	// New revisions inherit the respondent-facing title from the campaign when
+	// the caller did not provide one. A later explicit presentation edit can
+	// still diverge from the internal campaign name.
+	setFormPublicTitle(&form, campaignName)
 	reviewRecipeVersionID := strings.TrimSpace(input.ReviewRecipeVersionID)
 	explicitReviewRecipe := reviewRecipeVersionID != ""
 	if reviewRecipeVersionID == "" && sourceRecipeVersionID != nil {
@@ -982,8 +1024,8 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 		return
 	}
 	formVersionID, revisionID := newID(), newID()
-	if _, err := tx.Exec(r.Context(), `INSERT INTO form_versions(id,workspace_id,schema_version,blocks,fields,logic_rules,end_screen,created_by)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, formVersionID, access.WorkspaceID, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.EndScreen, claims(r).Subject); err != nil {
+	if _, err := tx.Exec(r.Context(), `INSERT INTO form_versions(id,workspace_id,schema_version,blocks,fields,logic_rules,presentation,end_screen,created_by)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, formVersionID, access.WorkspaceID, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.Presentation, form.EndScreen, claims(r).Subject); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -1031,8 +1073,8 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var campaignStatus, campaignKind string
-	if err := tx.QueryRow(r.Context(), `SELECT status,kind FROM campaigns WHERE id=$1 AND workspace_id=$2 AND production_id=$3 AND deleted_at IS NULL FOR UPDATE`, campaignID, access.WorkspaceID, access.ProductionID).Scan(&campaignStatus, &campaignKind); err != nil {
+	var campaignStatus, campaignKind, campaignName string
+	if err := tx.QueryRow(r.Context(), `SELECT status,kind,name FROM campaigns WHERE id=$1 AND workspace_id=$2 AND production_id=$3 AND deleted_at IS NULL FOR UPDATE`, campaignID, access.WorkspaceID, access.ProductionID).Scan(&campaignStatus, &campaignKind, &campaignName); err != nil {
 		errorJSON(w, http.StatusNotFound, "campaign_not_found", "表单不存在")
 		return
 	}
@@ -1045,15 +1087,16 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 	var availability, review, materialization []byte
 	var form formDefinition
 	if err := tx.QueryRow(r.Context(), `SELECT cr.status,cr.form_version_id,cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan,
-		fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.end_screen
+		fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen
 		FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
 		WHERE cr.id=$1 AND cr.campaign_id=$2 AND cr.workspace_id=$3 FOR UPDATE`, revisionID, campaignID, access.WorkspaceID).Scan(
 		&revisionStatus, &formVersionID, &recipeVersionID, &availability, &review, &materialization,
-		&form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.EndScreen); err != nil {
+		&form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen); err != nil {
 		errorJSON(w, http.StatusNotFound, "campaign_revision_not_found", "表单版本不存在或无权访问")
 		return
 	}
 	form = normalizeFormDefinition(form)
+	setFormPublicTitle(&form, campaignName)
 	if revisionStatus != "draft" {
 		errorJSON(w, http.StatusConflict, "revision_not_draft", "只有草稿版本可以发布")
 		return
@@ -1083,7 +1126,7 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 	}
 	// Normalize legacy field/block snapshots at the revision boundary. This is
 	// the first point where mutating the draft snapshot is intentional.
-	if _, err := tx.Exec(r.Context(), `UPDATE form_versions SET schema_version=$1,blocks=$2,fields=$3,logic_rules=$4,end_screen=$5 WHERE id=$6 AND workspace_id=$7`, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.EndScreen, formVersionID, access.WorkspaceID); err != nil {
+	if _, err := tx.Exec(r.Context(), `UPDATE form_versions SET schema_version=$1,blocks=$2,fields=$3,logic_rules=$4,presentation=$5,end_screen=$6 WHERE id=$7 AND workspace_id=$8`, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.Presentation, form.EndScreen, formVersionID, access.WorkspaceID); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -1199,7 +1242,7 @@ func (app *application) queryCampaignRevisions(ctx context.Context, queryer inte
 }, campaignID, workspaceID string) ([]campaignRevisionItem, error) {
 	rows, err := queryer.Query(ctx, `SELECT cr.id,cr.campaign_id,cr.workspace_id,cr.revision_no,cr.status,cr.form_version_id,
 		cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan,cr.change_note,cr.created_by,cr.created_at,cr.published_at,cr.archived_at,
-		fv.id,fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.end_screen,fv.created_at
+		fv.id,fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen,fv.created_at
 		FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
 		WHERE cr.campaign_id=$1 AND cr.workspace_id=$2 ORDER BY cr.revision_no DESC`, campaignID, workspaceID)
 	if err != nil {
@@ -1212,7 +1255,7 @@ func (app *application) queryCampaignRevisions(ctx context.Context, queryer inte
 		var form formVersionItem
 		if err := rows.Scan(&item.ID, &item.CampaignID, &item.WorkspaceID, &item.RevisionNo, &item.Status, &item.FormVersionID,
 			&item.ReviewRecipeVersionID, &item.AvailabilityPolicy, &item.ReviewWorkflow, &item.MaterializationPlan, &item.ChangeNote, &item.CreatedBy, &item.CreatedAt, &item.PublishedAt, &item.ArchivedAt,
-			&form.ID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.EndScreen, &form.CreatedAt); err != nil {
+			&form.ID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen, &form.CreatedAt); err != nil {
 			return nil, err
 		}
 		item.FormVersion = &form
@@ -1231,12 +1274,12 @@ func (app *application) loadRevision(ctx context.Context, queryer interface {
 	var form formVersionItem
 	err := queryer.QueryRow(ctx, `SELECT cr.id,cr.campaign_id,cr.workspace_id,cr.revision_no,cr.status,cr.form_version_id,
 		cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan,cr.change_note,cr.created_by,cr.created_at,cr.published_at,cr.archived_at,
-		fv.id,fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.end_screen,fv.created_at
+		fv.id,fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen,fv.created_at
 		FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
 		WHERE cr.id=$1 AND cr.workspace_id=$2`, revisionID, workspaceID).Scan(
 		&item.ID, &item.CampaignID, &item.WorkspaceID, &item.RevisionNo, &item.Status, &item.FormVersionID,
 		&item.ReviewRecipeVersionID, &item.AvailabilityPolicy, &item.ReviewWorkflow, &item.MaterializationPlan, &item.ChangeNote, &item.CreatedBy, &item.CreatedAt, &item.PublishedAt, &item.ArchivedAt,
-		&form.ID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.EndScreen, &form.CreatedAt)
+		&form.ID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen, &form.CreatedAt)
 	if err != nil {
 		return campaignRevisionItem{}, err
 	}

@@ -42,6 +42,7 @@ func revisionETag(item campaignRevisionItem) string {
 			"blocks":         canonical(item.FormVersion.Blocks),
 			"fields":         canonical(item.FormVersion.Fields),
 			"logic_rules":    canonical(item.FormVersion.LogicRules),
+			"presentation":   canonical(item.FormVersion.Presentation),
 			"end_screen":     canonical(item.FormVersion.EndScreen),
 		}
 	}
@@ -140,7 +141,7 @@ func (app *application) updateCampaignRevision(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	form := formDefinition{SchemaVersion: current.FormVersion.SchemaVersion, Blocks: current.FormVersion.Blocks, Fields: current.FormVersion.Fields, LogicRules: current.FormVersion.LogicRules, EndScreen: current.FormVersion.EndScreen}
+	form := formDefinition{SchemaVersion: current.FormVersion.SchemaVersion, Blocks: current.FormVersion.Blocks, Fields: current.FormVersion.Fields, LogicRules: current.FormVersion.LogicRules, Presentation: current.FormVersion.Presentation, EndScreen: current.FormVersion.EndScreen}
 	if value, exists := patch["form"]; exists {
 		if err := json.Unmarshal(value, &form); err != nil {
 			errorJSON(w, http.StatusBadRequest, "invalid_form_definition", "表单定义格式无效")
@@ -221,7 +222,7 @@ func (app *application) updateCampaignRevision(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	if _, err := tx.Exec(r.Context(), `UPDATE form_versions SET schema_version=$1,blocks=$2,fields=$3,logic_rules=$4,end_screen=$5 WHERE id=$6 AND workspace_id=$7`, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.EndScreen, formVersionID, access.WorkspaceID); err != nil {
+	if _, err := tx.Exec(r.Context(), `UPDATE form_versions SET schema_version=$1,blocks=$2,fields=$3,logic_rules=$4,presentation=$5,end_screen=$6 WHERE id=$7 AND workspace_id=$8`, form.SchemaVersion, form.Blocks, form.Fields, form.LogicRules, form.Presentation, form.EndScreen, formVersionID, access.WorkspaceID); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -296,7 +297,7 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 	if revision.FormVersion == nil {
 		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "form_version_missing", Path: "/form", Message: "表单定义不存在"})
 	} else {
-		form := formDefinition{SchemaVersion: revision.FormVersion.SchemaVersion, Blocks: revision.FormVersion.Blocks, Fields: revision.FormVersion.Fields, LogicRules: revision.FormVersion.LogicRules, EndScreen: revision.FormVersion.EndScreen}
+		form := formDefinition{SchemaVersion: revision.FormVersion.SchemaVersion, Blocks: revision.FormVersion.Blocks, Fields: revision.FormVersion.Fields, LogicRules: revision.FormVersion.LogicRules, Presentation: revision.FormVersion.Presentation, EndScreen: revision.FormVersion.EndScreen}
 		if err := validateFormDefinitionValue(form); err != nil {
 			issues = append(issues, issueFromValidationError(err, "/form"))
 		}

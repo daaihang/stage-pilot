@@ -1,18 +1,20 @@
 import { API_BASE, request } from "@/lib/auth";
+import { normalizeFormVersion } from "@/lib/campaign-form-model";
 
 function publicPath(token, short = false) {
   return short ? `/v1/public/campaign-shares/short/${encodeURIComponent(token)}` : `/v1/public/campaign-shares/${encodeURIComponent(token)}`;
 }
 
 function mapPublicForm(value) {
-  if (!value) return { schemaVersion: 1, blocks: [], fields: [], logicRules: [], endScreen: {} };
-  return {
-    schemaVersion: value.schema_version ?? value.schemaVersion ?? 1,
-    blocks: Array.isArray(value.blocks) ? value.blocks : [],
-    fields: Array.isArray(value.fields) ? value.fields : [],
-    logicRules: Array.isArray(value.logic_rules ?? value.logicRules) ? (value.logic_rules ?? value.logicRules) : [],
-    endScreen: value.end_screen ?? value.endScreen ?? {},
-  };
+  const normalized = normalizeFormVersion({
+    schemaVersion: value?.schema_version ?? value?.schemaVersion,
+    blocks: value?.blocks,
+    fields: value?.fields,
+    logicRules: value?.logic_rules ?? value?.logicRules,
+    presentation: value?.presentation,
+    endScreen: value?.end_screen ?? value?.endScreen,
+  });
+  return normalized;
 }
 
 function mapPublicPayload(value) {
@@ -21,6 +23,7 @@ function mapPublicPayload(value) {
     production: value?.production || {},
     revision: value?.revision || {},
     form: mapPublicForm(value?.form),
+    reviewWorkflow: value?.review_workflow || value?.reviewWorkflow || {},
     availability: value?.availability || {},
     accepting: Boolean(value?.accepting),
     acceptingReason: value?.accepting_reason || "",

@@ -43,6 +43,15 @@ func validateFormDefinitionDraftValue(form formDefinition) error {
 	if form.SchemaVersion != 1 {
 		return &formValidationError{"unsupported_form_schema", "不支持的表单版本"}
 	}
+	if len(form.Presentation) == 0 || string(form.Presentation) == "null" {
+		form.Presentation = normalizePresentationJSON(nil, form.EndScreen, form.Blocks)
+	}
+	if !validJSONType(form.Presentation, "object") {
+		return &formValidationError{"invalid_presentation", "表单展示设置格式无效"}
+	}
+	if err := validatePresentationValue(form); err != nil {
+		return err
+	}
 	var blocks []map[string]any
 	if err := json.Unmarshal(form.Blocks, &blocks); err != nil {
 		return &formValidationError{"invalid_form_blocks", "表单内容块格式无效"}
@@ -266,7 +275,7 @@ func stringValue(value map[string]any, key string) string {
 
 func validFormBlockType(blockType string) bool {
 	switch blockType {
-	case "welcome", "text", "section", "field", "consent", "upload", "divider", "end":
+	case "text", "section", "field", "consent", "upload", "divider":
 		return true
 	default:
 		return false

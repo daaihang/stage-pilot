@@ -176,7 +176,6 @@ Revision 编辑 API 使用完整 `FormVersion` 快照。读取、保存、校验
   "id": "frmv_…",
   "schema_version": 1,
   "blocks": [
-    { "id": "blk_intro", "type": "welcome", "title": "节目征集" },
     { "id": "blk_title", "type": "field", "field_key": "program_title" }
   ],
   "fields": [
@@ -191,13 +190,29 @@ Revision 编辑 API 使用完整 `FormVersion` 快照。读取、保存、校验
     }
   ],
   "logic_rules": [],
+  "presentation": {
+    "public_title": "2026 青年音乐节节目征集",
+    "welcome": {
+      "enabled": true,
+      "title_mode": "inherit",
+      "title_override": "",
+      "description": "请填写节目资料。",
+      "start_label": "开始填写"
+    },
+    "ending": {
+      "mode": "default",
+      "title": "",
+      "body": "",
+      "redirect_url": ""
+    }
+  },
   "end_screen": { "kind": "message", "title": "提交成功" },
   "created_by": "usr_…",
   "created_at": "…"
 }
 ```
 
-`blocks` 是线性文档，可包含 `welcome`、`text`、`section`、`field`、`consent`、`upload`、`divider` 和 `end`。`fields` 中的 `semantic_key` 只对系统域字段使用；普通自定义字段不得直接映射到任意数据库表。V1 条件逻辑只允许回答条件驱动的显示、隐藏、必填和结束页跳转。
+`blocks` 是线性文档，只包含 `text`、`section`、`field`、`consent`、`upload` 和 `divider`。欢迎页与结束页属于 FormVersion 的 `presentation` 生命周期设置，各自只能有一个，不参与内容块排序。`end_screen` 仍作为旧客户端兼容投影返回；新客户端以 `presentation.ending` 为准。`fields` 中的 `semantic_key` 只对系统域字段使用；普通自定义字段不得直接映射到任意数据库表。V1 条件逻辑只允许回答条件驱动的显示、隐藏、必填和提前结束字段路径。
 
 FormVersion V1.1 冻结以下结构不变量：`fields[].id` 必须且只能对应一个
 `blocks[]` 项 `{ "type": "field", "field_key": "<field id>" }`；`blocks` 数组顺序
@@ -208,8 +223,12 @@ Form Runtime V1.1 进一步冻结答案语义：`number` 必须是 JSON number�
 字符串或字符串数组；`checkbox` 和 `consent` 使用 boolean；`date` 使用
 `YYYY-MM-DD`；`datetime` 按 Production 时区解释后保存为 UTC RFC3339。可选空值从
 `answers` 中省略，未知字段拒绝，当前被逻辑隐藏的字段答案在提交时清理。`consent`
-内容块可通过 `required` 配置是否必须勾选；命中 `end` 后停止展示后续内容，但仍由
+内容块可通过 `required` 配置是否必须勾选；命中 `effect: "end"` 后停止展示后续字段，但仍由
 填写者显式点击提交。`hide` 优先于 `show`，隐藏字段不参与必填校验。
+
+`presentation.public_title` 是填写者看到的标题，创建 Campaign 时默认复制内部名称，之后可独立编辑。
+`welcome.enabled` 控制单一欢迎页；开启时可继承公开标题或使用自定义标题，并支持说明和开始按钮文案。
+`ending.mode` 为 `default`、`custom` 或 `redirect`；默认文案会根据 Campaign 类型和审核策略区分“已提交”与“等待审核”，重定向只允许 HTTPS。展示配置随 Revision 冻结，公开页和管理端预览使用同一解析逻辑。
 
 Builder、管理端 Preview、公开 Renderer 和公开提交校验必须遵循同一份 Runtime 契约。
 客户端校验只用于即时反馈，服务端始终重新校验并保存规范化后的答案；历史
@@ -373,6 +392,8 @@ POST   /v1/public/campaign-shares/short/{shortCode}/entries
 ```
 
 管理端通过 `GET/POST /v1/campaigns/{campaignId}/share-links` 创建和查看稳定长链接/短链接，通过 `POST /v1/campaign-share-links/{linkId}/rotate|revoke` 管理凭证。公开 token 只在创建或轮换时返回；服务端保存哈希并加密保存管理员可复制的凭证，公开响应禁止缓存。公开接口必须在服务端重新读取当前已发布 Revision 并执行所有校验，不能信任客户端携带的 `workspace_id`、`production_id`、`campaign_revision_id` 或结果目标。V1 的草稿只在浏览器本地保存，不提供服务器 Entry 恢复接口；提交只创建 `submitted` Entry，不自动产生 Decision 或 Materialization。
+
+公开响应中的 `form.presentation` 与管理端预览共用同一解析结果。它包含 `public_title`、单一 `welcome` 和始终存在的 `ending`；`ending.mode=redirect` 只接受 HTTPS。旧 `end_screen` 仍作为兼容投影返回，但新客户端不得把它作为展示设置的写入来源。
 
 ## 5. 数据库落地边界
 

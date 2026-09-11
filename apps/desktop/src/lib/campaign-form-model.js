@@ -1,7 +1,64 @@
 import { evaluateFormState } from "./campaign-form-runtime.js";
 
 const FIELD_TYPES = new Set(["text", "textarea", "number", "email", "phone", "url", "date", "datetime", "select", "radio", "checkbox", "multiselect", "file", "hidden"]);
-const BLOCK_TYPES = new Set(["welcome", "text", "section", "field", "consent", "upload", "divider", "end"]);
+const BLOCK_TYPES = new Set(["text", "section", "field", "consent", "upload", "divider"]);
+
+export const DEFAULT_PRESENTATION = Object.freeze({
+  publicTitle: "",
+  welcome: Object.freeze({ enabled: false, titleMode: "inherit", titleOverride: "", description: "", startLabel: "开始填写" }),
+  ending: Object.freeze({ mode: "default", title: "", body: "", redirectUrl: "" }),
+});
+
+function clonePresentation(value = DEFAULT_PRESENTATION) {
+  return {
+    publicTitle: value.publicTitle || "",
+    welcome: { ...DEFAULT_PRESENTATION.welcome, ...(value.welcome || {}) },
+    ending: { ...DEFAULT_PRESENTATION.ending, ...(value.ending || {}) },
+  };
+}
+
+export function normalizePresentation(value, { legacyEndScreen, legacyBlocks } = {}) {
+  const source = value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length ? value : {};
+  const presentation = clonePresentation({
+    publicTitle: source.publicTitle ?? source.public_title ?? "",
+    welcome: source.welcome,
+    ending: source.ending,
+  });
+  if (!Object.keys(source).length) {
+    const end = legacyEndScreen && typeof legacyEndScreen === "object" ? legacyEndScreen : {};
+    if (String(end.title || "").trim() || String(end.body || "").trim()) {
+      presentation.ending = { ...presentation.ending, mode: "custom", title: end.title || "", body: end.body || "" };
+    }
+    const blocks = Array.isArray(legacyBlocks) ? legacyBlocks : [];
+    const welcome = blocks.find((block) => block?.type === "welcome");
+    const ending = [...blocks].reverse().find((block) => block?.type === "end");
+    if (welcome) presentation.welcome = { ...presentation.welcome, enabled: true, titleMode: welcome.title ? "custom" : "inherit", titleOverride: welcome.title || "", description: welcome.body || "" };
+    if (ending) presentation.ending = { ...presentation.ending, mode: "custom", title: ending.title || presentation.ending.title, body: ending.body || presentation.ending.body };
+  }
+  const welcome = presentation.welcome;
+  const ending = presentation.ending;
+  welcome.enabled = Boolean(welcome.enabled);
+  welcome.titleMode = welcome.titleMode === "custom" || welcome.title_mode === "custom" ? "custom" : "inherit";
+  welcome.titleOverride = String(welcome.titleOverride ?? welcome.title_override ?? "").trim();
+  welcome.description = String(welcome.description || "").trim();
+  welcome.startLabel = String(welcome.startLabel ?? welcome.start_label ?? "开始填写").trim() || "开始填写";
+  ending.mode = ["custom", "redirect"].includes(ending.mode) ? ending.mode : "default";
+  ending.title = String(ending.title || "").trim();
+  ending.body = String(ending.body || "").trim();
+  ending.redirectUrl = String(ending.redirectUrl ?? ending.redirect_url ?? "").trim();
+  presentation.publicTitle = String(presentation.publicTitle || "").trim();
+  return presentation;
+}
+
+export function resolveEndingContent(form, { campaignKind, reviewWorkflow } = {}) {
+  const presentation = normalizePresentation(form?.presentation, { legacyEndScreen: form?.endScreen, legacyBlocks: form?.blocks });
+  if (presentation.ending.mode === "custom") return { title: presentation.ending.title || "感谢您的提交", body: presentation.ending.body || "我们已收到你的信息。", mode: "custom", redirectUrl: "" };
+  if (presentation.ending.mode === "redirect") return { title: "提交成功", body: "正在跳转…", mode: "redirect", redirectUrl: presentation.ending.redirectUrl };
+  const automatic = String(reviewWorkflow?.mode || reviewWorkflow?.final_decision || "").toUpperCase() === "AUTO_ACCEPT" || String(reviewWorkflow?.final_decision || "").toLowerCase() === "auto_accept";
+  if (campaignKind === "REGISTRATION" && automatic) return { title: "报名已提交", body: "你的报名已成功提交。", mode: "default", redirectUrl: "" };
+  if (["SUBMISSION", "RECRUITMENT"].includes(campaignKind) || !automatic) return { title: "已收到，等待审核", body: "我们已收到你的信息，审核完成后会通知你。", mode: "default", redirectUrl: "" };
+  return { title: "信息已收到", body: "我们已收到你提交的信息。", mode: "default", redirectUrl: "" };
+}
 
 let idSequence = 0;
 export function makeId(prefix = "item") {
@@ -10,7 +67,7 @@ export function makeId(prefix = "item") {
 }
 
 export function emptyFormVersion() {
-  return { schemaVersion: 1, blocks: [], fields: [], logicRules: [], endScreen: {} };
+  return { schemaVersion: 1, blocks: [], fields: [], logicRules: [], presentation: normalizePresentation(), endScreen: {} };
 }
 
 export function normalizeFormVersion(value = {}) {
@@ -19,7 +76,7 @@ export function normalizeFormVersion(value = {}) {
   const blocks = Array.isArray(source.blocks) ? source.blocks : [];
   const logicRules = Array.isArray(source.logicRules || source.logic_rules) ? (source.logicRules || source.logic_rules) : [];
   const normalizedFields = fields.map((field, index) => ({ ...field, id: field.id || field.key || `field_${index + 1}`, type: field.type || "text", label: field.label || "", required: Boolean(field.required) }));
-  const normalizedBlocks = blocks.map((block, index) => ({ ...block, id: block.id || `block_${index + 1}`, type: block.type || "text" }));
+  const normalizedBlocks = blocks.filter((block) => !["welcome", "end"].includes(block?.type)).map((block, index) => ({ ...block, id: block.id || `block_${index + 1}`, type: block.type || "text" }));
   const blockFieldKeys = new Set(normalizedBlocks.filter((block) => block.type === "field" && typeof block.field_key === "string").map((block) => block.field_key));
   // Older system templates only contained section blocks while fields lived in
   // the parallel fields array. Keep their order, then append stable field
@@ -30,12 +87,14 @@ export function normalizeFormVersion(value = {}) {
       normalizedBlocks.push({ id: `field_${field.id}`, type: "field", field_key: field.id });
     }
   });
+  const presentation = normalizePresentation(source.presentation, { legacyEndScreen: source.endScreen || source.end_screen, legacyBlocks: blocks });
   return {
     schemaVersion: Number(source.schemaVersion ?? source.schema_version ?? 1) || 1,
     blocks: normalizedBlocks,
     fields: normalizedFields,
     logicRules: logicRules.map((rule, index) => ({ ...rule, id: rule.id || `rule_${index + 1}` })),
-    endScreen: source.endScreen || source.end_screen || {},
+    presentation,
+    endScreen: { title: presentation.ending.title, body: presentation.ending.body },
   };
 }
 
@@ -45,6 +104,7 @@ function withArrays(form) {
 
 export function addContentBlock(form, type = "text", properties = {}) {
   const next = withArrays(form);
+  if (!BLOCK_TYPES.has(type) || type === "field") return next;
   const block = { ...properties, id: properties.id || makeId("block"), type: properties.type || type };
   return { ...next, blocks: [...next.blocks, block] };
 }
@@ -176,6 +236,14 @@ export function evaluateLogic(form, answers = {}) {
 export function clientValidateForm(form) {
   const next = withArrays(form);
   const issues = [];
+  const presentation = normalizePresentation(next.presentation, { legacyEndScreen: next.endScreen, legacyBlocks: next.blocks });
+  if (!presentation.publicTitle.trim()) issues.push({ severity: "warning", code: "missing_public_title", path: "/presentation/publicTitle", message: "未设置对外标题，发布时将使用活动名称" });
+  if (!["inherit", "custom"].includes(presentation.welcome.titleMode)) issues.push({ severity: "error", code: "invalid_welcome_title_mode", path: "/presentation/welcome/titleMode", message: "欢迎页标题模式无效" });
+  if (!["default", "custom", "redirect"].includes(presentation.ending.mode)) issues.push({ severity: "error", code: "invalid_ending_mode", path: "/presentation/ending/mode", message: "结束页模式无效" });
+  if (presentation.welcome.startLabel.length > 24) issues.push({ severity: "error", code: "invalid_welcome_start_label", path: "/presentation/welcome/startLabel", message: "开始按钮文案不能超过 24 字" });
+  if (presentation.publicTitle.length > 120 || presentation.welcome.titleOverride.length > 120 || presentation.ending.title.length > 120) issues.push({ severity: "error", code: "invalid_presentation_title", path: "/presentation", message: "展示标题不能超过 120 字" });
+  if (presentation.welcome.description.length > 2000 || presentation.ending.body.length > 2000) issues.push({ severity: "error", code: "invalid_presentation_body", path: "/presentation", message: "展示说明不能超过 2000 字" });
+  if (presentation.ending.mode === "redirect" && !/^https:\/\/[^\s]+$/i.test(presentation.ending.redirectUrl)) issues.push({ severity: "error", code: "invalid_redirect_url", path: "/presentation/ending/redirectUrl", message: "结束页跳转地址必须是 HTTPS URL" });
   if (next.schemaVersion !== 1) issues.push({ severity: "error", code: "unsupported_form_schema", path: "/schemaVersion", message: "不支持的表单版本" });
   const ids = new Set();
   next.fields.forEach((field, index) => {
