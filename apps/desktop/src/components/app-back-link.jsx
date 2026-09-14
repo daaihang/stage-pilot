@@ -1,7 +1,35 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
+import { notify } from "@/components/ui/sonner";
+
+/**
+ * Shared async leave guard. A guard is intentionally imperative: callers can
+ * flush a draft, confirm a destructive transition, or wait for an in-flight
+ * mutation before the deterministic destination is entered.
+ */
+export function useBeforePageLeave(guard) {
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const guardRef = useRef(guard);
+  guardRef.current = guard;
+
+  const run = useCallback(async () => {
+    if (!guardRef.current) return true;
+    if (busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      return (await guardRef.current()) !== false;
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, []);
+
+  return { busy, run };
+}
 
 /**
  * Shared page-level back control. Keep this separate from the titlebar
@@ -20,7 +48,7 @@ export function AppBackLink({
   className = "-ml-2",
 }) {
   const navigate = useNavigate();
-  const [busy, setBusy] = useState(false);
+  const { busy, run: runBeforeNavigate } = useBeforePageLeave(onBeforeNavigate);
 
   const handleClick = async (event) => {
     // Preserve normal anchor semantics for modified clicks and non-primary
@@ -29,13 +57,13 @@ export function AppBackLink({
     if (!onBeforeNavigate) return;
 
     event.preventDefault();
-    if (busy) return;
-    setBusy(true);
     try {
-      const canNavigate = await onBeforeNavigate();
+      const canNavigate = await runBeforeNavigate();
       if (canNavigate !== false) navigate(to, { replace, preventScrollReset });
-    } finally {
-      setBusy(false);
+    } catch (error) {
+      notify.error("无法离开当前页面", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -45,6 +73,8 @@ export function AppBackLink({
       size="sm"
       className={className}
       disabled={busy}
+      aria-busy={busy || undefined}
+      aria-disabled={busy || undefined}
       aria-label={label}
       nativeButton={false}
       render={<Link to={to} replace={replace} onClick={handleClick} />}

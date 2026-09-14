@@ -11,10 +11,17 @@ import { ProductionLocationsPage } from "@/components/production-locations-page"
 
 function ProductionLocationDetailBridge({ workspace, production, onChanged, triggerRef, routerLocation, navigate }) {
   const { setDetailOpen } = useWindowDetail();
+  const panelOpen = new URLSearchParams(routerLocation.search).get("panel") === "locations";
   const getDetail = useCallback(
     () => <ProductionLocationsPage workspace={workspace} production={production} onChanged={() => onChanged?.()} key={production.id} />,
     [onChanged, production, workspace],
   );
+  const closePanel = useCallback(() => {
+    const params = new URLSearchParams(routerLocation.search);
+    params.delete("panel");
+    const search = params.toString();
+    navigate(`${routerLocation.pathname}${search ? `?${search}` : ""}`, { replace: true, preventScrollReset: true });
+  }, [navigate, routerLocation.pathname, routerLocation.search]);
 
   useWindowDetailRegistration({
     key: `production-locations:${production.id}`,
@@ -22,13 +29,12 @@ function ProductionLocationDetailBridge({ workspace, production, onChanged, trig
     detailLabel: "活动地点",
     triggerRef,
     getDetail,
+    onClose: closePanel,
   });
 
   useEffect(() => {
-    if (!routerLocation.state?.openProductionLocations) return;
-    setDetailOpen(true, { announce: false });
-    navigate(routerLocation.pathname + routerLocation.search, { replace: true, state: null });
-  }, [navigate, routerLocation.pathname, routerLocation.search, routerLocation.state, setDetailOpen]);
+    setDetailOpen(panelOpen, { announce: false });
+  }, [panelOpen, setDetailOpen]);
 
   return null;
 }
@@ -77,7 +83,11 @@ export function ProductionLocationPopover({ workspace, production, onRequestEdit
     : "地点待定";
   const openDetails = onRequestEdit || (() => {
     if (windowDetail) {
-      windowDetail.setDetailOpen(true);
+      const params = new URLSearchParams(routerLocation.search);
+      params.set("panel", "locations");
+      const search = params.toString();
+      navigate(`${routerLocation.pathname}${search ? `?${search}` : ""}`, { preventScrollReset: true });
+      windowDetail.setDetailOpen(true, { announce: false });
       return;
     }
     notify.info("活动地点详情暂不可用");

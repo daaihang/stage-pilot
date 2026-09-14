@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { MapPin, Pencil, Star } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,9 @@ export function ProductionLocations({ workspace, production, compact = false }) 
   const [loading, setLoading] = useState(true);
   const triggerRef = useRef(null);
   const { setDetailOpen } = useWindowDetail();
+  const routerLocation = useLocation();
+  const navigate = useNavigate();
+  const panelOpen = new URLSearchParams(routerLocation.search).get("panel") === "locations";
   const canWrite = ["owner", "admin"].includes(workspace?.role) || production?.permissionKeys?.includes("production.edit");
 
   const load = useCallback(async () => {
@@ -31,8 +35,21 @@ export function ProductionLocations({ workspace, production, compact = false }) 
 
   useEffect(() => { load(); }, [load]);
   const getDetail = useCallback(() => <ProductionLocationsPage workspace={workspace} production={production} onChanged={load} key={production.id} />, [load, production, workspace]);
-  useWindowDetailRegistration({ key: `production-locations:${production.id}`, storageKey: `detailPane:production-locations:${production.id}:v2`, detailLabel: "活动地点", triggerRef, getDetail });
-  const open = () => setDetailOpen(true);
+  const closePanel = useCallback(() => {
+    const params = new URLSearchParams(routerLocation.search);
+    params.delete("panel");
+    const search = params.toString();
+    navigate(`${routerLocation.pathname}${search ? `?${search}` : ""}`, { replace: true, preventScrollReset: true });
+  }, [navigate, routerLocation.pathname, routerLocation.search]);
+  useWindowDetailRegistration({ key: `production-locations:${production.id}`, storageKey: `detailPane:production-locations:${production.id}:v2`, detailLabel: "活动地点", triggerRef, getDetail, onClose: closePanel });
+  useEffect(() => { setDetailOpen(panelOpen, { announce: false }); }, [panelOpen, setDetailOpen]);
+  const open = () => {
+    const params = new URLSearchParams(routerLocation.search);
+    params.set("panel", "locations");
+    const search = params.toString();
+    navigate(`${routerLocation.pathname}${search ? `?${search}` : ""}`, { preventScrollReset: true });
+    setDetailOpen(true, { announce: false });
+  };
   const primary = locations.find((location) => location.isPrimary);
 
   if (compact) {

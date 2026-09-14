@@ -110,7 +110,7 @@ export function directProductionCampaignPath(productionId, campaignId, tab = "ov
 export function resolveContextExit({ route, workspace } = {}) {
   if (!route) return "/work";
   if (route.mode === "production") {
-    if (route.direct || workspace?.workspaceNavigable === false) return "/work?tab=participating";
+    if (workspace?.workspaceNavigable === false || !workspace?.id) return "/work?tab=participating";
     return workspace?.id ? workspacePath(workspace.id, "productions") : "/work";
   }
   if (route.mode === "workspace") return workspace?.id ? workspacePath(workspace.id, "home") : "/work";
@@ -133,11 +133,11 @@ export function resolvePageBack({ route, workspace, production, accountReturn } 
         label: "全部表单",
       };
     }
-    if (route.page === "overview") return { kind: "route", to: contextExit, label: route.direct || workspace?.workspaceNavigable === false ? "我的活动" : "活动" };
-    if (!production?.id) return { kind: "route", to: contextExit, label: route.direct || workspace?.workspaceNavigable === false ? "我的活动" : "活动" };
+    if (route.page === "overview") return { kind: "route", to: contextExit, label: workspace?.workspaceNavigable === false || !workspace?.id ? "我的活动" : "活动" };
+    if (!production?.id) return { kind: "route", to: contextExit, label: workspace?.workspaceNavigable === false || !workspace?.id ? "我的活动" : "活动" };
     return {
       kind: "route",
-      to: route.direct || workspace?.workspaceNavigable === false ? directProductionPath(production.id, "overview") : productionPath(workspace.id, production.id, "overview"),
+      to: workspace?.workspaceNavigable === false || !workspace?.id ? directProductionPath(production.id, "overview") : productionPath(workspace.id, production.id, "overview"),
       label: "活动概览",
     };
   }
@@ -154,11 +154,16 @@ export function resolvePageBack({ route, workspace, production, accountReturn } 
 export function resolveDetailClose({ route, workspace, production } = {}) {
   if (!route) return null;
   if (route.mode === "workspace" && route.resourceId) return workspacePath(route.workspaceId, route.page);
+  if (route.mode === "workspace" && route.panel === "types") return workspacePath(route.workspaceId, route.page);
+  if (route.mode === "workspace" && route.page === "members" && route.panel === "invitations") return workspacePath(route.workspaceId, "members");
   if (route.mode === "production" && route.page === "forms" && route.campaignId && production) {
     return route.direct ? directProductionPath(production.id, "forms") : productionPath(workspace?.id, production.id, "forms");
   }
   if (route.mode === "production" && route.page === "members" && route.panel === "invitations" && production) {
     return route.direct ? directProductionPath(production.id, "members") : productionPath(workspace?.id, production.id, "members");
+  }
+  if (route.mode === "production" && route.panel === "locations" && production) {
+    return route.direct ? directProductionPath(production.id, route.page) : productionPath(workspace?.id, production.id, route.page);
   }
   return null;
 }
@@ -238,7 +243,7 @@ export function matchStagePilotRoute(pathname, search = "") {
     const [, workspaceId, productionId, page] = productionMatch;
     const params = new URLSearchParams(search);
     const panelValue = params.get("panel");
-    const panel = page === "program-sheets" && panelValue === "segment-types" ? panelValue : (page === "members" && panelValue === "invitations" ? panelValue : null);
+    const panel = page === "program-sheets" && panelValue === "segment-types" ? panelValue : (page === "members" && panelValue === "invitations" ? panelValue : (["overview", "settings"].includes(page) && panelValue === "locations" ? panelValue : null));
     return productionPages[page] ? { mode: "production", workspaceId, productionId, page, panel, detailId: params.get("detail") || undefined, meta: productionPages[page] } : null;
   }
   const directProductionCampaignMatch = pathname.match(/^\/p\/([^/]+)\/forms\/([^/]+)(?:\/([^/]+))?\/?$/);
@@ -253,7 +258,7 @@ export function matchStagePilotRoute(pathname, search = "") {
     const page = requestedPage || "overview";
     const params = new URLSearchParams(search);
     const panelValue = params.get("panel");
-    return productionPages[page] ? { mode: "production", workspaceId: null, productionId, page, direct: true, panel: page === "members" && panelValue === "invitations" ? panelValue : null, detailId: params.get("detail") || undefined, meta: productionPages[page] } : null;
+    return productionPages[page] ? { mode: "production", workspaceId: null, productionId, page, direct: true, panel: page === "members" && panelValue === "invitations" ? panelValue : (["overview", "settings"].includes(page) && panelValue === "locations" ? panelValue : null), detailId: params.get("detail") || undefined, meta: productionPages[page] } : null;
   }
   const resourceMatch = pathname.match(/^\/w\/([^/]+)\/library\/(programs|people|organizations|venues|equipment)(?:\/([^/]+))?\/?$/);
   if (resourceMatch) {

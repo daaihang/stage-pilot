@@ -37,7 +37,7 @@ function LayoutInspector() {
       <div><h2 className="text-sm font-semibold">布局检查器</h2><p className="mt-0.5 text-xs text-muted-foreground">开发工具页详情面板试验</p></div>
     </header>
     <div className="space-y-6 p-4 text-sm">
-      <section className="border-y py-4"><p className="text-xs text-muted-foreground">当前呈现</p><p className="mt-1 font-medium">{mode === "exclusive" ? "详情独占工作区" : mode === "inline" ? "嵌入式分栏" : "详情页覆盖主工作区"}</p><p className="mt-1 text-xs text-muted-foreground">{mode === "exclusive" ? "详情以带外边距的大窗口覆盖中央工作区；左侧应用导航仍保持可见但不可交互。点击外围阴影或按 Escape 会恢复右侧详情栏，不会关闭详情。" : mode === "inline" ? `详情宽度 ${width}px；拖动左侧分割线或使用键盘方向键调整，分割线不会触发独占或关闭，窗口标题栏负责这两个动作。` : "窄屏时详情作为主工作区内的独立页面显示，不模糊背景、不渲染遮罩，也不覆盖应用标题栏。"}</p></section>
+      <section className="border-y py-4"><p className="text-xs text-muted-foreground">当前呈现</p><p className="mt-1 font-medium">{mode === "exclusive" ? "详情独占工作区" : mode === "inline" ? "嵌入式分栏" : "详情页覆盖主工作区"}</p><p className="mt-1 text-xs text-muted-foreground">{mode === "exclusive" ? "详情以带外边距的大窗口覆盖中央工作区；左侧应用导航仍保持可见且可交互。点击外围阴影或按 Escape 会恢复右侧详情栏，不会关闭详情。" : mode === "inline" ? `详情宽度 ${width}px；拖动左侧分割线或使用键盘方向键调整，分割线不会触发独占或关闭，窗口标题栏负责这两个动作。` : "窄屏时详情作为主工作区内的独立页面显示，不模糊背景、不渲染遮罩，也不覆盖应用标题栏。"}</p></section>
       <section className="space-y-2"><h3 className="font-medium">试验目标</h3><p className="text-xs leading-5 text-muted-foreground">详情内容始终只有一个 Surface，在嵌入、独占和窄屏覆盖之间连续变形。宽屏用竖向分割线区隔，独占按钮会变为“恢复详情侧栏”，关闭详情仍通过窗口标题栏完成。</p></section>
       <section className="space-y-2 border-t pt-4"><h3 className="font-medium">后续接入</h3><p className="text-xs leading-5 text-muted-foreground">资源库、活动实例或工作会话可复用同一容器，将列表保留在主区，并把选中对象放到这里。</p></section>
     </div>
