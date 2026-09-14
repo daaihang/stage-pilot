@@ -8,9 +8,9 @@ import { roleLabel } from "@/lib/workspace-api";
 import { notify } from "@/components/ui/sonner";
 import { SettingsTabs } from "@/components/settings-tabs";
 
-export function ProductionPageBackLink({ workspace, children = "活动", onLeaveCreation }) {
-  const target = workspace?.workspaceNavigable === false ? "/work?tab=participating" : workspacePath(workspace.id, "productions");
-  const label = workspace?.workspaceNavigable === false ? "我的活动" : children;
+export function ProductionPageBackLink({ workspace, children = "活动", backTo, onLeaveCreation }) {
+  const target = backTo || (workspace?.workspaceNavigable === false ? "/work?tab=participating" : workspacePath(workspace.id, "productions"));
+  const label = backTo ? children : (workspace?.workspaceNavigable === false ? "我的活动" : children);
   return <Button variant="ghost" size="sm" className="-ml-2" onClick={(event) => {
     if (!onLeaveCreation) return;
     event.preventDefault();
@@ -18,9 +18,9 @@ export function ProductionPageBackLink({ workspace, children = "活动", onLeave
   }} nativeButton={false} render={<Link to={target} />}><ArrowLeft />{label}</Button>;
 }
 
-export function ProductionPageHeader({ workspace, production, title, titleContent, subtitle, actions, children, onLeaveCreation }) {
+export function ProductionPageHeader({ workspace, production, title, titleContent, subtitle, actions, children, onLeaveCreation, backTo, backLabel = "活动" }) {
   const status = production ? productionStatusLabel(production.status) : null;
-  return <header className="flex items-start justify-between gap-4"><div className="min-w-0 space-y-2"><ProductionPageBackLink workspace={workspace} onLeaveCreation={onLeaveCreation} />{titleContent || <div className="flex flex-wrap items-center gap-3"><h1 className="truncate text-2xl font-semibold tracking-tight">{title || production?.name || "活动"}</h1>{status && <Badge className={status.className} variant="secondary">{status.label}</Badge>}</div>}<p className="text-sm text-muted-foreground">{subtitle || `${workspace.name} · 活动工作区`}</p>{children}</div>{actions}</header>;
+  return <header className="flex items-start justify-between gap-4"><div className="min-w-0 space-y-2"><ProductionPageBackLink workspace={workspace} onLeaveCreation={onLeaveCreation} backTo={backTo}>{backLabel}</ProductionPageBackLink>{titleContent || <div className="flex flex-wrap items-center gap-3"><h1 className="truncate text-2xl font-semibold tracking-tight">{title || production?.name || "活动"}</h1>{status && <Badge className={status.className} variant="secondary">{status.label}</Badge>}</div>}<p className="text-sm text-muted-foreground">{subtitle || `${workspace.name} · 活动工作区`}</p>{children}</div>{actions}</header>;
 }
 
 export function ProductionPermissionStatus({ role, canManage }) {
