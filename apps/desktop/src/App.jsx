@@ -36,6 +36,7 @@ import { NavigationFailure, PlaceholderPage, ProductionsPage, WorkspaceHome } fr
 import { ProductionPlanningPlaceholderPage } from "@/components/production-planning-placeholder-page";
 import { ProductionActivityInfoPage, ProductionCampaignDetailPage, ProductionCollectionWorkflowsPage, ProductionFormTemplatesPage, ProductionFormsPage } from "@/components/production-collection-pages";
 import { WorkspaceMembersPage, WorkspaceRolesPage } from "@/components/workspace-access-pages";
+import { WorkspaceTemplateLibraryPage } from "@/components/workspace-template-library-page";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -516,6 +517,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "workspace" && route.page === "productions") content = <ProductionsPage route={route} workspace={workspace} productions={productions} loading={!productionsLoaded} onCreate={createCreation} />;
   else if (route.mode === "workspace" && route.page === "members") content = <WorkspaceMembersPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "roles") content = <WorkspaceRolesPage route={route} workspace={workspace} />;
+  else if (route.mode === "workspace" && route.page === "templates") content = <WorkspaceTemplateLibraryPage route={route} workspace={workspace} />;
   else if (route.mode === "workspace" && route.page === "file-types") content = <FileTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "program-sheet-segment-types") content = <ProgramSheetSegmentTypeManagementPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} selectedResourceId={route.resourceId} panel={route.panel} />;

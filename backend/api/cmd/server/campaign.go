@@ -41,18 +41,23 @@ var campaignStatuses = map[string]bool{
 var errCampaignPermissionDenied = errors.New("campaign permission denied")
 
 type campaignTemplateItem struct {
-	ID             string         `json:"id"`
-	Scope          string         `json:"scope"`
-	WorkspaceID    *string        `json:"workspace_id"`
-	Kind           string         `json:"kind"`
-	Name           string         `json:"name"`
-	Description    string         `json:"description"`
-	Status         string         `json:"status"`
-	LatestVersion  int            `json:"latest_version"`
-	SourceTemplate *string        `json:"source_template_id,omitempty"`
-	Metadata       map[string]any `json:"metadata"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
+	ID                     string         `json:"id"`
+	Scope                  string         `json:"scope"`
+	WorkspaceID            *string        `json:"workspace_id"`
+	Kind                   string         `json:"kind"`
+	Name                   string         `json:"name"`
+	Description            string         `json:"description"`
+	Status                 string         `json:"status"`
+	LatestVersion          int            `json:"latest_version"`
+	PublishedVersion       *int           `json:"published_version,omitempty"`
+	DraftVersionID         *string        `json:"draft_version_id,omitempty"`
+	PublishedVersionID     *string        `json:"published_version_id,omitempty"`
+	SourceTemplate         *string        `json:"source_template_id,omitempty"`
+	SourceCampaign         *string        `json:"source_campaign_id,omitempty"`
+	SourceCampaignRevision *string        `json:"source_campaign_revision_id,omitempty"`
+	Metadata               map[string]any `json:"metadata"`
+	CreatedAt              time.Time      `json:"created_at"`
+	UpdatedAt              time.Time      `json:"updated_at"`
 }
 
 type formVersionItem struct {
@@ -437,7 +442,14 @@ func (app *application) listWorkspaceCampaignTemplates(w http.ResponseWriter, r 
 	if !validateTemplateFilters(w, r.URL.Query().Get("kind"), r.URL.Query().Get("status")) {
 		return
 	}
-	items, total, err := app.queryCampaignTemplates(r.Context(), &workspaceID, r.URL.Query().Get("kind"), r.URL.Query().Get("status"))
+	status := r.URL.Query().Get("status")
+	access := currentWorkspaceAccess(r)
+	if roleRank[access.Role] < roleRank[workspaceRoleAdmin] {
+		// Members may use published templates, but drafts and archived history are
+		// management data and must not leak through a filter parameter.
+		status = "published"
+	}
+	items, total, err := app.queryCampaignTemplates(r.Context(), &workspaceID, r.URL.Query().Get("kind"), status)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -459,7 +471,10 @@ func validateTemplateFilters(w http.ResponseWriter, kind, status string) bool {
 
 func (app *application) queryCampaignTemplates(ctx context.Context, workspaceID *string, kind, status string) ([]campaignTemplateItem, int64, error) {
 	args := make([]any, 0, 3)
-	where := []string{"t.archived_at IS NULL"}
+	where := []string{}
+	if status != "archived" && status != "all" {
+		where = append(where, "t.archived_at IS NULL")
+	}
 	if workspaceID == nil {
 		where = append(where, "t.scope='system'", "t.workspace_id IS NULL")
 	} else {
@@ -480,11 +495,12 @@ func (app *application) queryCampaignTemplates(ctx context.Context, workspaceID 
 		args = append(args, status)
 		where = append(where, "t.status=$"+strconv.Itoa(len(args)))
 	}
-	query := `SELECT t.id,t.scope,t.workspace_id,t.kind,t.name,t.description,t.status,t.latest_version,
-		t.source_template_id,t.created_at,t.updated_at,
-		COALESCE(v.definition->'metadata','{}'::jsonb),COUNT(*) OVER()
+	query := `SELECT t.id,t.scope,t.workspace_id,t.kind,t.name,t.description,t.status,t.latest_version,t.published_version,
+		draft.id,published.id,t.source_template_id,t.source_campaign_id,t.source_campaign_revision_id,t.created_at,t.updated_at,
+		COALESCE(published.definition->'metadata',draft.definition->'metadata','{}'::jsonb),COUNT(*) OVER()
 		FROM campaign_templates t
-		LEFT JOIN campaign_template_versions v ON v.template_id=t.id AND v.version=t.latest_version
+		LEFT JOIN campaign_template_versions draft ON draft.template_id=t.id AND draft.published_at IS NULL
+		LEFT JOIN campaign_template_versions published ON published.template_id=t.id AND published.version=t.published_version
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY t.updated_at DESC,t.id LIMIT 100`
 	rows, err := app.db.Query(ctx, query, args...)
@@ -498,7 +514,8 @@ func (app *application) queryCampaignTemplates(ctx context.Context, workspaceID 
 		var item campaignTemplateItem
 		var metadata []byte
 		if err := rows.Scan(&item.ID, &item.Scope, &item.WorkspaceID, &item.Kind, &item.Name, &item.Description, &item.Status,
-			&item.LatestVersion, &item.SourceTemplate, &item.CreatedAt, &item.UpdatedAt, &metadata, &total); err != nil {
+			&item.LatestVersion, &item.PublishedVersion, &item.DraftVersionID, &item.PublishedVersionID, &item.SourceTemplate,
+			&item.SourceCampaign, &item.SourceCampaignRevision, &item.CreatedAt, &item.UpdatedAt, &metadata, &total); err != nil {
 			return nil, 0, err
 		}
 		item.Metadata = map[string]any{}
@@ -621,10 +638,11 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 	if input.TemplateID != "" {
 		var templateKind, templateStatus string
 		var latestVersion int
+		var publishedVersion *int
 		var version int
-		if err := tx.QueryRow(r.Context(), `SELECT kind,status,latest_version FROM campaign_templates
+		if err := tx.QueryRow(r.Context(), `SELECT kind,status,latest_version,published_version FROM campaign_templates
 			WHERE id=$1 AND archived_at IS NULL AND (scope='system' OR workspace_id=$2)`, input.TemplateID, access.WorkspaceID).
-			Scan(&templateKind, &templateStatus, &latestVersion); err != nil {
+			Scan(&templateKind, &templateStatus, &latestVersion, &publishedVersion); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				errorJSON(w, http.StatusNotFound, "campaign_template_not_found", "模板不存在或无权使用")
 				return
@@ -641,7 +659,11 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 			errorJSON(w, http.StatusUnprocessableEntity, "campaign_kind_mismatch", "表单类型与模板类型不一致")
 			return
 		}
-		version = latestVersion
+		if publishedVersion == nil {
+			errorJSON(w, http.StatusConflict, "template_not_published", "模板尚未发布可用版本")
+			return
+		}
+		version = *publishedVersion
 		if input.TemplateVersion != nil {
 			version = *input.TemplateVersion
 		}
@@ -650,7 +672,7 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var definitionJSON []byte
-		if err := tx.QueryRow(r.Context(), `SELECT version,review_recipe_version_id,definition FROM campaign_template_versions WHERE template_id=$1 AND version=$2`, input.TemplateID, version).
+		if err := tx.QueryRow(r.Context(), `SELECT version,review_recipe_version_id,definition FROM campaign_template_versions WHERE template_id=$1 AND version=$2 AND published_at IS NOT NULL`, input.TemplateID, version).
 			Scan(&version, &templateRecipeVersionID, &definitionJSON); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				errorJSON(w, http.StatusNotFound, "campaign_template_version_not_found", "模板版本不存在")

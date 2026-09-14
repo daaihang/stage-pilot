@@ -32,12 +32,12 @@ import { ResourcePage } from "@/components/resource-page";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SettingsTabs } from "@/components/settings-tabs";
 import { notify } from "@/components/ui/sonner";
-import { createCampaign, createCampaignRevision, getCampaign, listCampaignRevisions, listCampaigns, listCampaignTemplates, listWorkspaceCampaignTemplates, archiveCampaign, updateCampaign } from "@/lib/campaign-api";
+import { createCampaign, createCampaignRevision, getCampaign, listCampaignRevisions, listCampaigns, listCampaignTemplates, listWorkspaceCampaignTemplates, archiveCampaign, saveCampaignAsTemplate, updateCampaign } from "@/lib/campaign-api";
 import { createCampaignShareLink, listCampaignShareLinks, revokeCampaignShareLink, rotateCampaignShareLink } from "@/lib/campaign-public-api";
 import { CampaignFormBuilder, CampaignPresentationEditor, CampaignPreviewRegistration, CampaignResultsEditor, CampaignReviewEditor, CampaignRulesEditor } from "@/components/campaign-form-builder";
 import { CampaignRevisionDraftProvider, RevisionEditorShell, useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
 import { CampaignEntryInbox } from "@/components/campaign-entry-inbox";
-import { directProductionCampaignPath, productionCampaignPath, productionPath } from "@/lib/navigation";
+import { directProductionCampaignPath, productionCampaignPath, productionPath, workspacePath } from "@/lib/navigation";
 
 const ACTIVITY_INFO_GROUPS = [
   ["basic", "基础信息", FileText],
@@ -205,8 +205,8 @@ export function ProductionFormTemplatesPage({ route, workspace, production }) {
     setLoading(true);
     try {
       const [system, workspaceTemplates] = await Promise.all([
-        listCampaignTemplates({ status: "all" }),
-        workspace?.id ? listWorkspaceCampaignTemplates(workspace.id, { status: "all" }) : Promise.resolve({ items: [] }),
+        listCampaignTemplates({ status: "published" }),
+        workspace?.id ? listWorkspaceCampaignTemplates(workspace.id, { status: "published" }) : Promise.resolve({ items: [] }),
       ]);
       setTemplates([...system.items, ...workspaceTemplates.items]);
     } catch (error) {
@@ -225,9 +225,9 @@ export function ProductionFormTemplatesPage({ route, workspace, production }) {
       return matchesQuery && matchesScope;
     });
   }, [query, scope, templates]);
-  const empty = scope === "workspace" ? { icon: LayoutTemplate, title: "还没有工作空间模板", description: "从系统模板开始自定义后，可以保存为工作空间模板供活动复用。", action: <Button onClick={() => notify.info("创建工作空间模板将在后端模板编辑器接入后开放")}><Plus />创建工作空间模板</Button> } : { icon: LayoutTemplate, title: "没有匹配的模板", description: "调整搜索条件，或从空白表单开始。" };
+  const empty = scope === "workspace" ? { icon: LayoutTemplate, title: "还没有工作空间模板", description: "从系统模板开始自定义后，可以保存为工作空间模板供活动复用。", action: <Button onClick={() => navigate(workspacePath(workspace.id, "templates"))}><Plus />管理工作空间模板</Button> } : { icon: LayoutTemplate, title: "没有匹配的模板", description: "调整搜索条件，或从空白表单开始。" };
   return <div className="@container/production-form-templates min-w-0 space-y-6">
-    <ProductionPageHeader workspace={workspace} production={production} title="表单模板" subtitle={route.meta.description} actions={<Button onClick={() => setCreateTemplate(false)}><Plus />从空白创建</Button>} />
+    <ProductionPageHeader workspace={workspace} production={production} title="表单模板" subtitle={route.meta.description} actions={<div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "templates"))}>管理工作空间模板</Button><Button onClick={() => setCreateTemplate(false)}><Plus />从空白创建</Button></div>} />
     <ResourcePage title="可用模板" description="系统模板只读；工作空间模板用于沉淀本团队的最佳实践。" count={filteredTemplates.length} search={{ value: query, onChange: setQuery, placeholder: "搜索模板名称或用途" }} filters={<div className="flex items-center gap-1"><Button type="button" size="sm" variant={scope === "all" ? "secondary" : "ghost"} onClick={() => setScope("all")}>全部模板</Button><Button type="button" size="sm" variant={scope === "system" ? "secondary" : "ghost"} onClick={() => setScope("system")}>系统模板</Button><Button type="button" size="sm" variant={scope === "workspace" ? "secondary" : "ghost"} onClick={() => setScope("workspace")}>工作空间模板</Button></div>} showViewToggle={false} loading={loading} summary={<span>模板会在创建表单时复制为活动快照</span>} empty={filteredTemplates.length ? null : empty}>
       <div className="grid gap-4 @min-[40rem]/resource-page:grid-cols-2 @min-[72rem]/resource-page:grid-cols-3">{filteredTemplates.map((template) => <TemplateCard key={`${template.scope}-${template.id}`} template={template} onUse={setCreateTemplate} />)}</div>
     </ResourcePage>
@@ -371,6 +371,24 @@ function CampaignShareLinksCard({ campaign }) {
   </PlaceholderCard>;
 }
 
+function SaveCampaignAsTemplateDialog({ open, onOpenChange, campaign, revision, onSaved }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) { setName(campaign?.name ? `${campaign.name}模板` : ""); setDescription(campaign?.description || ""); }
+  }, [campaign?.description, campaign?.name, open]);
+  const submit = async () => {
+    if (!name.trim()) { notify.error("模板名称不能为空"); return; }
+    setBusy(true);
+    try {
+      await notify.promise(saveCampaignAsTemplate(campaign.id, { name: name.trim(), description: description.trim(), revision_id: revision?.id }), { loading: "正在保存为工作空间模板…", success: "已保存为工作空间模板", error: (error) => `保存失败：${error?.message || String(error)}` });
+      onOpenChange(false); onSaved?.();
+    } catch { /* notify.promise owns feedback */ } finally { setBusy(false); }
+  };
+  return <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}><DialogContent><DialogHeader><DialogTitle>保存为工作空间模板</DialogTitle><DialogDescription>复制当前表单的表单、规则、审核和结果映射；不会复制提交记录、活动成员或运行状态。</DialogDescription></DialogHeader><div className="space-y-4"><label className="block space-y-1 text-sm"><span>模板名称</span><Input value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label><label className="block space-y-1 text-sm"><span>描述</span><Textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} /></label></div><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button><Button onClick={() => void submit()} disabled={busy || !revision}>保存模板</Button></DialogFooter></DialogContent></Dialog>;
+}
+
 function CampaignReturnBridge({ requestId, onBusy, onReturn }) {
   const draft = useCampaignRevisionDraft();
   const handledRequestRef = useRef(0);
@@ -405,7 +423,7 @@ function CampaignReturnBridge({ requestId, onBusy, onReturn }) {
   return null;
 }
 
-function CampaignDetailPanel({ tab, detail, production, onArchive, onPublished, onCreateDraft, onCloneRevision, onOpenActivityInfo, onCampaignUpdated }) {
+function CampaignDetailPanel({ tab, detail, production, onArchive, onPublished, onCreateDraft, onCloneRevision, onOpenActivityInfo, onCampaignUpdated, onSaveAsTemplate }) {
   const campaign = detail?.campaign;
   const revision = detail?.draftRevision || detail?.publishedRevision;
   const policy = detail?.availabilityPolicy || {};
@@ -418,7 +436,7 @@ function CampaignDetailPanel({ tab, detail, production, onArchive, onPublished, 
     review: <RevisionEditorShell><CampaignReviewEditor /></RevisionEditorShell>,
     entries: <CampaignEntryInbox campaignId={campaign?.id} />,
     results: <RevisionEditorShell><CampaignResultsEditor /></RevisionEditorShell>,
-    settings: <div className="space-y-4"><CampaignShareLinksCard campaign={campaign} /><PlaceholderCard icon={Settings} title="表单设置" description="管理归档、版本历史和保存为工作空间模板。" action={<Button variant="outline" onClick={() => notify.info("保存为工作空间模板将在模板编辑器接入后开放")}>保存为模板</Button>}><div className="space-y-4 text-sm"><div className="flex min-h-24 flex-col items-start gap-3 border border-dashed px-4 py-4 text-muted-foreground"><p>来源模板：{campaign?.sourceTemplateId || "从空白创建"}</p><p>创建时间：{formatCampaignDate(campaign?.createdAt)}</p>{campaign?.status !== "archived" && <Button variant="destructive" size="sm" onClick={onArchive}>归档此表单</Button>}</div><div><p className="mb-2 font-medium text-foreground">Revision 历史</p><div className="divide-y rounded-md border">{(detail?.revisions || []).map((item) => <div key={item.id} className="flex flex-wrap items-center gap-2 px-3 py-2"><span className="font-medium">v{item.revisionNo}</span><Badge variant="outline">{CAMPAIGN_STATUS_LABELS[item.status] || item.status}</Badge><span className="min-w-0 flex-1 text-xs text-muted-foreground">{item.changeNote || "无变更说明"}</span>{item.status !== "draft" && campaign?.status !== "archived" ? <Button size="sm" variant="ghost" onClick={() => onCloneRevision?.(item)}>复制为草稿</Button> : null}</div>)}{!(detail?.revisions || []).length ? <p className="px-3 py-3 text-xs text-muted-foreground">暂无版本历史。</p> : null}</div></div></div></PlaceholderCard></div>,
+    settings: <div className="space-y-4"><CampaignShareLinksCard campaign={campaign} /><PlaceholderCard icon={Settings} title="表单设置" description="管理归档、版本历史和保存为工作空间模板。" action={<Button variant="outline" onClick={onSaveAsTemplate}>保存为模板</Button>}><div className="space-y-4 text-sm"><div className="flex min-h-24 flex-col items-start gap-3 border border-dashed px-4 py-4 text-muted-foreground"><p>来源模板：{campaign?.sourceTemplateId || "从空白创建"}</p><p>创建时间：{formatCampaignDate(campaign?.createdAt)}</p>{campaign?.status !== "archived" && <Button variant="destructive" size="sm" onClick={onArchive}>归档此表单</Button>}</div><div><p className="mb-2 font-medium text-foreground">Revision 历史</p><div className="divide-y rounded-md border">{(detail?.revisions || []).map((item) => <div key={item.id} className="flex flex-wrap items-center gap-2 px-3 py-2"><span className="font-medium">v{item.revisionNo}</span><Badge variant="outline">{CAMPAIGN_STATUS_LABELS[item.status] || item.status}</Badge><span className="min-w-0 flex-1 text-xs text-muted-foreground">{item.changeNote || "无变更说明"}</span>{item.status !== "draft" && campaign?.status !== "archived" ? <Button size="sm" variant="ghost" onClick={() => onCloneRevision?.(item)}>复制为草稿</Button> : null}</div>)}{!(detail?.revisions || []).length ? <p className="px-3 py-3 text-xs text-muted-foreground">暂无版本历史。</p> : null}</div></div></div></PlaceholderCard></div>,
   };
   return panels[tab] || panels.overview;
 }
@@ -430,6 +448,7 @@ export function ProductionCampaignDetailPage({ route, workspace, production }) {
   const [loading, setLoading] = useState(true);
   const [returnBusy, setReturnBusy] = useState(false);
   const [returnRequestId, setReturnRequestId] = useState(0);
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
   const formsPath = route.direct ? directProductionPath(production.id, "forms") : productionPath(workspace.id, production.id, "forms");
   const loadDetail = async () => {
     setLoading(true);
@@ -485,7 +504,7 @@ export function ProductionCampaignDetailPage({ route, workspace, production }) {
     setReturnRequestId((current) => current + 1);
   };
   return <div className="@container/production-campaign-detail min-w-0 space-y-6">
-    <ProductionPageHeader workspace={workspace} production={production} title={detail?.campaign?.name || "表单详情"} subtitle={`${production?.name || "活动"} · ${detail?.campaign?.kind || "Campaign"}`} backTo={formsPath} backLabel={returnBusy ? "保存中…" : "全部表单"} onLeaveCreation={requestReturnToList} />
-    {loading ? <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在加载表单详情…</CardContent></Card> : detail ? <CampaignRevisionDraftProvider key={detail.draftRevision?.id || detail.publishedRevision?.id || "empty"} campaign={detail.campaign} revision={detail.draftRevision || detail.publishedRevision} production={production} onSaved={(saved) => setDetail((current) => current ? ({ ...current, draftRevision: saved }) : current)} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onReload={() => loadDetail()}><CampaignReturnBridge requestId={returnRequestId} onBusy={setReturnBusy} onReturn={() => navigate(formsPath)} /><SettingsTabs groups={CAMPAIGN_DETAIL_GROUPS} activeGroup={activeTab} onGroupChange={goToTab} ariaLabel="表单详情分类"><CampaignDetailPanel tab={activeTab} detail={detail} production={production} onArchive={archive} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onCreateDraft={createDraft} onCloneRevision={cloneRevision} onOpenActivityInfo={() => navigate(route.direct ? directProductionPath(production.id, "activity-info") : productionPath(workspace.id, production.id, "activity-info"))} onCampaignUpdated={(nextCampaign) => setDetail((current) => current ? ({ ...current, campaign: nextCampaign }) : current)} /></SettingsTabs></CampaignRevisionDraftProvider> : <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">暂时无法显示表单详情。</CardContent></Card>}
+      <ProductionPageHeader workspace={workspace} production={production} title={detail?.campaign?.name || "表单详情"} subtitle={`${production?.name || "活动"} · ${detail?.campaign?.kind || "Campaign"}`} backTo={formsPath} backLabel={returnBusy ? "保存中…" : "全部表单"} onLeaveCreation={requestReturnToList} />
+    {loading ? <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在加载表单详情…</CardContent></Card> : detail ? <CampaignRevisionDraftProvider key={detail.draftRevision?.id || detail.publishedRevision?.id || "empty"} campaign={detail.campaign} revision={detail.draftRevision || detail.publishedRevision} production={production} onSaved={(saved) => setDetail((current) => current ? ({ ...current, draftRevision: saved }) : current)} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onReload={() => loadDetail()}><CampaignReturnBridge requestId={returnRequestId} onBusy={setReturnBusy} onReturn={() => navigate(formsPath)} /><SettingsTabs groups={CAMPAIGN_DETAIL_GROUPS} activeGroup={activeTab} onGroupChange={goToTab} ariaLabel="表单详情分类"><CampaignDetailPanel tab={activeTab} detail={detail} production={production} onArchive={archive} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onCreateDraft={createDraft} onCloneRevision={cloneRevision} onOpenActivityInfo={() => navigate(route.direct ? directProductionPath(production.id, "activity-info") : productionPath(workspace.id, production.id, "activity-info"))} onSaveAsTemplate={() => setSaveTemplateOpen(true)} onCampaignUpdated={(nextCampaign) => setDetail((current) => current ? ({ ...current, campaign: nextCampaign }) : current)} /></SettingsTabs><SaveCampaignAsTemplateDialog open={saveTemplateOpen} onOpenChange={setSaveTemplateOpen} campaign={detail.campaign} revision={detail.draftRevision || detail.publishedRevision} onSaved={() => navigate(workspacePath(workspace.id, "templates"))} /></CampaignRevisionDraftProvider> : <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">暂时无法显示表单详情。</CardContent></Card>}
   </div>;
 }

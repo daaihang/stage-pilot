@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func authedRequestWithHeaders(t *testing.T, app *application, token, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -52,8 +53,14 @@ func TestCampaignTemplateCreateListDetailAndArchive(t *testing.T) {
 	if err := app.db.QueryRow(t.Context(), `SELECT definition FROM campaign_template_versions WHERE template_id=$1 AND version=1`, templateID).Scan(&originalDefinition); err != nil {
 		t.Fatal(err)
 	}
+	var publishedAt *time.Time
+	if err := app.db.QueryRow(t.Context(), `SELECT published_at FROM campaign_template_versions WHERE template_id=$1 AND version=1`, templateID).Scan(&publishedAt); err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
-		_, _ = app.db.Exec(t.Context(), `UPDATE campaign_template_versions SET definition=$1 WHERE template_id=$2 AND version=1`, originalDefinition, templateID)
+		if publishedAt == nil {
+			_, _ = app.db.Exec(t.Context(), `UPDATE campaign_template_versions SET definition=$1 WHERE template_id=$2 AND version=1`, originalDefinition, templateID)
+		}
 	}()
 
 	body := map[string]any{"name": "API 节目征集", "template_id": templateID}
@@ -75,8 +82,10 @@ func TestCampaignTemplateCreateListDetailAndArchive(t *testing.T) {
 	}
 	changedID := "snapshot_changed_" + newID()
 	changedDefinition, _ := json.Marshal(map[string]any{"form": map[string]any{"schema_version": 1, "blocks": []any{}, "fields": []any{map[string]any{"id": changedID, "type": "text"}}, "logic_rules": []any{}, "end_screen": map[string]any{}}})
-	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_template_versions SET definition=$1 WHERE template_id=$2 AND version=1`, changedDefinition, templateID); err != nil {
-		t.Fatal(err)
+	if publishedAt == nil {
+		if _, err := app.db.Exec(t.Context(), `UPDATE campaign_template_versions SET definition=$1 WHERE template_id=$2 AND version=1`, changedDefinition, templateID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	createdDetail := authedRequest(t, app, token, http.MethodGet, "/v1/campaigns/"+campaignID, nil)
 	if createdDetail.Code != http.StatusOK {

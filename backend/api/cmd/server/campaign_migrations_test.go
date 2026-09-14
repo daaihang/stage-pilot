@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30-36 时运行；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30-37 时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -36,8 +36,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
-	if version != "30" && version != "31" && version != "32" && version != "33" && version != "34" && version != "35" && version != "36" {
-		t.Skipf("campaign migration schema is %s, want 30, 31, 32, 33, 34, 35 or 36", version)
+	if version != "30" && version != "31" && version != "32" && version != "33" && version != "34" && version != "35" && version != "36" && version != "37" {
+		t.Skipf("campaign migration schema is %s, want 30-37", version)
 	}
 	tables := []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
@@ -47,7 +47,7 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 		"review_recipe_templates", "review_recipe_versions",
 		"campaign_share_links", "campaign_public_submission_idempotency",
 	}
-	if version == "34" || version == "35" || version == "36" {
+	if version == "34" || version == "35" || version == "36" || version == "37" {
 		tables = append(tables, "entry_inbox_user_states")
 	}
 	for _, table := range tables {
@@ -64,8 +64,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 func TestCampaignFormBlocksV2TemplateInvariant(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "32" && version != "33" && version != "34" && version != "35" && version != "36") {
-		t.Skipf("campaign form blocks v2 requires schema 32-36 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "32" && version != "33" && version != "34" && version != "35" && version != "36" && version != "37") {
+		t.Skipf("campaign form blocks v2 requires schema 32-37 (got %s)", version)
 	}
 	rows, err := app.db.Query(t.Context(), `
 		SELECT ctv.definition->'form'->'fields', ctv.definition->'form'->'blocks', ctv.review_recipe_version_id
@@ -286,8 +286,8 @@ func TestCampaignSystemTemplateSeedAndIdempotencyTable(t *testing.T) {
 func TestCampaignPublicIntakeSchema(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "33" && version != "34" && version != "35" && version != "36") {
-		t.Skipf("campaign public intake requires schema 33-36 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "33" && version != "34" && version != "35" && version != "36" && version != "37") {
+		t.Skipf("campaign public intake requires schema 33-37 (got %s)", version)
 	}
 	for _, table := range []string{"campaign_share_links", "campaign_public_submission_idempotency"} {
 		var registered *string
@@ -300,8 +300,8 @@ func TestCampaignPublicIntakeSchema(t *testing.T) {
 func TestEntryInboxUserStateSchema(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "34" && version != "35" && version != "36") {
-		t.Skipf("entry inbox schema requires schema 34-36 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "34" && version != "35" && version != "36" && version != "37") {
+		t.Skipf("entry inbox schema requires schema 34-37 (got %s)", version)
 	}
 	var uniqueCount int
 	if err := app.db.QueryRow(t.Context(), `SELECT count(*) FROM pg_indexes WHERE tablename='entry_inbox_user_states' AND indexdef LIKE '%workspace_id, entry_id, user_id%'`).Scan(&uniqueCount); err != nil {
@@ -309,5 +309,32 @@ func TestEntryInboxUserStateSchema(t *testing.T) {
 	}
 	if uniqueCount == 0 {
 		t.Fatal("entry inbox user state uniqueness index missing")
+	}
+}
+
+func TestTemplateRecipeManagementSchema(t *testing.T) {
+	app := newIntegrationApp(t)
+	var version string
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || version != "37" {
+		t.Skipf("template management schema requires version 37 (got %s)", version)
+	}
+	for _, column := range []struct{ table, name string }{
+		{"campaign_templates", "published_version"}, {"campaign_templates", "source_campaign_id"},
+		{"campaign_template_versions", "published_at"}, {"review_recipe_templates", "published_version"},
+	} {
+		var exists bool
+		if err := app.db.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_name=$1 AND column_name=$2)`, column.table, column.name).Scan(&exists); err != nil {
+			t.Fatalf("inspect %s.%s: %v", column.table, column.name, err)
+		}
+		if !exists {
+			t.Fatalf("column %s.%s missing", column.table, column.name)
+		}
+	}
+	var publishedTemplates int
+	if err := app.db.QueryRow(t.Context(), `SELECT count(*) FROM campaign_templates WHERE scope='system' AND published_version IS NOT NULL`).Scan(&publishedTemplates); err != nil {
+		t.Fatal(err)
+	}
+	if publishedTemplates != 4 {
+		t.Fatalf("system campaign templates with published version=%d, want 4", publishedTemplates)
 	}
 }

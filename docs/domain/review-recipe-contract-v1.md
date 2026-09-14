@@ -37,7 +37,7 @@ template_id, workspace_id, version, schema_version(1), definition(JSONB)
 created_by, created_at, published_at?
 ```
 
-已发布版本禁止原地更新或删除。V1 只提供查询接口；工作空间方案复制、编辑和发布留待后续管理界面。
+已发布版本禁止原地更新或删除。Workspace Owner/Admin 可以从系统方案或已发布 Workspace 方案复制出 Draft，编辑后发布；每个方案最多一个 Draft。Workspace 方案只保存可复用的 `production_roles`，具体活动成员必须在 Campaign 内配置。普通 Workspace Member 只能查看已发布方案。
 
 ## 3. 固定的 V1 定义
 
@@ -117,14 +117,21 @@ review_recipe_multi_stage_scored   多轮评分审核
 
 发布 Revision 时必须在同一事务中锁定 Campaign/Revision，执行表单、开放规则、结果映射和 ReviewRecipe 语义校验；归档 Campaign 不可发布。发布后 Revision 和 FormVersion 均不可原地编辑，修改必须新建 Revision。
 
-## 6. API（只读）
+## 6. API
 
 ```text
 GET /v1/review-recipes?status=
 GET /v1/workspaces/{workspaceId}/review-recipes?status=
 GET /v1/review-recipes/{recipeId}/versions
+GET /v1/review-recipes/{recipeId}
+GET /v1/review-recipes/{recipeId}/versions/{versionId}
+POST /v1/workspaces/{workspaceId}/review-recipes
+PATCH /v1/review-recipes/{recipeId}
+POST /v1/review-recipes/{recipeId}/versions
+PATCH /v1/review-recipes/{recipeId}/versions/{versionId}
+POST /v1/review-recipes/{recipeId}/versions/{versionId}/publish
 ```
 
-返回统一 `{items, next_cursor, total}`。系统方案全局可见；Workspace 方案和其版本遵守现有 Workspace 成员校验。
+返回统一 `{items, next_cursor, total}`。系统方案全局可见；Workspace 方案和其版本遵守现有 Workspace 成员校验。模板/方案创建、复制、创建版本支持 `Idempotency-Key`；草稿更新和发布使用 `If-Match`，冲突返回 `412`。归档后不能用于新的 Campaign 或 Revision。
 
 本阶段不实现公开 Entry 提交、ReviewRun/Assignment/Feedback、评分执行、补件执行、Decision/Materialization API 或异步 Worker。

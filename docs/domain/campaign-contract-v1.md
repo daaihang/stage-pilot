@@ -2,7 +2,7 @@
 
 状态：已冻结（2026-09-09）
 范围：`Campaign`、`CampaignTemplate`、`CampaignRevision`、`FormVersion`、`Entry`、`Decision`、`EntryMaterialization`，以及六类活动级结果对象 `ProductionProgram`、`ProductionPerson`、`ProductionRegistration`、`Requirement`、`ResourceCommitment`、`FormResponse`。
-本文件只冻结契约，不代表数据库或 API 已经实现。
+本文件冻结契约；模板管理 API 已支持 Workspace 模板的草稿、发布、归档和从 Campaign 保存。
 
 ## 1. 设计原则
 
@@ -86,6 +86,9 @@ System CampaignTemplate
   "description": "…",
   "status": "published",
   "latest_version": 4,
+  "published_version": 3,
+  "draft_version_id": "tplv_…",
+  "published_version_id": "tplv_…",
   "source_template_id": null,
   "created_by": null,
   "created_at": "…",
@@ -94,6 +97,8 @@ System CampaignTemplate
 ```
 
 `scope`：`system` 或 `workspace`。系统模板只读；Workspace 模板可以从系统模板、空白或已配置好的 Campaign 复制而来。模板版本包含完整的默认 Form、规则、审核配方、转化计划和展示配置，而不只是字段数组。
+
+模板版本使用 Draft/Published 生命周期：`latest_version` 是最后创建的版本，`published_version` 是当前可供 Campaign 使用的版本；每个模板最多一个 Draft。已发布版本不可原地修改，历史版本可以复制成新 Draft。保存为模板只复制配置快照，不复制 Entry、Decision、Materialization、公开链接或活动成员。
 
 #### CampaignRevision
 

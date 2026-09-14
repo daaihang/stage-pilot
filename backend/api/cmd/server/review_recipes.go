@@ -15,20 +15,23 @@ import (
 const defaultReviewRecipeVersionID = "review_recipe_auto_accept_v1"
 
 type reviewRecipeTemplateItem struct {
-	ID              string     `json:"id"`
-	Scope           string     `json:"scope"`
-	WorkspaceID     *string    `json:"workspace_id"`
-	Key             string     `json:"key"`
-	Name            string     `json:"name"`
-	Description     string     `json:"description"`
-	Status          string     `json:"status"`
-	LatestVersion   int        `json:"latest_version"`
-	LatestVersionID *string    `json:"latest_version_id,omitempty"`
-	SourceTemplate  *string    `json:"source_template_id,omitempty"`
-	CreatedBy       *string    `json:"created_by,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	ArchivedAt      *time.Time `json:"archived_at,omitempty"`
+	ID                 string     `json:"id"`
+	Scope              string     `json:"scope"`
+	WorkspaceID        *string    `json:"workspace_id"`
+	Key                string     `json:"key"`
+	Name               string     `json:"name"`
+	Description        string     `json:"description"`
+	Status             string     `json:"status"`
+	LatestVersion      int        `json:"latest_version"`
+	PublishedVersion   *int       `json:"published_version,omitempty"`
+	LatestVersionID    *string    `json:"latest_version_id,omitempty"`
+	DraftVersionID     *string    `json:"draft_version_id,omitempty"`
+	PublishedVersionID *string    `json:"published_version_id,omitempty"`
+	SourceTemplate     *string    `json:"source_template_id,omitempty"`
+	CreatedBy          *string    `json:"created_by,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
 }
 
 type reviewRecipeVersionItem struct {
@@ -41,6 +44,7 @@ type reviewRecipeVersionItem struct {
 	CreatedBy     *string         `json:"created_by,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	PublishedAt   *time.Time      `json:"published_at,omitempty"`
+	ETag          string          `json:"etag,omitempty"`
 }
 
 type reviewRecipeDefinition struct {
@@ -373,7 +377,7 @@ func (app *application) listReviewRecipes(w http.ResponseWriter, r *http.Request
 	}
 	where := []string{"rt.scope='system'", "rt.workspace_id IS NULL"}
 	args := []any{}
-	if status == "" {
+	if status != "archived" && status != "all" {
 		where = append(where, "rt.archived_at IS NULL")
 	}
 	if status != "" && status != "all" {
@@ -390,7 +394,11 @@ func (app *application) listWorkspaceReviewRecipes(w http.ResponseWriter, r *htt
 	}
 	where := []string{"rt.scope='workspace'", "rt.workspace_id=$1"}
 	args := []any{r.PathValue("id")}
-	if status == "" {
+	access := currentWorkspaceAccess(r)
+	if roleRank[access.Role] < roleRank[workspaceRoleAdmin] {
+		status = "published"
+	}
+	if status != "archived" && status != "all" {
 		where = append(where, "rt.archived_at IS NULL")
 	}
 	if status != "" && status != "all" {
@@ -401,10 +409,12 @@ func (app *application) listWorkspaceReviewRecipes(w http.ResponseWriter, r *htt
 }
 
 func (app *application) writeReviewRecipeList(w http.ResponseWriter, r *http.Request, where string, args ...any) {
-	query := `SELECT rt.id,rt.scope,rt.workspace_id,rt.key,rt.name,rt.description,rt.status,rt.latest_version,
-		rv.id,rt.source_template_id,rt.created_by,rt.created_at,rt.updated_at,rt.archived_at,COUNT(*) OVER()
+	query := `SELECT rt.id,rt.scope,rt.workspace_id,rt.key,rt.name,rt.description,rt.status,rt.latest_version,rt.published_version,
+		latest.id,draft.id,published.id,rt.source_template_id,rt.created_by,rt.created_at,rt.updated_at,rt.archived_at,COUNT(*) OVER()
 		FROM review_recipe_templates rt
-		LEFT JOIN review_recipe_versions rv ON rv.template_id=rt.id AND rv.version=rt.latest_version
+		LEFT JOIN review_recipe_versions latest ON latest.template_id=rt.id AND latest.version=rt.latest_version
+		LEFT JOIN review_recipe_versions draft ON draft.template_id=rt.id AND draft.published_at IS NULL
+		LEFT JOIN review_recipe_versions published ON published.template_id=rt.id AND published.version=rt.published_version
 		WHERE ` + where + ` ORDER BY rt.updated_at DESC,rt.id LIMIT 100`
 	rows, err := app.db.Query(r.Context(), query, args...)
 	if err != nil {
@@ -417,7 +427,7 @@ func (app *application) writeReviewRecipeList(w http.ResponseWriter, r *http.Req
 	for rows.Next() {
 		var item reviewRecipeTemplateItem
 		if err := rows.Scan(&item.ID, &item.Scope, &item.WorkspaceID, &item.Key, &item.Name, &item.Description, &item.Status,
-			&item.LatestVersion, &item.LatestVersionID, &item.SourceTemplate, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.ArchivedAt, &total); err != nil {
+			&item.LatestVersion, &item.PublishedVersion, &item.LatestVersionID, &item.DraftVersionID, &item.PublishedVersionID, &item.SourceTemplate, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt, &item.ArchivedAt, &total); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -450,7 +460,8 @@ func (app *application) reviewRecipeAccess(ctx context.Context, userID, recipeID
 
 func (app *application) listReviewRecipeVersions(w http.ResponseWriter, r *http.Request) {
 	recipeID := r.PathValue("recipeId")
-	if _, err := app.reviewRecipeAccess(r.Context(), claims(r).Subject, recipeID); err != nil {
+	workspaceID, err := app.reviewRecipeAccess(r.Context(), claims(r).Subject, recipeID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			errorJSON(w, http.StatusNotFound, "review_recipe_not_found", "审核方案不存在或无权访问")
 		} else {
@@ -458,8 +469,15 @@ func (app *application) listReviewRecipeVersions(w http.ResponseWriter, r *http.
 		}
 		return
 	}
-	rows, err := app.db.Query(r.Context(), `SELECT rv.id,rv.template_id,rv.workspace_id,rv.version,rv.schema_version,rv.definition,rv.created_by,rv.created_at,rv.published_at
-		FROM review_recipe_versions rv WHERE rv.template_id=$1 ORDER BY rv.version DESC`, recipeID)
+	query := `SELECT rv.id,rv.template_id,rv.workspace_id,rv.version,rv.schema_version,rv.definition,rv.created_by,rv.created_at,rv.published_at
+		FROM review_recipe_versions rv WHERE rv.template_id=$1`
+	if workspaceID != "" {
+		if _, adminErr := app.reviewRecipeAdminAccess(r.Context(), claims(r).Subject, recipeID); adminErr != nil {
+			query += ` AND rv.published_at IS NOT NULL`
+		}
+	}
+	query += ` ORDER BY rv.version DESC`
+	rows, err := app.db.Query(r.Context(), query, recipeID)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -472,6 +490,7 @@ func (app *application) listReviewRecipeVersions(w http.ResponseWriter, r *http.
 			serverError(w, err)
 			return
 		}
+		item.ETag = reviewRecipeVersionETag(item)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {

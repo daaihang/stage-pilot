@@ -36,7 +36,12 @@ function mapTemplate(value) {
     description: value.description || "",
     status: value.status,
     latestVersion: value.latest_version,
+    publishedVersion: value.published_version,
+    draftVersionId: value.draft_version_id,
+    publishedVersionId: value.published_version_id,
     sourceTemplateId: value.source_template_id,
+    sourceCampaignId: value.source_campaign_id,
+    sourceCampaignRevisionId: value.source_campaign_revision_id,
     metadata: value.metadata || {},
     tags: value.metadata?.tags || [],
     createdAt: value.created_at,
@@ -55,7 +60,10 @@ function mapReviewRecipe(value) {
     description: value.description || "",
     status: value.status,
     latestVersion: value.latest_version,
+    publishedVersion: value.published_version,
     latestVersionId: value.latest_version_id,
+    draftVersionId: value.draft_version_id,
+    publishedVersionId: value.published_version_id,
     sourceTemplateId: value.source_template_id,
     createdBy: value.created_by,
     createdAt: value.created_at,
@@ -76,6 +84,24 @@ function mapReviewRecipeVersion(value) {
     createdBy: value.created_by,
     createdAt: value.created_at,
     publishedAt: value.published_at,
+    etag: value.etag || "",
+  };
+}
+
+function mapCampaignTemplateVersion(value) {
+  if (!value) return null;
+  return {
+    id: value.id,
+    templateId: value.template_id,
+    workspaceId: value.workspace_id,
+    version: value.version,
+    status: value.status,
+    definition: value.definition || {},
+    reviewRecipeVersionId: value.review_recipe_version_id,
+    createdBy: value.created_by,
+    createdAt: value.created_at,
+    publishedAt: value.published_at,
+    etag: value.etag || "",
   };
 }
 
@@ -421,6 +447,147 @@ export async function listReviewRecipeVersions(recipeId) {
   const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions`);
   const list = normalizeList(result);
   return { ...list, items: list.items.map(mapReviewRecipeVersion) };
+}
+
+export async function getCampaignTemplate(templateId) {
+  const result = await request(`/v1/campaign-templates/${encodeURIComponent(templateId)}`);
+  return { template: mapTemplate(result.template), etag: result.etag || "" };
+}
+
+export async function listCampaignTemplateVersions(templateId) {
+  const result = await request(`/v1/campaign-templates/${encodeURIComponent(templateId)}/versions`);
+  const list = normalizeList(result);
+  return {
+    ...list,
+    items: list.items.map(mapCampaignTemplateVersion),
+  };
+}
+
+export async function createWorkspaceCampaignTemplate(workspaceId, payload, options = {}) {
+  const result = await request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/campaign-templates`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    ...mutationOptions(options),
+  });
+  return {
+    template: mapTemplate(result.template),
+    draftVersion: mapCampaignTemplateVersion(result.draft_version),
+  };
+}
+
+export async function updateCampaignTemplate(templateId, payload, options = {}) {
+  const result = await request(`/v1/campaign-templates/${encodeURIComponent(templateId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+    headers: {
+      ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}),
+    },
+  });
+  return { template: mapTemplate(result.template), etag: result.etag || "" };
+}
+
+export async function createCampaignTemplateVersion(templateId, payload = {}, options = {}) {
+  const result = await request(`/v1/campaign-templates/${encodeURIComponent(templateId)}/versions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    ...mutationOptions(options),
+  });
+  return mapCampaignTemplateVersion(result);
+}
+
+export async function updateCampaignTemplateVersion(templateId, versionId, payload, options = {}) {
+  const result = await request(`/v1/campaign-templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(versionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
+  });
+  return mapCampaignTemplateVersion(result.version || result);
+}
+
+export async function publishCampaignTemplateVersion(templateId, versionId, options = {}) {
+  const result = await request(`/v1/campaign-templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(versionId)}/publish`, {
+    method: "POST",
+    body: "{}",
+    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
+  });
+  return {
+    template: mapTemplate(result.template),
+    version: mapCampaignTemplateVersion(result.version),
+  };
+}
+
+export async function getReviewRecipe(recipeId) {
+  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}`);
+  return { recipe: mapReviewRecipe(result.recipe), etag: result.etag || "" };
+}
+
+export async function getReviewRecipeVersion(recipeId, versionId) {
+  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}`);
+  return { version: mapReviewRecipeVersion(result.version), etag: result.etag || "" };
+}
+
+export async function createWorkspaceReviewRecipe(workspaceId, payload, options = {}) {
+  const result = await request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/review-recipes`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    ...mutationOptions(options),
+  });
+  return {
+    recipe: mapReviewRecipe(result.recipe),
+    draftVersion: mapReviewRecipeVersion(result.draft_version),
+  };
+}
+
+export async function updateReviewRecipe(recipeId, payload, options = {}) {
+  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
+  });
+  return { recipe: mapReviewRecipe(result.recipe), etag: result.etag || "" };
+}
+
+export async function createReviewRecipeVersion(recipeId, payload = {}, options = {}) {
+  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    ...mutationOptions(options),
+  });
+  return { version: mapReviewRecipeVersion(result), etag: result.etag || "" };
+}
+
+export async function updateReviewRecipeVersion(recipeId, versionId, payload, options = {}) {
+  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
+  });
+  return { version: mapReviewRecipeVersion(result.version || result), etag: result.etag || "" };
+}
+
+export async function publishReviewRecipeVersion(recipeId, versionId, options = {}) {
+  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/publish`, {
+    method: "POST",
+    body: "{}",
+    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
+  });
+  return { recipe: mapReviewRecipe(result.recipe), version: mapReviewRecipeVersion(result.version) };
+}
+
+export async function archiveReviewRecipe(recipeId, options = {}) {
+  return updateReviewRecipe(recipeId, { status: "archived" }, options);
+}
+
+export async function saveCampaignAsTemplate(campaignId, payload, options = {}) {
+  const result = await request(`/v1/campaigns/${encodeURIComponent(campaignId)}/save-as-template`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+    ...mutationOptions(options),
+  });
+  return {
+    template: mapTemplate(result.template),
+    draftVersion: mapCampaignTemplateVersion(result.draft_version),
+  };
 }
 
 export async function listCampaignEntries(campaignId, filters = {}) {
