@@ -136,12 +136,20 @@ func (app *application) loadProgramSheet(ctx context.Context, id string) (progra
 			var name, typeName, description, technicalNotes string
 			var performers []byte
 			var duration int
-			if err := app.db.QueryRow(ctx, `SELECT name,program_type_name,performers,duration_seconds,description,technical_notes FROM production_programs WHERE id=$1`, *i.ProductionProgramID).Scan(&name, &typeName, &performers, &duration, &description, &technicalNotes); err == nil {
+			var typeID, typeColor *string
+			if err := app.db.QueryRow(ctx, `SELECT p.name,p.program_type_name,p.performers,p.duration_seconds,p.description,p.technical_notes,p.program_type_id,t.color FROM production_programs p LEFT JOIN program_types t ON t.id=p.program_type_id WHERE p.id=$1`, *i.ProductionProgramID).Scan(&name, &typeName, &performers, &duration, &description, &technicalNotes, &typeID, &typeColor); err == nil {
 				var performerValues any
 				_ = json.Unmarshal(performers, &performerValues)
 				s.Items[len(s.Items)-1].Title = name
 				s.Items[len(s.Items)-1].DurationSeconds = duration
-				s.Items[len(s.Items)-1].ProgramSnapshot = map[string]any{"id": *i.ProductionProgramID, "name": name, "program_type_name": typeName, "performers": performerValues, "duration_seconds": duration, "description": description, "technical_notes": technicalNotes}
+				programType := map[string]any{"name": typeName}
+				if typeID != nil {
+					programType["id"] = *typeID
+				}
+				if typeColor != nil {
+					programType["color"] = *typeColor
+				}
+				s.Items[len(s.Items)-1].ProgramSnapshot = map[string]any{"id": *i.ProductionProgramID, "name": name, "program_type_name": typeName, "program_type": programType, "performers": performerValues, "duration_seconds": duration, "description": description, "technical_notes": technicalNotes}
 			}
 		}
 		if i.SegmentTypeID != nil {

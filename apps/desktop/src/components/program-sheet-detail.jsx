@@ -216,6 +216,7 @@ export function ProgramSheetDetail({
   const [shareOpen, setShareOpen] = useState(false);
   const [shareScope, setShareScope] = useState("link");
   const [release, setRelease] = useState(null);
+  const [releaseHistory, setReleaseHistory] = useState([]);
   const [shareLinks, setShareLinks] = useState([]);
   useEffect(() => {
     setActiveTab("arrangement");
@@ -223,12 +224,15 @@ export function ProgramSheetDetail({
   useEffect(() => {
     if (sheet.status !== "published") {
       setRelease(null);
+      setReleaseHistory([]);
       setShareLinks([]);
       return;
     }
     listProgramReleases(sheet.id)
       .then((result) => {
-        const next = result?.items?.[0] || null;
+        const nextItems = result?.items || [];
+        setReleaseHistory(nextItems);
+        const next = nextItems[0] || null;
         setRelease(next);
         return next ? listShareLinks(next.id) : null;
       })
@@ -658,6 +662,23 @@ export function ProgramSheetDetail({
               segmentById={segmentById}
               timingForItem={timingForItem}
             />
+            <Card variant="flush" className="mt-4">
+              <CardHeader className="border-b">
+                <CardTitle>版本历史</CardTitle>
+                <CardDescription>发布版本不可编辑；如需修改，请从历史版本创建新的草稿修订。</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {releaseHistory.length ? releaseHistory.map((item) => (
+                  <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 border-b p-4 last:border-b-0">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">v{item.revision}</span><Badge variant={item.retracted_at ? "secondary" : "default"}>{item.retracted_at ? "已撤回" : "已发布"}</Badge></div>
+                      <p className="mt-1 text-xs text-muted-foreground">{item.published_at ? `发布于 ${new Date(item.published_at).toLocaleString()}` : "发布时间未知"}{item.retracted_at ? ` · 撤回于 ${new Date(item.retracted_at).toLocaleString()}` : ""}</p>
+                    </div>
+                    {item.id === release?.id ? <Badge variant="outline">当前版本</Badge> : null}
+                  </div>
+                )) : <p className="p-4 text-sm text-muted-foreground">暂无发布历史。</p>}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
