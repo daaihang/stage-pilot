@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CalendarDays,
@@ -14,6 +14,7 @@ import {
   Pencil,
   LayoutPanelTop,
   Plus,
+  RefreshCw,
   Settings,
   SlidersHorizontal,
   UsersRound,
@@ -246,16 +247,19 @@ export function ProductionFormsPage({ route, workspace, production }) {
   const [status, setStatus] = useState("all");
   const [campaigns, setCampaigns] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const typeLabel = type === "all" ? "全部类型" : FORM_TYPES.find((item) => item.id === type)?.label;
   const statusLabel = { all: "全部状态", draft: "草稿", published: "已发布", paused: "已暂停", closed: "已关闭", archived: "已归档" };
-  const loadCampaigns = async () => {
+  const loadCampaigns = async ({ announce = false } = {}) => {
     setLoading(true);
     try {
       const result = await listCampaigns(production.id, { status: "all" });
       setCampaigns(result.items);
+      setLoadError(null);
+      if (announce) notify.success("表单列表已刷新");
     } catch (error) {
-      setCampaigns([]);
+      setLoadError(error);
       notify.error("无法加载活动表单", { description: error?.message || String(error) });
     } finally {
       setLoading(false);
@@ -276,11 +280,17 @@ export function ProductionFormsPage({ route, workspace, production }) {
     await loadCampaigns();
     if (created?.campaign?.id) navigate(productionCampaignPath(workspace.id, production.id, created.campaign.id));
   };
+  const hasFilters = Boolean(query.trim()) || type !== "all" || status !== "all";
+  const retry = () => { void loadCampaigns({ announce: true }); };
+  const empty = loadError && !campaigns.length
+    ? { icon: ClipboardCheck, title: "加载表单失败", description: loadError.message || String(loadError), action: <Button variant="outline" onClick={retry} disabled={loading}><RefreshCw />{loading ? "重试中…" : "重试"}</Button> }
+    : { icon: ClipboardCheck, title: hasFilters ? "没有匹配的表单" : "还没有活动表单", description: "创建表单后，它会在这里进入统一收件箱，并通过详情页配置规则与审核流程。", action: !hasFilters ? <Button onClick={() => setCreateOpen(true)}><Plus />新建表单</Button> : null };
+  const loadErrorBanner = loadError && campaigns.length ? <div role="alert" className="flex flex-wrap items-center gap-3 border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"><Info className="size-4 shrink-0" /><span className="min-w-0 flex-1">表单列表加载失败：{loadError.message || String(loadError)}</span><Button type="button" variant="outline" size="sm" onClick={retry} disabled={loading}><RefreshCw />{loading ? "重试中…" : "重试"}</Button></div> : null;
   return <div className="@container/production-forms min-w-0 space-y-6">
     <ProductionPageHeader workspace={workspace} production={production} title="全部表单" subtitle={route.meta.description} actions={<Button onClick={() => setCreateOpen(true)}><Plus />新建表单</Button>} />
     <Card><CardHeader><CardTitle className="text-base">统一收集入口</CardTitle><CardDescription>先从业务需要出发选择表单；审核通过后的结果再按规则进入活动级资源或成员库。</CardDescription></CardHeader><CardContent className="grid gap-3 @min-[40rem]/production-forms:grid-cols-2 @min-[72rem]/production-forms:grid-cols-4">{FORM_TYPES.map((item) => <FormTypeCard key={item.id} type={item} />)}</CardContent></Card>
-    <ResourcePage title="全部表单" description="征集、招募、报名和通用收集统一在这里管理。" count={filteredCampaigns.length} search={{ value: query, onChange: setQuery, placeholder: "搜索表单名称" }} filters={<div className="flex items-center gap-1"><Button type="button" size="sm" variant={type === "all" ? "secondary" : "ghost"} onClick={() => setType("all")}>全部类型</Button>{FORM_TYPES.map((item) => <Button key={item.id} type="button" size="sm" variant={type === item.id ? "secondary" : "ghost"} onClick={() => setType(item.id)}>{item.label}</Button>)}<span className="mx-1 h-4 w-px bg-border" />{Object.entries(statusLabel).map(([value, label]) => <Button key={value} type="button" size="sm" variant={status === value ? "secondary" : "ghost"} onClick={() => setStatus(value)}>{label}</Button>)}</div>} showViewToggle={false} loading={loading} summary={<span>{typeLabel} · {statusLabel[status]}</span>} empty={{ icon: ClipboardCheck, title: query || type !== "all" || status !== "all" ? "没有匹配的表单" : "还没有活动表单", description: "创建表单后，它会在这里进入统一收件箱，并通过详情页配置规则与审核流程。", action: !query && type === "all" && status === "all" ? <Button onClick={() => setCreateOpen(true)}><Plus />新建表单</Button> : null }}>
-      <div className="grid gap-4 @min-[40rem]/resource-page:grid-cols-2 @min-[72rem]/resource-page:grid-cols-3">{filteredCampaigns.map((campaign) => { const item = FORM_TYPES.find((typeItem) => typeItem.apiKind === campaign.kind); const Icon = item?.icon || ClipboardCheck; return <Card key={campaign.id} className="cursor-pointer transition-colors hover:border-foreground/30" role="button" tabIndex={0} onClick={() => navigate(productionCampaignPath(workspace.id, production.id, campaign.id))} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); navigate(productionCampaignPath(workspace.id, production.id, campaign.id)); } }}><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><div className={`flex size-8 shrink-0 items-center justify-center rounded-md ${item?.tone || "bg-muted text-muted-foreground"}`}><Icon className="size-4" /></div><CardTitle className="truncate text-base">{campaign.name}</CardTitle></div><Badge variant="outline">{item?.label || campaign.kind}</Badge></div><CardDescription className="line-clamp-2">{campaign.description || "暂无描述"}</CardDescription></CardHeader><CardContent className="flex items-center justify-between text-xs text-muted-foreground"><Badge variant="secondary">{statusLabel[campaign.status] || campaign.status}</Badge><span>提交 {campaign.stats?.totalEntries ?? 0}</span></CardContent></Card>; })}</div>
+    <ResourcePage title="全部表单" description="征集、招募、报名和通用收集统一在这里管理。" count={filteredCampaigns.length} search={{ value: query, onChange: setQuery, placeholder: "搜索表单名称" }} filters={<div className="flex items-center gap-1"><Button type="button" size="sm" variant={type === "all" ? "secondary" : "ghost"} onClick={() => setType("all")}>全部类型</Button>{FORM_TYPES.map((item) => <Button key={item.id} type="button" size="sm" variant={type === item.id ? "secondary" : "ghost"} onClick={() => setType(item.id)}>{item.label}</Button>)}<span className="mx-1 h-4 w-px bg-border" />{Object.entries(statusLabel).map(([value, label]) => <Button key={value} type="button" size="sm" variant={status === value ? "secondary" : "ghost"} onClick={() => setStatus(value)}>{label}</Button>)}</div>} showViewToggle={false} loading={loading && !campaigns.length} summary={<span>{typeLabel} · {statusLabel[status]}</span>} empty={empty}>
+      <div className="space-y-4">{loadErrorBanner}<div className="grid gap-4 @min-[40rem]/resource-page:grid-cols-2 @min-[72rem]/resource-page:grid-cols-3">{filteredCampaigns.map((campaign) => { const item = FORM_TYPES.find((typeItem) => typeItem.apiKind === campaign.kind); const Icon = item?.icon || ClipboardCheck; return <Card key={campaign.id} className="cursor-pointer transition-colors hover:border-foreground/30" role="button" tabIndex={0} onClick={() => navigate(productionCampaignPath(workspace.id, production.id, campaign.id))} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); navigate(productionCampaignPath(workspace.id, production.id, campaign.id)); } }}><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-2"><div className={`flex size-8 shrink-0 items-center justify-center rounded-md ${item?.tone || "bg-muted text-muted-foreground"}`}><Icon className="size-4" /></div><CardTitle className="truncate text-base">{campaign.name}</CardTitle></div><Badge variant="outline">{item?.label || campaign.kind}</Badge></div><CardDescription className="line-clamp-2">{campaign.description || "暂无描述"}</CardDescription></CardHeader><CardContent className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><div className="flex items-center gap-2"><Badge variant="secondary">{statusLabel[campaign.status] || campaign.status}</Badge><span>最后编辑：{formatCampaignDate(campaign.updatedAt)}</span></div><span>提交 {campaign.stats?.totalEntries ?? 0}</span></CardContent></Card>; })}</div></div>
     </ResourcePage>
     <CampaignCreateDialog open={createOpen} template={null} production={production} onOpenChange={setCreateOpen} onCreated={createDone} />
   </div>;
@@ -361,6 +371,40 @@ function CampaignShareLinksCard({ campaign }) {
   </PlaceholderCard>;
 }
 
+function CampaignReturnBridge({ requestId, onBusy, onReturn }) {
+  const draft = useCampaignRevisionDraft();
+  const handledRequestRef = useRef(0);
+  const draftRef = useRef(draft);
+  const callbacksRef = useRef({ onBusy, onReturn });
+  draftRef.current = draft;
+  callbacksRef.current = { onBusy, onReturn };
+  useEffect(() => {
+    if (!requestId || requestId === handledRequestRef.current) return;
+    handledRequestRef.current = requestId;
+    let active = true;
+    const run = async () => {
+      const currentDraft = draftRef.current;
+      const needsSave = currentDraft.dirty || currentDraft.saveState === "保存中";
+      if (!needsSave) {
+        callbacksRef.current.onReturn?.();
+        return;
+      }
+      callbacksRef.current.onBusy?.(true);
+      try {
+        await notify.promise(currentDraft.flushPendingSave(), { loading: "正在保存当前表单草稿…", success: "草稿已保存", error: (error) => `保存失败：${error?.message || String(error)}` });
+        if (active) callbacksRef.current.onReturn?.();
+      } catch {
+        // notify.promise 已展示错误提示；保存失败时保留当前详情页。
+      } finally {
+        if (active) callbacksRef.current.onBusy?.(false);
+      }
+    };
+    void run();
+    return () => { active = false; };
+  }, [requestId]);
+  return null;
+}
+
 function CampaignDetailPanel({ tab, detail, production, onArchive, onPublished, onCreateDraft, onCloneRevision, onOpenActivityInfo, onCampaignUpdated }) {
   const campaign = detail?.campaign;
   const revision = detail?.draftRevision || detail?.publishedRevision;
@@ -384,6 +428,9 @@ export function ProductionCampaignDetailPage({ route, workspace, production }) {
   const [activeTab, setActiveTab] = useState(CAMPAIGN_DETAIL_GROUPS.some(([id]) => id === route.detailTab) ? route.detailTab : "overview");
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [returnBusy, setReturnBusy] = useState(false);
+  const [returnRequestId, setReturnRequestId] = useState(0);
+  const formsPath = route.direct ? directProductionPath(production.id, "forms") : productionPath(workspace.id, production.id, "forms");
   const loadDetail = async () => {
     setLoading(true);
     try {
@@ -430,8 +477,15 @@ export function ProductionCampaignDetailPage({ route, workspace, production }) {
       // notify.promise 已经展示错误提示。
     }
   };
+  const requestReturnToList = () => {
+    if (!detail) {
+      navigate(formsPath);
+      return;
+    }
+    setReturnRequestId((current) => current + 1);
+  };
   return <div className="@container/production-campaign-detail min-w-0 space-y-6">
-    <ProductionPageHeader workspace={workspace} production={production} title={detail?.campaign?.name || "表单详情"} subtitle={`${production?.name || "活动"} · ${detail?.campaign?.kind || "Campaign"}`} actions={<Button variant="outline" onClick={() => navigate(route.direct ? directProductionPath(production.id, "forms") : productionPath(workspace.id, production.id, "forms"))}>返回全部表单</Button>} />
-    {loading ? <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在加载表单详情…</CardContent></Card> : detail ? <CampaignRevisionDraftProvider key={detail.draftRevision?.id || detail.publishedRevision?.id || "empty"} campaign={detail.campaign} revision={detail.draftRevision || detail.publishedRevision} production={production} onSaved={(saved) => setDetail((current) => current ? ({ ...current, draftRevision: saved }) : current)} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onReload={() => loadDetail()}><SettingsTabs groups={CAMPAIGN_DETAIL_GROUPS} activeGroup={activeTab} onGroupChange={goToTab} ariaLabel="表单详情分类"><CampaignDetailPanel tab={activeTab} detail={detail} production={production} onArchive={archive} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onCreateDraft={createDraft} onCloneRevision={cloneRevision} onOpenActivityInfo={() => navigate(route.direct ? directProductionPath(production.id, "activity-info") : productionPath(workspace.id, production.id, "activity-info"))} onCampaignUpdated={(nextCampaign) => setDetail((current) => current ? ({ ...current, campaign: nextCampaign }) : current)} /></SettingsTabs></CampaignRevisionDraftProvider> : <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">暂时无法显示表单详情。</CardContent></Card>}
+    <ProductionPageHeader workspace={workspace} production={production} title={detail?.campaign?.name || "表单详情"} subtitle={`${production?.name || "活动"} · ${detail?.campaign?.kind || "Campaign"}`} actions={<Button variant="outline" disabled={returnBusy} onClick={requestReturnToList}>{returnBusy ? "保存中…" : "返回全部表单"}</Button>} />
+    {loading ? <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">正在加载表单详情…</CardContent></Card> : detail ? <CampaignRevisionDraftProvider key={detail.draftRevision?.id || detail.publishedRevision?.id || "empty"} campaign={detail.campaign} revision={detail.draftRevision || detail.publishedRevision} production={production} onSaved={(saved) => setDetail((current) => current ? ({ ...current, draftRevision: saved }) : current)} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onReload={() => loadDetail()}><CampaignReturnBridge requestId={returnRequestId} onBusy={setReturnBusy} onReturn={() => navigate(formsPath)} /><SettingsTabs groups={CAMPAIGN_DETAIL_GROUPS} activeGroup={activeTab} onGroupChange={goToTab} ariaLabel="表单详情分类"><CampaignDetailPanel tab={activeTab} detail={detail} production={production} onArchive={archive} onPublished={async () => { await loadDetail(); goToTab("overview"); }} onCreateDraft={createDraft} onCloneRevision={cloneRevision} onOpenActivityInfo={() => navigate(route.direct ? directProductionPath(production.id, "activity-info") : productionPath(workspace.id, production.id, "activity-info"))} onCampaignUpdated={(nextCampaign) => setDetail((current) => current ? ({ ...current, campaign: nextCampaign }) : current)} /></SettingsTabs></CampaignRevisionDraftProvider> : <Card><CardContent className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">暂时无法显示表单详情。</CardContent></Card>}
   </div>;
 }
