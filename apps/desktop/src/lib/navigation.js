@@ -101,6 +101,68 @@ export function directProductionCampaignPath(productionId, campaignId, tab = "ov
   return `/p/${productionId}/forms/${campaignId}${suffix}`;
 }
 
+/**
+ * Resolve the global context exit (Workspace/Production shell boundary).
+ * This is intentionally different from a page-level back link: a child page
+ * should return to its Production overview, while the shell exit leaves the
+ * current context entirely.
+ */
+export function resolveContextExit({ route, workspace } = {}) {
+  if (!route) return "/work";
+  if (route.mode === "production") {
+    if (route.direct || workspace?.workspaceNavigable === false) return "/work?tab=participating";
+    return workspace?.id ? workspacePath(workspace.id, "productions") : "/work";
+  }
+  if (route.mode === "workspace") return workspace?.id ? workspacePath(workspace.id, "home") : "/work";
+  if (route.mode === "account") return "/work";
+  return "/work";
+}
+
+/**
+ * Resolve a deterministic page hierarchy destination. Do not replace this
+ * with navigate(-1): direct/deep links may not have a useful history entry.
+ */
+export function resolvePageBack({ route, workspace, production, accountReturn } = {}) {
+  if (!route) return null;
+  if (route.mode === "production") {
+    const contextExit = resolveContextExit({ route, workspace });
+    if (route.campaignId && production) {
+      return {
+        kind: "route",
+        to: route.direct ? directProductionPath(production.id, "forms") : productionPath(workspace?.id, production.id, "forms"),
+        label: "全部表单",
+      };
+    }
+    if (route.page === "overview") return { kind: "route", to: contextExit, label: route.direct || workspace?.workspaceNavigable === false ? "我的活动" : "活动" };
+    if (!production?.id) return { kind: "route", to: contextExit, label: route.direct || workspace?.workspaceNavigable === false ? "我的活动" : "活动" };
+    return {
+      kind: "route",
+      to: route.direct || workspace?.workspaceNavigable === false ? directProductionPath(production.id, "overview") : productionPath(workspace.id, production.id, "overview"),
+      label: "活动概览",
+    };
+  }
+  if (route.mode === "workspace") {
+    if (route.resourceId) return { kind: "close-detail", to: workspacePath(route.workspaceId, route.page), label: "资源库" };
+    if (route.page === "home" || route.page === "productions") return null;
+    return { kind: "route", to: workspacePath(route.workspaceId, "home"), label: workspace?.name || "工作台" };
+  }
+  if (route.mode === "account") return { kind: "route", to: accountReturn || "/work", label: "返回" };
+  return null;
+}
+
+/** Resolve the canonical URL used when a window-level detail surface closes. */
+export function resolveDetailClose({ route, workspace, production } = {}) {
+  if (!route) return null;
+  if (route.mode === "workspace" && route.resourceId) return workspacePath(route.workspaceId, route.page);
+  if (route.mode === "production" && route.page === "forms" && route.campaignId && production) {
+    return route.direct ? directProductionPath(production.id, "forms") : productionPath(workspace?.id, production.id, "forms");
+  }
+  if (route.mode === "production" && route.page === "members" && route.panel === "invitations" && production) {
+    return route.direct ? directProductionPath(production.id, "members") : productionPath(workspace?.id, production.id, "members");
+  }
+  return null;
+}
+
 export function accountPath(page = "profile", from) {
   const nextPage = accountPages[page] && (!accountPages[page].devOnly || import.meta.env.DEV) ? page : "profile";
   const path = `/account/${nextPage}`;
@@ -174,9 +236,10 @@ export function matchStagePilotRoute(pathname, search = "") {
   const productionMatch = pathname.match(/^\/w\/([^/]+)\/p\/([^/]+)\/([^/]+)\/?$/);
   if (productionMatch) {
     const [, workspaceId, productionId, page] = productionMatch;
-    const panelValue = new URLSearchParams(search).get("panel");
+    const params = new URLSearchParams(search);
+    const panelValue = params.get("panel");
     const panel = page === "program-sheets" && panelValue === "segment-types" ? panelValue : (page === "members" && panelValue === "invitations" ? panelValue : null);
-    return productionPages[page] ? { mode: "production", workspaceId, productionId, page, panel, meta: productionPages[page] } : null;
+    return productionPages[page] ? { mode: "production", workspaceId, productionId, page, panel, detailId: params.get("detail") || undefined, meta: productionPages[page] } : null;
   }
   const directProductionCampaignMatch = pathname.match(/^\/p\/([^/]+)\/forms\/([^/]+)(?:\/([^/]+))?\/?$/);
   if (directProductionCampaignMatch) {
@@ -188,10 +251,11 @@ export function matchStagePilotRoute(pathname, search = "") {
   if (directProductionMatch) {
     const [, productionId, requestedPage] = directProductionMatch;
     const page = requestedPage || "overview";
-    const panelValue = new URLSearchParams(search).get("panel");
-    return productionPages[page] ? { mode: "production", workspaceId: null, productionId, page, direct: true, panel: page === "members" && panelValue === "invitations" ? panelValue : null, meta: productionPages[page] } : null;
+    const params = new URLSearchParams(search);
+    const panelValue = params.get("panel");
+    return productionPages[page] ? { mode: "production", workspaceId: null, productionId, page, direct: true, panel: page === "members" && panelValue === "invitations" ? panelValue : null, detailId: params.get("detail") || undefined, meta: productionPages[page] } : null;
   }
-  const resourceMatch = pathname.match(/^\/w\/([^/]+)\/library\/(programs|people|organizations|venues|equipment)\/([^/]+)\/?$/);
+  const resourceMatch = pathname.match(/^\/w\/([^/]+)\/library\/(programs|people|organizations|venues|equipment)(?:\/([^/]+))?\/?$/);
   if (resourceMatch) {
     const [, workspaceId, page, resourceId] = resourceMatch;
     const panelValue = new URLSearchParams(search).get("panel");

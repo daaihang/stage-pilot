@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { formatProductionDate, productionPath, workspacePath } from "@/lib/navigation";
 import { productionStatusLabel } from "@/lib/production-api";
 import { ProductionsViewSwitcher } from "@/components/productions/productions-view";
+import { AppBackLink } from "@/components/app-back-link";
 
 function PageIntro({ route, action }) {
   return <div className="space-y-4"><div className="flex items-start justify-between gap-4"><div className="space-y-1"><h1 className="text-2xl font-semibold tracking-tight">{route.meta.title}</h1><p className="text-sm text-muted-foreground">{route.meta.description}</p></div>{action}</div></div>;
@@ -41,6 +42,7 @@ export function PlaceholderPage({ route, workspace, production }) {
   return <div className="space-y-6"><PageIntro route={route} workspace={workspace} production={production} /><Card className="border-dashed"><CardContent className="flex min-h-72 flex-col items-center justify-center gap-3 text-center"><ServerOff className="size-8 text-muted-foreground" /><div><p className="font-medium">页面结构已接入侧栏</p><p className="mt-1 max-w-lg text-sm text-muted-foreground">当前使用前端导航骨架。后端提供数据后，此处将通过 Navigation Repository 和对应业务服务加载真实内容。</p></div><Badge variant="outline">等待后端接入</Badge></CardContent></Card></div>;
 }
 
-export function NavigationFailure({ title = "无法加载导航", description, onRetry, homePath }) {
-  return <div className="flex min-h-full items-center justify-center p-6"><Card className="w-full max-w-lg"><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader><CardContent className="flex gap-2">{onRetry && <Button onClick={onRetry}><RefreshCw />重试</Button>}{homePath && <Button variant="outline" render={<Link to={homePath} />}>返回工作台</Button>}</CardContent></Card></div>;
+export function NavigationFailure({ title = "无法加载导航", description, onRetry, homePath, homeLabel }) {
+  const resolvedLabel = homeLabel || (homePath?.startsWith("/work") ? "返回我的工作" : "返回工作台");
+  return <div className="flex min-h-full items-center justify-center p-6"><Card className="w-full max-w-lg"><CardHeader><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></CardHeader><CardContent className="flex gap-2">{onRetry && <Button onClick={onRetry}><RefreshCw />重试</Button>}{homePath && <AppBackLink to={homePath} label={resolvedLabel} className="" />}</CardContent></Card></div>;
 }

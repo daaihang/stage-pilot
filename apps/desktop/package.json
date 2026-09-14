@@ -12,6 +12,7 @@
     "test:program-sheets": "node --test src/lib/program-sheet-utils.test.js src/lib/program-sheet-segment-types.test.js src/lib/program-sheet-segment-type-usage.test.js",
     "test:program-sheet-segment-types": "node --test src/lib/program-sheet-segment-types.test.js src/lib/program-sheet-segment-type-usage.test.js",
     "test:production-programs": "node --test src/lib/production-program-utils.test.js",
+    "test:navigation": "node --test src/lib/navigation.test.js",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

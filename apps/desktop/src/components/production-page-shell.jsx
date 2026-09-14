@@ -1,26 +1,27 @@
-import { ArrowLeft, ShieldCheck } from "@/components/ui/icons";
-import { Link } from "react-router-dom";
+import { ShieldCheck } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { productionStatusLabel } from "@/lib/production-api";
-import { workspacePath } from "@/lib/navigation";
+import { directProductionPath, productionPath, workspacePath } from "@/lib/navigation";
 import { roleLabel } from "@/lib/workspace-api";
 import { notify } from "@/components/ui/sonner";
 import { SettingsTabs } from "@/components/settings-tabs";
+import { AppBackLink } from "@/components/app-back-link";
 
-export function ProductionPageBackLink({ workspace, children = "活动", backTo, onLeaveCreation }) {
-  const target = backTo || (workspace?.workspaceNavigable === false ? "/work?tab=participating" : workspacePath(workspace.id, "productions"));
-  const label = backTo ? children : (workspace?.workspaceNavigable === false ? "我的活动" : children);
-  return <Button variant="ghost" size="sm" className="-ml-2" onClick={(event) => {
-    if (!onLeaveCreation) return;
-    event.preventDefault();
-    onLeaveCreation();
-  }} nativeButton={false} render={<Link to={target} />}><ArrowLeft />{label}</Button>;
+export function ProductionPageBackLink({ workspace, production, children = "活动概览", backTo, onLeaveCreation, isOverview = false }) {
+  const contextExit = workspace?.workspaceNavigable === false ? "/work?tab=participating" : (workspace?.id ? workspacePath(workspace.id, "productions") : "/work");
+  const productionOverview = production?.id
+    ? (workspace?.workspaceNavigable === false ? directProductionPath(production.id, "overview") : productionPath(workspace.id, production.id, "overview"))
+    : contextExit;
+  const target = backTo || (isOverview ? contextExit : productionOverview);
+  const label = backTo ? children : (isOverview ? (workspace?.workspaceNavigable === false ? "我的活动" : "活动") : children);
+  return <AppBackLink to={target} label={label} onBeforeNavigate={onLeaveCreation ? async () => { await onLeaveCreation(); return false; } : undefined} />;
 }
 
-export function ProductionPageHeader({ workspace, production, title, titleContent, subtitle, actions, children, onLeaveCreation, backTo, backLabel = "活动" }) {
+export function ProductionPageHeader({ workspace, production, title, titleContent, subtitle, actions, children, onLeaveCreation, backTo, backLabel = "活动概览", isOverview = false }) {
   const status = production ? productionStatusLabel(production.status) : null;
-  return <header className="flex items-start justify-between gap-4"><div className="min-w-0 space-y-2"><ProductionPageBackLink workspace={workspace} onLeaveCreation={onLeaveCreation} backTo={backTo}>{backLabel}</ProductionPageBackLink>{titleContent || <div className="flex flex-wrap items-center gap-3"><h1 className="truncate text-2xl font-semibold tracking-tight">{title || production?.name || "活动"}</h1>{status && <Badge className={status.className} variant="secondary">{status.label}</Badge>}</div>}<p className="text-sm text-muted-foreground">{subtitle || `${workspace.name} · 活动工作区`}</p>{children}</div>{actions}</header>;
+  const resolvedOverview = isOverview || Boolean(titleContent) || title === "概览";
+  return <header className="flex items-start justify-between gap-4"><div className="min-w-0 space-y-2"><ProductionPageBackLink workspace={workspace} production={production} isOverview={resolvedOverview} onLeaveCreation={onLeaveCreation} backTo={backTo}>{backLabel}</ProductionPageBackLink>{titleContent || <div className="flex flex-wrap items-center gap-3"><h1 className="truncate text-2xl font-semibold tracking-tight">{title || production?.name || "活动"}</h1>{status && <Badge className={status.className} variant="secondary">{status.label}</Badge>}</div>}<p className="text-sm text-muted-foreground">{subtitle || `${workspace.name} · 活动工作区`}</p>{children}</div>{actions}</header>;
 }
 
 export function ProductionPermissionStatus({ role, canManage }) {

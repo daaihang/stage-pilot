@@ -284,6 +284,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
 
   return (
     <ResourcePage
+      back={{ to: workspacePath(workspace.id, "home"), label: workspace.name }}
       title={route?.meta?.title || "成员"}
       description={route?.meta?.description || "管理可以访问这个工作空间的团队成员。"}
       count={members?.length || 0}
