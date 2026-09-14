@@ -685,6 +685,7 @@ export function ProgramSheetDetail({
       <ProductionProgramPickerDialog
         open={programPickerOpen}
         onOpenChange={setProgramPickerOpen}
+        excludedProgramIds={displayItems.filter((item) => item.kind === "program").map((item) => item.productionProgramId).filter(Boolean)}
         productionPrograms={productionPrograms}
         workspacePrograms={workspacePrograms}
         programTypes={programTypes}

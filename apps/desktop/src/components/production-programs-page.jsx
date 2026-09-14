@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
   Copy,
@@ -93,7 +94,7 @@ function ProgramListRow({
       <button
         type="button"
         className="min-w-0 flex-1 text-left"
-        onClick={() => onSelect(program.id)}
+        onClick={(event) => onSelect(program.id, event)}
       >
         <div className="flex flex-wrap items-center gap-2">
           <p className="truncate text-sm font-medium">{program.name}</p>
@@ -179,13 +180,19 @@ export function ProductionProgramsPage({ route, workspace, production }) {
   const [status, setStatus] = useState("all");
   const [source, setSource] = useState("all");
   const [typeId, setTypeId] = useState("all");
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(route.detailId || null);
   const [dialog, setDialog] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [creationContext, setCreationContext] = useState({ mode: "create", sourceProgram: null, initialDraft: null });
   const triggerRef = useRef(null);
+  const detailTriggerRef = useRef(null);
   const requestSequence = useRef(0);
   const { setDetailOpen } = useWindowDetail();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const updateDetailRoute = useCallback((nextId) => { const params = new URLSearchParams(location.search); if (nextId) params.set("detail", nextId); else params.delete("detail"); const search = params.toString(); setSelectedId(nextId || null); setCreating(nextId === "new"); navigate(`${location.pathname}${search ? `?${search}` : ""}`, { preventScrollReset: true }); }, [location.pathname, location.search, navigate]);
+  useEffect(() => { setSelectedId(route.detailId || null); setCreating(route.detailId === "new"); }, [route.detailId]);
 
   const load = useCallback(
     async ({ toast = false } = {}) => {
@@ -237,9 +244,9 @@ export function ProductionProgramsPage({ route, workspace, production }) {
   );
 
   const onCloseDetail = useCallback(() => {
-    setSelectedId(null);
-    setCreating(false);
-  }, []);
+    updateDetailRoute(null);
+    setCreationContext({ mode: "create", sourceProgram: null, initialDraft: null });
+  }, [updateDetailRoute]);
   const getDetail = useCallback(
     () =>
       creating ? (
@@ -247,14 +254,17 @@ export function ProductionProgramsPage({ route, workspace, production }) {
           workspacePrograms={workspacePrograms}
           programTypes={programTypes}
           existingPrograms={programs}
+          mode={creationContext.mode}
+          sourceProgram={creationContext.sourceProgram}
+          initialDraft={creationContext.initialDraft}
           onCancel={() => {
-            setCreating(false);
+            updateDetailRoute(null);
             setDetailOpen(false);
           }}
           onSave={async (values) => {
             if (values.openExistingId) {
               setCreating(false);
-              setSelectedId(values.openExistingId);
+              updateDetailRoute(values.openExistingId);
               return;
             }
             try {
@@ -271,7 +281,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
               });
               await load();
               setCreating(false);
-              setSelectedId(created?.id || created?.program?.id);
+              updateDetailRoute(created?.id || created?.program?.id);
               notify.success("活动节目已创建");
             } catch (error) {
               notify.error("活动节目创建失败", {
@@ -326,11 +336,13 @@ export function ProductionProgramsPage({ route, workspace, production }) {
     [
       canWrite,
       creating,
+      creationContext,
       production.id,
       programTypes,
       programs,
       selectedProgram,
       setDetailOpen,
+      updateDetailRoute,
       workspace.id,
       workspacePrograms,
     ],
@@ -338,7 +350,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
   useWindowDetailRegistration({
     key: `production-programs:${production.id}`,
     storageKey: `detailPane:production-programs:${production.id}:v1`,
-    triggerRef,
+    triggerRef: detailTriggerRef,
     detailLabel: "活动节目详情",
     getDetail,
     onClose: onCloseDetail,
@@ -381,7 +393,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
       });
       await load();
       setDialog(null);
-      setSelectedId(copy?.id || copy?.program?.id);
+      updateDetailRoute(copy?.id || copy?.program?.id);
       notify.success("活动节目已复制");
     } catch (error) {
       notify.error("活动节目复制失败", {
@@ -439,7 +451,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
     });
     await load();
     const id = created?.id || created?.program?.id;
-    setSelectedId(id);
+    updateDetailRoute(id);
     return id;
   };
 
@@ -570,7 +582,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
               program={program}
               timezone={production.timezone}
               selected={program.id === selectedId}
-              onSelect={setSelectedId}
+              onSelect={(id, event) => { detailTriggerRef.current = event?.currentTarget || null; updateDetailRoute(id); }}
               canWrite={canWrite}
               onDuplicate={(item) =>
                 setDialog({ type: "duplicate", program: item })
@@ -611,40 +623,20 @@ export function ProductionProgramsPage({ route, workspace, production }) {
           const first = values[0];
           if (!first) return;
           setPickerOpen(false);
-          setSelectedId(first.id);
+          updateDetailRoute(first.id);
           notify.info("该节目已在本场活动中，已打开节目详情");
         }}
-        onCopyWorkspace={async (values) => {
-          if (!values.length) return;
-          const toastId = notify.loading("正在复制工作空间节目");
-          try {
-            let lastId = null;
-            for (const value of values) {
-              lastId = await createFromPicker({
-                ...value,
-                programTypeId: value.programTypeId || value.program_type_id,
-                durationSeconds: Number(value.durationSeconds ?? value.duration_seconds ?? 0),
-                technicalNotes: value.technicalNotes || value.technical_notes,
-                sourceKind: "workspace",
-                sourceProgramId: value.id,
-              });
-            }
-            notify.success(`已复制 ${values.length} 个活动节目`, { id: toastId });
-            setPickerOpen(false);
-            if (lastId) setSelectedId(lastId);
-          } catch (error) {
-            notify.error("复制工作空间节目失败", { id: toastId, description: error?.message || String(error) });
-          }
+        onCopyWorkspace={(program) => {
+          if (!program) return;
+          setCreationContext({ mode: "workspace-copy", sourceProgram: program, initialDraft: null });
+          setPickerOpen(false);
+          updateDetailRoute("new");
         }}
-        onCreateCustom={async (values) => {
-          const toastId = notify.loading("正在创建活动节目");
-          try {
-            await createFromPicker(values);
-            setPickerOpen(false);
-            notify.success("活动节目已创建", { id: toastId });
-          } catch (error) {
-            notify.error("活动节目创建失败", { id: toastId, description: error?.message || String(error) });
-          }
+        onCreateCustom={(payload) => {
+          const draft = payload?.draft;
+          setCreationContext({ mode: "create", sourceProgram: null, initialDraft: draft ? { ...draft, durationMinutes: String(Math.round(Number(draft.durationSeconds || 0) / 60)) } : null });
+          setPickerOpen(false);
+          updateDetailRoute("new");
         }}
       />
       <AlertDialog
