@@ -83,7 +83,7 @@ function reduceState(state, action) {
   return state;
 }
 
-export function CampaignRevisionDraftProvider({ campaign, revision, production, onSaved, onPublished, onReload, children }) {
+export function CampaignRevisionDraftProvider({ campaign, revision, production, onSaved, onPublished, onReload, operations, children }) {
   const [state, setState] = useState(() => stateFromRevision(revision));
   const [toolbarAction, setToolbarAction] = useState(null);
   const stateRef = useRef(state);
@@ -91,8 +91,10 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
   const saveChainRef = useRef(Promise.resolve());
   const saveTimerRef = useRef(null);
   const callbacksRef = useRef({ onSaved, onPublished, onReload });
+  const operationsRef = useRef(operations);
   const previewTriggerRef = useRef(null);
   callbacksRef.current = { onSaved, onPublished, onReload };
+  operationsRef.current = operations;
   stateRef.current = state;
 
   useEffect(() => {
@@ -121,13 +123,15 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
       const outgoing = clone(currentSnapshot(current));
       setState((value) => reduceState(value, { type: "save-start" }));
       try {
-        const saved = await updateCampaignRevision(campaign.id, current.revisionId, {
-          form: outgoing.form,
-          availability_policy: outgoing.policy,
-          review_recipe_version_id: outgoing.reviewRecipeVersionId || null,
-          review_workflow: outgoing.reviewWorkflow,
-          materialization_plan: outgoing.materializationPlan,
-        }, { etag: current.etag });
+        const saved = operationsRef.current?.save
+          ? await operationsRef.current.save(outgoing, { etag: current.etag, revisionId: current.revisionId })
+          : await updateCampaignRevision(campaign.id, current.revisionId, {
+            form: outgoing.form,
+            availability_policy: outgoing.policy,
+            review_recipe_version_id: outgoing.reviewRecipeVersionId || null,
+            review_workflow: outgoing.reviewWorkflow,
+            materialization_plan: outgoing.materializationPlan,
+          }, { etag: current.etag });
         setState((value) => reduceState(value, { type: "save-success", saved, outgoing }));
         callbacksRef.current.onSaved?.(saved);
         return saved;
@@ -178,7 +182,10 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
   const validate = useCallback((options = {}) => {
     const operation = (stateRef.current.dirty ? enqueueSave({ withToast: false, reportAutoError: false }) : Promise.resolve()).then(() => {
       const localIssues = clientValidateForm(stateRef.current.form);
-      return validateCampaignRevision(campaign.id, stateRef.current.revisionId, { etag: stateRef.current.etag }).then((result) => {
+      const validation = operationsRef.current?.validate
+        ? operationsRef.current.validate(currentSnapshot(stateRef.current), { etag: stateRef.current.etag, revisionId: stateRef.current.revisionId })
+        : validateCampaignRevision(campaign.id, stateRef.current.revisionId, { etag: stateRef.current.etag });
+      return validation.then((result) => {
         const issues = [...localIssues, ...(result.issues || [])];
         setState((current) => reduceState(current, { type: "validate", etag: result.etag, issues }));
         return { ...result, issues, valid: Boolean(result.valid) && !issues.some((issue) => issue.severity === "error") };
@@ -192,14 +199,18 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
   }, [campaign?.id, enqueueSave]);
 
   const publish = useCallback(async () => {
-    const result = await publishCampaignRevision(campaign.id, stateRef.current.revisionId, { etag: stateRef.current.etag });
+    const result = operationsRef.current?.publish
+      ? await operationsRef.current.publish(currentSnapshot(stateRef.current), { etag: stateRef.current.etag, revisionId: stateRef.current.revisionId })
+      : await publishCampaignRevision(campaign.id, stateRef.current.revisionId, { etag: stateRef.current.etag });
     setState((current) => ({ ...current, revisionStatus: "published", dirty: false, saveState: "已保存", etag: result.revision?.etag || current.etag }));
     callbacksRef.current.onPublished?.(result);
     return result;
   }, [campaign?.id]);
 
   const reload = useCallback(async () => {
-    const latest = await getCampaignRevision(campaign.id, stateRef.current.revisionId);
+    const latest = operationsRef.current?.reload
+      ? await operationsRef.current.reload({ revisionId: stateRef.current.revisionId })
+      : await getCampaignRevision(campaign.id, stateRef.current.revisionId);
     revisionIdRef.current = latest?.id || revisionIdRef.current;
     setState(stateFromRevision(latest));
     callbacksRef.current.onReload?.(latest);

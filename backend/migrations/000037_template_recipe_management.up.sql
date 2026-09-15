@@ -91,6 +91,46 @@ CREATE TRIGGER campaign_template_versions_immutable
     BEFORE UPDATE OR DELETE ON campaign_template_versions
     FOR EACH ROW EXECUTE FUNCTION prevent_published_campaign_template_version_mutation();
 
+CREATE FUNCTION prevent_system_campaign_template_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.scope = 'system' THEN
+        RAISE EXCEPTION 'system campaign templates are immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER campaign_templates_system_immutable
+    BEFORE UPDATE OR DELETE ON campaign_templates
+    FOR EACH ROW EXECUTE FUNCTION prevent_system_campaign_template_mutation();
+
+CREATE FUNCTION prevent_system_campaign_template_version_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF OLD.workspace_id IS NULL THEN
+        RAISE EXCEPTION 'system campaign template versions are immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER campaign_template_versions_system_immutable
+    BEFORE UPDATE OR DELETE ON campaign_template_versions
+    FOR EACH ROW EXECUTE FUNCTION prevent_system_campaign_template_version_mutation();
+
 CREATE FUNCTION enforce_campaign_template_source_scope()
 RETURNS trigger
 LANGUAGE plpgsql

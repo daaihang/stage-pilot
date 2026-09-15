@@ -215,6 +215,22 @@ func portableReviewWorkflow(raw json.RawMessage) (json.RawMessage, error) {
 	return normalized, err
 }
 
+// portableTemplateDefinition removes values that belong to one running
+// activity while preserving reusable capacity, waitlist and result rules.
+// A workspace template should be a starting point for a future campaign, not
+// a second copy of the source campaign's calendar window.
+func portableTemplateDefinition(def templateDefinition) templateDefinition {
+	var policy map[string]any
+	if json.Unmarshal(def.AvailabilityPolicy, &policy) == nil {
+		delete(policy, "opens_at")
+		delete(policy, "closes_at")
+		if encoded, err := json.Marshal(policy); err == nil {
+			def.AvailabilityPolicy = encoded
+		}
+	}
+	return def
+}
+
 func templateDefinitionFromRevision(ctx context.Context, q templateManagementQueryer, revisionID, workspaceID string) (templateDefinition, string, string, error) {
 	var def templateDefinition
 	var kind, campaignID string
@@ -401,6 +417,9 @@ func (app *application) createWorkspaceCampaignTemplate(w http.ResponseWriter, r
 		return
 	}
 	def = normalizeDefinition(def)
+	if copyingCampaignRevision {
+		def = portableTemplateDefinition(def)
+	}
 	// Template reviewers are portable roles, not Production member IDs. A
 	// Campaign copy additionally strips its concrete activity members.
 	var normalizedReview json.RawMessage
@@ -768,7 +787,7 @@ func (app *application) updateCampaignTemplateVersion(w http.ResponseWriter, r *
 	}
 	updated, _ := loadCampaignTemplateVersion(r.Context(), app.db, templateID, versionID)
 	w.Header().Set("ETag", updated.ETag)
-	writeJSON(w, 200, updated)
+	writeJSON(w, 200, map[string]any{"version": updated, "etag": updated.ETag})
 }
 
 func (app *application) publishCampaignTemplateVersion(w http.ResponseWriter, r *http.Request) {
@@ -896,6 +915,10 @@ func (app *application) saveCampaignAsTemplate(w http.ResponseWriter, r *http.Re
 	}
 	defer tx.Rollback(r.Context())
 	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(key) > 255 {
+		errorJSON(w, http.StatusBadRequest, "invalid_idempotency_key", "幂等键不能超过 255 个字符")
+		return
+	}
 	outcome, err := app.beginIdempotency(r.Context(), tx, access.WorkspaceID, claims(r).Subject, http.MethodPost, r.URL.Path, key, raw)
 	if err != nil {
 		serverError(w, err)
@@ -921,6 +944,7 @@ func (app *application) saveCampaignAsTemplate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	def = normalizeDefinition(def)
+	def = portableTemplateDefinition(def)
 	var sourceRecipeVersionID *string
 	_ = tx.QueryRow(r.Context(), `SELECT review_recipe_version_id FROM campaign_revisions WHERE id=$1 AND workspace_id=$2`, revisionID, access.WorkspaceID).Scan(&sourceRecipeVersionID)
 	if normalized, e := portableReviewWorkflow(def.ReviewWorkflow); e != nil {
