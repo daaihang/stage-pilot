@@ -64,13 +64,12 @@ export function AddProgramToSheetsDialog({ open, onOpenChange, program, sheets =
   const [selected, setSelected] = useState(new Set());
   useEffect(() => { if (open) setSelected(new Set()); }, [open, program]);
   const toggle = (id, checked) => setSelected((current) => {
-    if (tab === "workspace") return checked ? new Set([id]) : new Set();
     const next = new Set(current); if (checked) next.add(id); else next.delete(id); return next;
   });
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>添加到节目单</DialogTitle><DialogDescription>{program?.name || "活动节目"}可以加入一个或多个草稿节目单；正式和归档版本不可直接修改。</DialogDescription></DialogHeader><div className="max-h-80 space-y-2 overflow-y-auto">{available.length ? available.map((sheet) => <label key={sheet.id} className="flex cursor-pointer items-center gap-3 border p-3 hover:bg-muted/40"><Checkbox checked={selected.has(sheet.id)} onCheckedChange={(value) => toggle(sheet.id, Boolean(value))} /><span className="min-w-0 flex-1"><span className="text-sm font-medium">{sheet.name}</span><span className="ml-2 text-xs text-muted-foreground">v{sheet.revision} · {sheet.items?.length || 0} 个条目</span></span></label>) : <p className="border border-dashed p-6 text-center text-sm text-muted-foreground">当前没有可编辑的草稿节目单，请先新建节目单。</p>}</div><DialogFooter><Button variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button disabled={!selected.size} onClick={() => { onConfirm([...selected]); onOpenChange(false); }}><Plus />添加到选中节目单</Button></DialogFooter></DialogContent></Dialog>;
 }
 
-export function ProductionProgramPickerDialog({ open, onOpenChange, productionPrograms = [], workspacePrograms = [], programTypes = [], initialTab = "production", mode = "sheet", onAddExisting, onSelectExisting, onCopyWorkspace, onCreateCustom }) {
+export function ProductionProgramPickerDialog({ open, onOpenChange, productionPrograms = [], workspacePrograms = [], programTypes = [], excludedProgramIds = [], initialTab = "production", mode = "sheet", onAddExisting, onSelectExisting, onCopyWorkspace, onCreateCustom }) {
   const [tab, setTab] = useState(initialTab);
   const [query, setQuery] = useState("");
   const [typeId, setTypeId] = useState("all");
