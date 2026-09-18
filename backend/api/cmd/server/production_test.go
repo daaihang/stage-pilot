@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -384,6 +385,81 @@ func TestProductionMembershipWindowsAndWorkspaceBoundary(t *testing.T) {
 	denied := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/productions/"+productionID+"/members", map[string]any{"user_id": outsider, "role_key": "viewer"})
 	if denied.Code != http.StatusBadRequest {
 		t.Fatalf("external direct member = %d: %s", denied.Code, denied.Body.String())
+	}
+}
+
+func TestProductionMemberRoleLifecycleAndAudit(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "production-membership-owner-"+newID()+"@example.test")
+	member := createTestUser(t, app, "production-membership-member-"+newID()+"@example.test")
+	ownerToken := issueTestToken(t, app, owner)
+	memberToken := issueTestToken(t, app, member)
+	workspaceID := createWorkspaceFor(t, app, ownerToken, "活动成员生命周期")["id"].(string)
+	productionID := createProductionFor(t, app, ownerToken, workspaceID, "成员生命周期活动", "", "")["id"].(string)
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,status) VALUES($1,$2,$3,'member','active')`, newID(), workspaceID, member); err != nil {
+		t.Fatalf("insert workspace member: %v", err)
+	}
+
+	created := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/productions/"+productionID+"/members", map[string]any{"user_id": member, "role_key": "viewer"})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create production member = %d: %s", created.Code, created.Body.String())
+	}
+	var membershipID string
+	if err := app.db.QueryRow(t.Context(), `SELECT id FROM production_memberships WHERE production_id=$1 AND user_id=$2 AND status='active'`, productionID, member).Scan(&membershipID); err != nil {
+		t.Fatalf("read production membership: %v", err)
+	}
+	for _, body := range []map[string]any{{"role_key": "editor"}, {"status": "suspended"}, {"status": "active"}} {
+		response := authedRequest(t, app, ownerToken, http.MethodPatch, "/v1/productions/"+productionID+"/members/"+membershipID, body)
+		if response.Code != http.StatusOK {
+			t.Fatalf("production member patch body=%v status=%d: %s", body, response.Code, response.Body.String())
+		}
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE workspace_memberships SET status='suspended' WHERE workspace_id=$1 AND user_id=$2`, workspaceID, member); err != nil {
+		t.Fatalf("suspend workspace membership fixture: %v", err)
+	}
+	if response := authedRequest(t, app, memberToken, http.MethodGet, "/v1/productions/"+productionID, nil); response.Code != http.StatusOK {
+		t.Fatalf("direct production access should survive workspace suspension = %d: %s", response.Code, response.Body.String())
+	}
+	if revoked := authedRequest(t, app, ownerToken, http.MethodDelete, "/v1/productions/"+productionID+"/members/"+membershipID, nil); revoked.Code != http.StatusOK {
+		t.Fatalf("revoke production member = %d: %s", revoked.Code, revoked.Body.String())
+	}
+	var auditCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*) FROM membership_audit_events WHERE membership_id=$1`, membershipID).Scan(&auditCount); err != nil || auditCount < 4 {
+		t.Fatalf("production audit count = %d err=%v, want at least 4", auditCount, err)
+	}
+	if response := authedRequest(t, app, memberToken, http.MethodGet, "/v1/productions/"+productionID, nil); response.Code != http.StatusNotFound {
+		t.Fatalf("revoked direct member without workspace access = %d, want 404: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestProductionLastDirectProducerCannotBeRevoked(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "last-producer-owner-"+newID()+"@example.test")
+	producer := createTestUser(t, app, "last-producer-member-"+newID()+"@example.test")
+	ownerToken := issueTestToken(t, app, owner)
+	producerToken := issueTestToken(t, app, producer)
+	workspaceID := createWorkspaceFor(t, app, ownerToken, "最后 Producer 保护")["id"].(string)
+	productionID := createProductionFor(t, app, ownerToken, workspaceID, "最后 Producer 活动", "", "")["id"].(string)
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,status) VALUES($1,$2,$3,'member','active')`, newID(), workspaceID, producer); err != nil {
+		t.Fatalf("insert workspace member: %v", err)
+	}
+	created := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/productions/"+productionID+"/members", map[string]any{"user_id": producer, "role_key": "producer"})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create producer member = %d: %s", created.Code, created.Body.String())
+	}
+	var producerMembershipID string
+	if err := app.db.QueryRow(t.Context(), `SELECT id FROM production_memberships WHERE production_id=$1 AND user_id=$2 AND status='active'`, productionID, producer).Scan(&producerMembershipID); err != nil {
+		t.Fatalf("read producer membership: %v", err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE workspace_memberships SET status='suspended' WHERE workspace_id=$1 AND user_id=$2`, workspaceID, owner); err != nil {
+		t.Fatalf("suspend owner fixture: %v", err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE production_memberships SET status='revoked',revoked_at=NOW() WHERE production_id=$1 AND user_id=$2`, productionID, owner); err != nil {
+		t.Fatalf("remove owner producer fixture: %v", err)
+	}
+	response := authedRequest(t, app, producerToken, http.MethodDelete, "/v1/productions/"+productionID+"/members/"+producerMembershipID, nil)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "production_last_producer") {
+		t.Fatalf("last producer revoke = %d: %s", response.Code, response.Body.String())
 	}
 }
 

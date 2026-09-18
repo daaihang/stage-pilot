@@ -131,6 +131,35 @@ func validProductionTimeWindow(w http.ResponseWriter, startsAt, expiresAt *time.
 	return true
 }
 
+func sameTimePointer(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
+}
+
+func hasEffectiveProductionProducer(ctx context.Context, tx pgx.Tx, access productionAccess) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM workspace_memberships
+		WHERE workspace_id=$1 AND status='active' AND role IN ('owner','admin')
+		UNION ALL
+		SELECT 1 FROM production_memberships
+		WHERE production_id=$2 AND role_key='producer' AND status='active'
+			AND (starts_at IS NULL OR starts_at<=NOW())
+			AND (expires_at IS NULL OR expires_at>NOW())
+	)`, access.WorkspaceID, access.ProductionID).Scan(&exists)
+	return exists, err
+}
+
+func lockProductionMembershipScope(ctx context.Context, tx pgx.Tx, access productionAccess) error {
+	if _, err := tx.Exec(ctx, `SELECT id FROM workspace_memberships WHERE workspace_id=$1 FOR UPDATE`, access.WorkspaceID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT id FROM production_memberships WHERE production_id=$1 FOR UPDATE`, access.ProductionID)
+	return err
+}
+
 func productionPermissionList(access productionAccess) []string {
 	result := make([]string, 0, len(access.Permissions))
 	for key := range access.Permissions {
@@ -643,9 +672,22 @@ func (app *application) updateProductionMember(w http.ResponseWriter, r *http.Re
 		return
 	}
 	access := currentProductionAccess(r)
+	ctx := r.Context()
 	id := r.PathValue("memberId")
-	var existingRole, existingStatus string
-	if err := app.db.QueryRow(r.Context(), `SELECT role_key,status FROM production_memberships WHERE id=$1 AND production_id=$2 AND status <> 'revoked'`, id, access.ProductionID).Scan(&existingRole, &existingStatus); err != nil {
+	tx, err := app.db.Begin(ctx)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := lockProductionMembershipScope(ctx, tx, access); err != nil {
+		serverError(w, err)
+		return
+	}
+	var targetUserID, existingRole, existingStatus string
+	var currentStarts, currentExpires *time.Time
+	if err := tx.QueryRow(ctx, `SELECT user_id,role_key,status,starts_at,expires_at FROM production_memberships
+		WHERE id=$1 AND production_id=$2 AND status <> 'revoked' FOR UPDATE`, id, access.ProductionID).Scan(&targetUserID, &existingRole, &existingStatus, &currentStarts, &currentExpires); err != nil {
 		errorJSON(w, 404, "member_not_found", "活动成员不存在")
 		return
 	}
@@ -665,11 +707,6 @@ func (app *application) updateProductionMember(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	var currentStarts, currentExpires *time.Time
-	if err := app.db.QueryRow(r.Context(), `SELECT starts_at,expires_at FROM production_memberships WHERE id=$1 AND production_id=$2 AND status <> 'revoked'`, id, access.ProductionID).Scan(&currentStarts, &currentExpires); err != nil {
-		errorJSON(w, 404, "member_not_found", "活动成员不存在")
-		return
-	}
 	nextStarts, nextExpires := currentStarts, currentExpires
 	if in.StartsAt.Present {
 		nextStarts = in.StartsAt.Value
@@ -680,11 +717,43 @@ func (app *application) updateProductionMember(w http.ResponseWriter, r *http.Re
 	if !validProductionTimeWindow(w, nextStarts, nextExpires, "成员") {
 		return
 	}
-	_, err := app.db.Exec(r.Context(), `UPDATE production_memberships SET role_key=$1,status=$2,
+	if _, err := tx.Exec(ctx, `UPDATE production_memberships SET role_key=$1,status=$2,
 		starts_at=CASE WHEN $3 THEN $4 ELSE starts_at END,
 		expires_at=CASE WHEN $5 THEN $6 ELSE expires_at END,
-		updated_at=NOW() WHERE id=$7 AND production_id=$8 AND status <> 'revoked'`, role, status, in.StartsAt.Present, in.StartsAt.Value, in.ExpiresAt.Present, in.ExpiresAt.Value, id, access.ProductionID)
+		updated_at=NOW() WHERE id=$7 AND production_id=$8 AND status <> 'revoked'`, role, status, in.StartsAt.Present, in.StartsAt.Value, in.ExpiresAt.Present, in.ExpiresAt.Value, id, access.ProductionID); err != nil {
+		serverError(w, err)
+		return
+	}
+	hasProducer, err := hasEffectiveProductionProducer(ctx, tx, access)
 	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if !hasProducer {
+		errorJSON(w, http.StatusConflict, "production_last_producer", "活动至少需要一名有效的 Producer")
+		return
+	}
+	action := "updated"
+	if role != existingRole && status == existingStatus && sameTimePointer(nextStarts, currentStarts) && sameTimePointer(nextExpires, currentExpires) {
+		action = "role_changed"
+	} else if status != existingStatus && role == existingRole && sameTimePointer(nextStarts, currentStarts) && sameTimePointer(nextExpires, currentExpires) {
+		if status == "suspended" {
+			action = "suspended"
+		} else {
+			action = "restored"
+		}
+	} else if role == existingRole && status == existingStatus && (!sameTimePointer(nextStarts, currentStarts) || !sameTimePointer(nextExpires, currentExpires)) {
+		action = "window_changed"
+	}
+	if err := recordMembershipAudit(ctx, tx, membershipAuditEvent{
+		ScopeKind: "production", WorkspaceID: access.WorkspaceID, ProductionID: access.ProductionID,
+		MembershipID: id, TargetUserID: targetUserID, ActorUserID: claims(r).Subject, Action: action,
+		PreviousRole: existingRole, NextRole: role, PreviousState: existingStatus, NextState: status,
+	}); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -693,16 +762,51 @@ func (app *application) updateProductionMember(w http.ResponseWriter, r *http.Re
 
 func (app *application) revokeProductionMember(w http.ResponseWriter, r *http.Request) {
 	access := currentProductionAccess(r)
-	tag, err := app.db.Exec(r.Context(), `UPDATE production_memberships SET status='revoked',revoked_at=NOW(),updated_at=NOW() WHERE id=$1 AND production_id=$2 AND status <> 'revoked'`, r.PathValue("memberId"), access.ProductionID)
+	ctx := r.Context()
+	tx, err := app.db.Begin(ctx)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	if tag.RowsAffected() != 1 {
+	defer tx.Rollback(ctx)
+	if err := lockProductionMembershipScope(ctx, tx, access); err != nil {
+		serverError(w, err)
+		return
+	}
+	id := r.PathValue("memberId")
+	var targetUserID, role, status string
+	if err := tx.QueryRow(ctx, `SELECT user_id,role_key,status FROM production_memberships
+		WHERE id=$1 AND production_id=$2 AND status <> 'revoked' FOR UPDATE`, id, access.ProductionID).Scan(&targetUserID, &role, &status); err != nil {
 		errorJSON(w, 404, "member_not_found", "活动成员不存在")
 		return
 	}
-	writeJSON(w, 200, map[string]string{"status": "revoked"})
+	if _, err := tx.Exec(ctx, `UPDATE production_memberships SET status='revoked',revoked_at=NOW(),updated_at=NOW()
+		WHERE id=$1 AND production_id=$2 AND status <> 'revoked'`, id, access.ProductionID); err != nil {
+		serverError(w, err)
+		return
+	}
+	hasProducer, err := hasEffectiveProductionProducer(ctx, tx, access)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if !hasProducer {
+		errorJSON(w, http.StatusConflict, "production_last_producer", "活动至少需要一名有效的 Producer")
+		return
+	}
+	if err := recordMembershipAudit(ctx, tx, membershipAuditEvent{
+		ScopeKind: "production", WorkspaceID: access.WorkspaceID, ProductionID: access.ProductionID,
+		MembershipID: id, TargetUserID: targetUserID, ActorUserID: claims(r).Subject, Action: "revoked",
+		PreviousRole: role, NextRole: role, PreviousState: status, NextState: "revoked",
+	}); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]string{"status": "revoked", "member_id": id})
 }
 
 func (app *application) createProductionInvitation(w http.ResponseWriter, r *http.Request) {

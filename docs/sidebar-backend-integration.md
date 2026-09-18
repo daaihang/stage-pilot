@@ -32,7 +32,8 @@ User / Account
 后端实现位于 `backend/api/cmd/server/workspace.go`、`production.go`，迁移为 `000003_workspace` 与 `000004_production`：
 
 - `workspaces`：id / name / slug（唯一）/ description / avatar_url / 时间戳 / 软删除
-- `workspace_memberships`：workspace_id + user_id 唯一，role ∈ owner > admin > member，status ∈ active / invited / suspended
+- `workspace_memberships`：workspace_id + user_id 唯一，role ∈ owner > admin > member，status ∈ active / invited / suspended / revoked；撤销只更新状态与时间戳，不删除 membership
+- `membership_audit_events`：Workspace 与 Production 成员角色、状态和撤销动作的追加式审计记录
 - `user_preferences.last_workspace_id`：服务端持久化最近工作空间，恢复时重新校验 membership
 - `productions`：workspace_id（强制外键，CASCADE）/ name / status ∈ active|completed|archived / timezone（IANA）/ planned_start_at / planned_end_at / actual_completed_at / description / created_by / archived_at / 软删除；索引 workspace_id 与 workspace_id+status
 - `production_memberships`：指定活动的直接授权；角色为 producer / editor / stage_manager / contributor / viewer，状态为 active / suspended / revoked，支持 `starts_at` / `expires_at` 时间窗口，访问状态在每次授权检查时即时计算。
@@ -49,6 +50,8 @@ User / Account
 | `GET /v1/workspaces/:id` | 单个工作空间 | MEMBER |
 | `PATCH /v1/workspaces/:id` | 更新名称 / 描述 / 头像 | ADMIN |
 | `GET /v1/workspaces/:id/members` | 成员列表（成员、角色、加入时间） | MEMBER |
+| `PATCH /v1/workspaces/:id/members/:memberId` | 修改 Owner/Admin/Member 角色，或暂停/恢复成员 | ADMIN |
+| `DELETE /v1/workspaces/:id/members/:memberId` | 软移除成员，写入 revoked，不物理删除 | ADMIN |
 | `GET /v1/workspaces/:id/invitations` | 成员邀请列表（服务端派生状态） | ADMIN |
 | `POST /v1/workspaces/:id/invitations` | 创建指定邮箱邀请（默认 7 天） | ADMIN |
 | `GET /v1/workspaces/:id/invitations/:invitationId/credential` | 读取当前短码（不缓存） | ADMIN |
@@ -57,7 +60,7 @@ User / Account
 | `GET /me/last-workspace` | 最近工作空间 id（membership 失效时返回空） | 登录 |
 | `PUT /me/last-workspace` | 保存最近工作空间 id（服务端校验 membership） | 登录 |
 
-工作空间不存在与无权限统一返回 `403 workspace_forbidden`；production 不存在、越权或父子伪造统一返回 `404 production_not_found`，不泄露实体是否存在。
+工作空间不存在与无权限统一返回 `403 workspace_forbidden`；production 不存在、越权或父子伪造统一返回 `404 production_not_found`，不泄露实体是否存在。Workspace Owner 可以管理全部固定角色，Admin 只能管理普通 Member；最后一个 active Owner 不允许降级、暂停或移除，返回 `409 workspace_last_owner`。
 
 ## Production API
 
@@ -71,7 +74,7 @@ Production 权限由 `requireProductionPermission(permission)` 统一计算：Wo
 | `PATCH /v1/workspaces/:id/productions/:pid` | 更新 name/description/timezone/planned_start_at/planned_end_at/status；status=completed 由服务端写 actual_completed_at，status=archived 同时写 archived_at | ADMIN |
 | `GET /v1/productions` | 当前用户所有可访问活动，附访问来源和可导航 Workspace 标识 | 登录 |
 | `GET/PATCH /v1/productions/:pid` | 规范的活动详情与编辑接口，支持 Production-only 成员 | production.view / production.edit |
-| `GET/POST/PATCH/DELETE /v1/productions/:pid/members` | 查看或管理直接活动成员；DELETE 为 revoked | members.view / members.manage |
+| `GET/POST/PATCH/DELETE /v1/productions/:pid/members` | 查看或管理直接活动成员；PATCH 修改固定角色/状态/时间窗口，DELETE 为 revoked | members.view / members.manage |
 | `GET/POST/DELETE /v1/productions/:pid/invitations` | 列出、创建、撤销短码邀请 | members.manage |
 | `GET /v1/productions/:pid/invitations/:invitationId/credential` | 读取当前短码（不缓存） | members.manage |
 | `POST /v1/productions/:pid/invitations/:invitationId/rotate` | 在原记录上轮换短码 | members.manage |
@@ -79,7 +82,7 @@ Production 权限由 `requireProductionPermission(permission)` 统一计算：Wo
 
 时间模型：`planned_end_at < planned_start_at` 与非法 IANA 时区在服务端拒绝（400）。前端展示一律使用 production.timezone，不使用运行机器本地时区；计划结束不会自动完成 Production。
 
-邀请使用 `/#/join/XXXXX-XXXXX` 短码入口。短码为 10 位 Crockford Base32，服务端保存 HMAC hash 和加密密文；列表不返回明文短码，管理员复制时通过 `credential` 接口按需读取，响应禁止缓存。Workspace 邀请必须指定已验证邮箱且只能领取一次；Production 邀请可指定已验证邮箱或配置 1–100 次通用领取。复制不会生成新码，活动中的 pending/scheduled/active 邀请可以在原记录上轮换短码，旧码立即失效。邀请撤销只阻止尚未接受的邀请，已建立的 Membership 仍在成员页单独撤销。`status`、`remaining_uses`、`invite_kind`、`credential_state` 等列表字段由服务端统一计算，接受时使用行锁、接受记录和 Membership 写入同一事务。旧 `/invite/<token>` 链接和旧 Token 接受接口返回 `410 legacy_invitation_disabled`。
+邀请使用 `/#/join/XXXXX-XXXXX` 短码入口。短码为 10 位 Crockford Base32，服务端保存 HMAC hash 和加密密文；列表不返回明文短码，管理员复制时通过 `credential` 接口按需读取，响应禁止缓存。Workspace 邀请必须指定已验证邮箱且只能领取一次；Production 邀请可指定已验证邮箱或配置 1–100 次通用领取。复制不会生成新码，活动中的 pending/scheduled/active 邀请可以在原记录上轮换短码，旧码立即失效。邀请撤销只阻止尚未接受的邀请，已建立的 Membership 仍在成员页单独撤销。Workspace revoked membership 重新接受邀请时复用原关联并记录 reinstated 审计事件；Production revoked membership 保留历史，重新邀请创建新的有效关联。Workspace 与 Production 是独立授权关系，Workspace 暂停/移除不会自动撤销用户已有的直接 Production 访问。`status`、`remaining_uses`、`invite_kind`、`credential_state` 等列表字段由服务端统一计算，接受时使用行锁、接受记录和 Membership 写入同一事务。Production 的角色变更会保护最后一个有效 Producer；active Workspace Owner/Admin 计入 Producer 等价治理者。旧 `/invite/<token>` 链接和旧 Token 接受接口返回 `410 legacy_invitation_disabled`。
 
 ## 导航层级
 

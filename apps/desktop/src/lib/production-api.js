@@ -8,8 +8,9 @@ import { request } from "@/lib/auth";
  * - POST  /v1/workspaces/:workspaceId/productions            创建（ADMIN+，workspace_id 来自 URL）
  * - GET   /v1/workspaces/:workspaceId/productions/:id        详情（校验父子关系）
  * - PATCH /v1/workspaces/:workspaceId/productions/:id        更新 / 归档（ADMIN+）
+ * - GET/POST/PATCH/DELETE /v1/productions/:id/members        管理直接活动成员
  *
- * 权限继承 WorkspaceMembership（owner>admin>member），无 ProductionMembership。
+ * 活动访问同时支持 WorkspaceMembership 继承和独立 ProductionMembership。
  */
 
 export async function listProductions(workspaceId, { status } = {}) {

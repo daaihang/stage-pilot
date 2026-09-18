@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  Ellipsis,
   KeyRound,
   RefreshCw,
   ShieldAlert,
@@ -10,13 +9,14 @@ import {
 } from "@/components/ui/icons";
 import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
 import { useTree } from "@headless-tree/react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { notify } from "@/components/ui/sonner";
 import { Badge } from "@/components/reui/badge";
 import { Tree, TreeItem, TreeItemLabel } from "@/components/reui/tree";
@@ -41,8 +41,10 @@ import {
   memberRoleLabel,
   memberStatusBadgeVariant,
   memberStatusLabel,
+  revokeWorkspaceMember,
   revokeWorkspaceInvitation,
   rotateWorkspaceInvitation,
+  updateWorkspaceMember,
 } from "@/lib/workspace-api";
 import {
   getWorkspaceRolePermissions,
@@ -71,7 +73,7 @@ function MembersLoadingState() {
 
 export function WorkspaceRolesPage({ route, workspace }) {
   const [selectedRole, setSelectedRole] = useState("owner");
-  return <div className="space-y-6"><WorkspacePageHeader workspace={workspace} role={workspace.role} title={route?.meta?.title || "角色与权限"} description={route?.meta?.description || "查看工作空间角色和可用权限范围。"} /><AccessRolesLayout roles={workspaceRoles} selectedRole={selectedRole} onRoleChange={setSelectedRole} permissionsForRole={getWorkspaceRolePermissions} groups={workspacePermissionGroups} scopeForRole={(role) => role.scope} warningForRole={(role) => role.key === "owner" ? "Owner 与成员管理权限会影响工作空间安全。权限树仅用于当前角色预览，权限修改尚未接入。" : "权限树仅用于当前角色预览，权限修改尚未接入。"} /></div>;
+  return <div className="space-y-6"><WorkspacePageHeader workspace={workspace} role={workspace.role} title={route?.meta?.title || "角色与权限"} description={route?.meta?.description || "查看工作空间角色和可用权限范围。"} /><AccessRolesLayout roles={workspaceRoles} selectedRole={selectedRole} onRoleChange={setSelectedRole} permissionsForRole={getWorkspaceRolePermissions} groups={workspacePermissionGroups} scopeForRole={(role) => role.scope} warningForRole={(role) => role.key === "owner" ? "Owner 与成员管理权限会影响工作空间安全。角色可在成员页修改；自定义权限尚未接入。" : "固定 Workspace 角色可在成员页修改；自定义权限尚未接入。"} /></div>;
 }
 
 const memberFilterFields = [
@@ -95,6 +97,7 @@ const memberFilterFields = [
       { value: "active", label: "已启用" },
       { value: "invited", label: "待接受" },
       { value: "suspended", label: "已暂停" },
+      { value: "revoked", label: "已移除" },
     ],
   },
 ];
@@ -114,35 +117,7 @@ function matchesMemberFilterValue(value, condition) {
   return true;
 }
 
-function MemberActionMenu({ member }) {
-  const memberStatus = String(member.status || "").toLowerCase();
-  const informUnavailable = (action) => {
-    const name = memberDisplayName(member);
-    notify.info(`${action}尚未接入`, {
-      description: `${name} 的成员操作当前仅支持查看，不会修改成员数据。`,
-    });
-  };
-
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-sm" aria-label={`打开 ${memberDisplayName(member)} 的成员操作`} />}
-      >
-        <Ellipsis />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-40">
-        <DropdownMenuItem onClick={() => informUnavailable("修改角色")}>修改角色</DropdownMenuItem>
-        {memberStatus === "invited" && <DropdownMenuItem onClick={() => informUnavailable("重发邀请")}>重发邀请</DropdownMenuItem>}
-        {memberStatus === "active" && <DropdownMenuItem onClick={() => informUnavailable("暂停成员")}>暂停成员</DropdownMenuItem>}
-        {memberStatus === "suspended" && <DropdownMenuItem onClick={() => informUnavailable("恢复成员")}>恢复成员</DropdownMenuItem>}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={() => informUnavailable("移除成员")}>移除成员</DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
-function MemberTable({ members }) {
+function MemberTable({ members, onAction }) {
   return (
     <AccessMemberTable
       members={members}
@@ -153,45 +128,17 @@ function MemberTable({ members }) {
       statusLabel={memberStatusLabel}
       statusVariant={memberStatusBadgeVariant}
       joinedAt={formatMemberJoinedAt}
-      onAction={(member) => <>
-        <DropdownMenuItem onClick={() => notify.info("修改角色尚未接入", { description: `${memberDisplayName(member)} 的成员操作当前仅支持查看。` })}>修改角色</DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem variant="destructive" onClick={() => notify.info("移除成员尚未接入", { description: `${memberDisplayName(member)} 的成员操作当前仅支持查看。` })}>移除成员</DropdownMenuItem>
-      </>}
+      onAction={onAction}
     />
-    /*
-      <TableHeader>
-        <TableRow>
-          <TableHead className="min-w-56">成员</TableHead>
-          <TableHead className="min-w-52">邮箱</TableHead>
-          <TableHead>角色</TableHead>
-          <TableHead>状态</TableHead>
-          <TableHead>加入时间</TableHead>
-          <TableHead className="w-12 text-right"><span className="sr-only">操作</span></TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {members.map((member) => (
-          <TableRow key={member.id || member.user_id}>
-            <TableCell>
-              <div className="flex min-w-44 items-center gap-3">
-                <Avatar size="sm">
-                  <AvatarImage src={member.avatar_url || undefined} alt={memberDisplayName(member)} />
-                  <AvatarFallback>{memberInitials(member)}</AvatarFallback>
-                </Avatar>
-                <span className="min-w-0 truncate font-medium">{memberDisplayName(member)}</span>
-              </div>
-            </TableCell>
-            <TableCell className="max-w-64 truncate text-muted-foreground">{member.email || "未设置邮箱"}</TableCell>
-            <TableCell><Badge variant={memberRoleBadgeVariant(member.role)} size="sm">{memberRoleLabel(member.role)}</Badge></TableCell>
-            <TableCell><Badge variant={memberStatusBadgeVariant(member.status)} size="sm">{memberStatusLabel(member.status)}</Badge></TableCell>
-            <TableCell className="text-muted-foreground">{formatMemberJoinedAt(member)}</TableCell>
-            <TableCell className="text-right"><MemberActionMenu member={member} /></TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>*/
   );
+}
+
+function WorkspaceMemberRoleDialog({ member, open, onOpenChange, onSubmit }) {
+  const [role, setRole] = useState(member?.role || "member");
+  useEffect(() => {
+    if (open) setRole(member?.role || "member");
+  }, [member, open]);
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-w-sm"><DialogHeader><DialogTitle>修改成员角色</DialogTitle><DialogDescription>{member ? `${memberDisplayName(member)} · Workspace 固定角色` : "选择成员角色"}</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); onSubmit(role); }}><label className="block space-y-1"><span className="text-sm font-medium">角色</span><Select value={role} onValueChange={setRole}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="owner">Owner</SelectItem><SelectItem value="admin">Admin</SelectItem><SelectItem value="member">Member</SelectItem></SelectContent></Select></label><DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit">保存角色</Button></DialogFooter></form></DialogContent></Dialog>;
 }
 
 export function WorkspaceMembersPage({ route, workspace }) {
@@ -203,6 +150,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [filterQuery, setFilterQuery] = useState(() => createFilterQuery());
+  const [memberDialog, setMemberDialog] = useState(null);
   const membersRef = useRef(null);
   const requestRef = useRef(0);
   const invitationPanelOpen = route?.panel === "invitations";
@@ -274,6 +222,62 @@ export function WorkspaceMembersPage({ route, workspace }) {
     notify.info("已清除成员筛选");
   };
 
+  const saveMemberRole = async (role) => {
+    const member = memberDialog?.member;
+    if (!member) return;
+    const toastId = notify.loading("正在更新成员角色");
+    try {
+      await updateWorkspaceMember(workspace.id, member.id, { role });
+      notify.success("成员角色已更新", { id: toastId });
+      setMemberDialog(null);
+      await loadMembers();
+    } catch (nextError) {
+      const normalizedError = nextError instanceof Error ? nextError : new Error(String(nextError));
+      notify.error("更新成员角色失败", { id: toastId, description: normalizedError.message });
+    }
+  };
+
+  const updateMemberStatus = async (member) => {
+    const nextStatus = member.status === "suspended" ? "active" : "suspended";
+    const toastId = notify.loading(nextStatus === "suspended" ? "正在暂停成员" : "正在恢复成员");
+    try {
+      await updateWorkspaceMember(workspace.id, member.id, { status: nextStatus });
+      notify.success(nextStatus === "suspended" ? "成员已暂停" : "成员已恢复", { id: toastId });
+      await loadMembers();
+    } catch (nextError) {
+      const normalizedError = nextError instanceof Error ? nextError : new Error(String(nextError));
+      notify.error(nextStatus === "suspended" ? "暂停成员失败" : "恢复成员失败", { id: toastId, description: normalizedError.message });
+    }
+  };
+
+  const removeMember = async () => {
+    const member = memberDialog?.member;
+    if (!member) return;
+    const toastId = notify.loading("正在移除成员");
+    try {
+      await revokeWorkspaceMember(workspace.id, member.id);
+      notify.success("成员已移除", { id: toastId });
+      setMemberDialog(null);
+      await loadMembers();
+    } catch (nextError) {
+      const normalizedError = nextError instanceof Error ? nextError : new Error(String(nextError));
+      notify.error("移除成员失败", { id: toastId, description: normalizedError.message });
+    }
+  };
+
+  const memberActions = (member) => {
+    if (!member.id || member.status === "revoked" || !["owner", "admin"].includes(workspace.role)) return null;
+    const canManageTarget = workspace.role === "owner" || member.role === "member";
+    if (!canManageTarget) return null;
+    return <>
+      {workspace.role === "owner" && <DropdownMenuItem onClick={() => setMemberDialog({ type: "role", member })}>修改角色</DropdownMenuItem>}
+      {member.status === "active" && <DropdownMenuItem onClick={() => updateMemberStatus(member)}>暂停成员</DropdownMenuItem>}
+      {member.status === "suspended" && <DropdownMenuItem onClick={() => updateMemberStatus(member)}>恢复成员</DropdownMenuItem>}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem variant="destructive" onClick={() => setMemberDialog({ type: "revoke", member })}>移除成员</DropdownMenuItem>
+    </>;
+  };
+
   const empty = error && !members
     ? { icon: UsersRound, title: "无法加载成员", description: error.message, action: <Button onClick={() => loadMembers({ withToast: true })} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />重试</Button> }
     : members?.length === 0
@@ -297,7 +301,9 @@ export function WorkspaceMembersPage({ route, workspace }) {
       loadingContent={<MembersLoadingState />}
       empty={empty}
     >
-      <ListSurface className="overflow-x-auto"><MemberTable members={filteredMembers} /></ListSurface>
+      <ListSurface className="overflow-x-auto"><MemberTable members={filteredMembers} onAction={memberActions} /></ListSurface>
+      <WorkspaceMemberRoleDialog member={memberDialog?.member} open={memberDialog?.type === "role"} onOpenChange={(open) => !open && setMemberDialog(null)} onSubmit={saveMemberRole} />
+      <AlertDialog open={memberDialog?.type === "revoke"} onOpenChange={(open) => !open && setMemberDialog(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>移除工作空间成员</AlertDialogTitle><AlertDialogDescription>{memberDialog?.member ? `确认移除 ${memberDisplayName(memberDialog.member)}？这会软撤销 Workspace 访问，但不会自动撤销其独立的 Production 访问。` : "确认移除该成员？"}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={removeMember}>确认移除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </ResourcePage>
   );
 }

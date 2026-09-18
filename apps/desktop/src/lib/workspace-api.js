@@ -10,6 +10,8 @@ import { normalizeTimeZone } from "@/lib/timezone";
  * - GET    /v1/workspaces/:id          单个工作空间（需要 membership）
  * - PATCH  /v1/workspaces/:id         更新名称/描述/头像（需要 ADMIN+）
  * - GET    /v1/workspaces/:id/members 成员列表（需要 membership）
+ * - PATCH  /v1/workspaces/:id/members/:memberId 修改固定角色或暂停/恢复（需要 ADMIN+）
+ * - DELETE /v1/workspaces/:id/members/:memberId 软移除成员（需要 ADMIN+）
  * - GET    /me/last-workspace          最近工作空间 id（服务端已校验 membership）
  * - PUT    /me/last-workspace          保存最近工作空间 id（服务端校验 membership）
  *
@@ -39,6 +41,9 @@ export const updateWorkspacePlanningSettings = (workspaceId, patch) => request(`
 export async function listWorkspaceMembers(workspaceId) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/members`);
 }
+
+export const updateWorkspaceMember = (workspaceId, memberId, patch) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberId)}`, { method: "PATCH", body: JSON.stringify(patch) });
+export const revokeWorkspaceMember = (workspaceId, memberId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(memberId)}`, { method: "DELETE" });
 
 export const listWorkspaceInvitations = (workspaceId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`);
 export const createWorkspaceInvitation = (workspaceId, payload) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/invitations`, { method: "POST", body: JSON.stringify(payload) });
@@ -97,6 +102,7 @@ const memberStatusLabels = {
   active: "已启用",
   invited: "待接受",
   suspended: "已暂停",
+  revoked: "已移除",
 };
 
 /** 成员页使用的角色展示文案；未知角色不会被伪装成真实角色。 */
@@ -118,7 +124,7 @@ export function memberRoleBadgeVariant(role) {
 
 export function memberStatusBadgeVariant(status) {
   const normalized = String(status || "").toLowerCase();
-  return { active: "success-light", invited: "warning-light", suspended: "destructive-light" }[normalized] || "outline";
+  return { active: "success-light", invited: "warning-light", suspended: "destructive-light", revoked: "destructive-light" }[normalized] || "outline";
 }
 
 function firstMemberValue(member, keys) {

@@ -149,8 +149,8 @@ func (app *application) acceptWorkspaceInvitation(ctx context.Context, code, use
 	if !emailVerified {
 		return nil, true, &invitationError{http.StatusForbidden, "email_verification_required", "请先完成邮箱验证后再接受邀请"}
 	}
-	var priorMembershipID, priorStatus string
-	_ = tx.QueryRow(ctx, `SELECT m.id,m.status FROM workspace_memberships m WHERE m.workspace_id=$1 AND m.user_id=$2`, workspaceID, userID).Scan(&priorMembershipID, &priorStatus)
+	var priorMembershipID, priorStatus, priorRole string
+	_ = tx.QueryRow(ctx, `SELECT m.id,m.status,m.role FROM workspace_memberships m WHERE m.workspace_id=$1 AND m.user_id=$2`, workspaceID, userID).Scan(&priorMembershipID, &priorStatus, &priorRole)
 	if priorMembershipID != "" && priorStatus == "active" {
 		_, err = tx.Exec(ctx, `INSERT INTO workspace_invitation_acceptances(id,invitation_id,user_id,membership_id) VALUES($1,$2,$3,$4)`, newID(), id, userID, priorMembershipID)
 		if err != nil {
@@ -169,6 +169,17 @@ func (app *application) acceptWorkspaceInvitation(ctx context.Context, code, use
 	if priorMembershipID != "" {
 		membershipID = priorMembershipID
 		_, err = tx.Exec(ctx, `UPDATE workspace_memberships SET role=$1,status='active',updated_at=NOW() WHERE id=$2`, role, membershipID)
+		if err == nil {
+			action := "reinstated"
+			if priorStatus == "suspended" {
+				action = "restored"
+			}
+			err = recordMembershipAudit(ctx, tx, membershipAuditEvent{
+				ScopeKind: "workspace", WorkspaceID: workspaceID, MembershipID: membershipID,
+				TargetUserID: userID, ActorUserID: userID, Action: action,
+				PreviousRole: priorRole, NextRole: role, PreviousState: priorStatus, NextState: "active",
+			})
+		}
 	} else {
 		membershipID = newID()
 		_, err = tx.Exec(ctx, `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,status) VALUES($1,$2,$3,$4,'active')`, membershipID, workspaceID, userID, role)

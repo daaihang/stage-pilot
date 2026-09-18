@@ -46,15 +46,17 @@ type workspace struct {
 }
 
 type workspaceMember struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	UserID      string    `json:"user_id"`
-	Role        string    `json:"role"`
-	Status      string    `json:"status"`
-	DisplayName string    `json:"display_name"`
-	Email       string    `json:"email"`
-	AvatarURL   string    `json:"avatar_url"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	WorkspaceID string     `json:"workspace_id"`
+	UserID      string     `json:"user_id"`
+	Role        string     `json:"role"`
+	Status      string     `json:"status"`
+	DisplayName string     `json:"display_name"`
+	Email       string     `json:"email"`
+	AvatarURL   string     `json:"avatar_url"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	RevokedAt   *time.Time `json:"revoked_at,omitempty"`
 }
 
 const membershipKey contextKey = "stagepilot.auth.workspace_membership"
@@ -267,7 +269,7 @@ func (app *application) updateWorkspace(w http.ResponseWriter, r *http.Request) 
 func (app *application) listWorkspaceMembers(w http.ResponseWriter, r *http.Request) {
 	access := currentWorkspaceAccess(r)
 	rows, err := app.db.Query(r.Context(), `SELECT m.id,m.workspace_id,m.user_id,m.role,m.status,
-			u.display_name,COALESCE((SELECT i.provider_subject FROM user_identities i WHERE i.user_id=u.id AND i.provider='email' LIMIT 1),''),u.avatar_url,m.created_at
+			u.display_name,COALESCE((SELECT i.provider_subject FROM user_identities i WHERE i.user_id=u.id AND i.provider='email' LIMIT 1),''),u.avatar_url,m.created_at,m.updated_at,m.revoked_at
 		FROM workspace_memberships m
 		JOIN users u ON u.id = m.user_id
 		WHERE m.workspace_id=$1
@@ -281,7 +283,7 @@ func (app *application) listWorkspaceMembers(w http.ResponseWriter, r *http.Requ
 	for rows.Next() {
 		var member workspaceMember
 		if err := rows.Scan(&member.ID, &member.WorkspaceID, &member.UserID, &member.Role, &member.Status,
-			&member.DisplayName, &member.Email, &member.AvatarURL, &member.CreatedAt); err != nil {
+			&member.DisplayName, &member.Email, &member.AvatarURL, &member.CreatedAt, &member.UpdatedAt, &member.RevokedAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -292,6 +294,207 @@ func (app *application) listWorkspaceMembers(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, members)
+}
+
+type workspaceMemberPatch struct {
+	Role   *string `json:"role"`
+	Status *string `json:"status"`
+}
+
+func workspaceMemberActionAllowed(access workspaceAccess, currentRole, nextRole string) bool {
+	if access.Role == workspaceRoleOwner {
+		return true
+	}
+	return access.Role == workspaceRoleAdmin && currentRole == workspaceRoleMember && nextRole == workspaceRoleMember
+}
+
+func lockWorkspaceMembershipScope(ctx context.Context, tx pgx.Tx, workspaceID string) error {
+	_, err := tx.Exec(ctx, `SELECT id FROM workspace_memberships WHERE workspace_id=$1 FOR UPDATE`, workspaceID)
+	return err
+}
+
+func (app *application) updateWorkspaceMember(w http.ResponseWriter, r *http.Request) {
+	var in workspaceMemberPatch
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if in.Role == nil && in.Status == nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_input", "至少需要修改角色或状态")
+		return
+	}
+
+	access := currentWorkspaceAccess(r)
+	ctx := r.Context()
+	tx, err := app.db.Begin(ctx)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	id := r.PathValue("memberId")
+	if err := lockWorkspaceMembershipScope(ctx, tx, access.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	var targetUserID, currentRole, currentStatus string
+	if err := tx.QueryRow(ctx, `SELECT user_id,role,status FROM workspace_memberships
+		WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, id, access.WorkspaceID).Scan(&targetUserID, &currentRole, &currentStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) || currentStatus == "revoked" {
+			errorJSON(w, http.StatusNotFound, "member_not_found", "工作空间成员不存在")
+		} else {
+			serverError(w, err)
+		}
+		return
+	}
+	if currentStatus == "revoked" {
+		errorJSON(w, http.StatusNotFound, "member_not_found", "工作空间成员不存在")
+		return
+	}
+
+	nextRole := currentRole
+	if in.Role != nil {
+		nextRole = strings.ToLower(strings.TrimSpace(*in.Role))
+		if roleRank[nextRole] == 0 {
+			errorJSON(w, http.StatusBadRequest, "invalid_input", "工作空间角色无效")
+			return
+		}
+	}
+	nextStatus := currentStatus
+	if in.Status != nil {
+		nextStatus = strings.ToLower(strings.TrimSpace(*in.Status))
+		if nextStatus != "active" && nextStatus != "suspended" {
+			errorJSON(w, http.StatusBadRequest, "invalid_input", "成员状态无效")
+			return
+		}
+	}
+	if !workspaceMemberActionAllowed(access, currentRole, nextRole) {
+		errorJSON(w, http.StatusForbidden, "workspace_member_forbidden", "当前角色不能修改该成员")
+		return
+	}
+	if currentStatus == "invited" && in.Status != nil {
+		errorJSON(w, http.StatusConflict, "invitation_pending", "待接受邀请不能直接修改成员状态")
+		return
+	}
+
+	if currentRole == workspaceRoleOwner && currentStatus == "active" &&
+		(nextRole != workspaceRoleOwner || nextStatus != "active") {
+		var otherOwners int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM workspace_memberships
+			WHERE workspace_id=$1 AND role=$2 AND status='active' AND id<>$3`,
+			access.WorkspaceID, workspaceRoleOwner, id).Scan(&otherOwners); err != nil {
+			serverError(w, err)
+			return
+		}
+		if otherOwners == 0 {
+			errorJSON(w, http.StatusConflict, "workspace_last_owner", "工作空间至少需要一名启用中的 Owner")
+			return
+		}
+	}
+
+	if nextRole == currentRole && nextStatus == currentStatus {
+		if err := tx.Commit(ctx); err != nil {
+			serverError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "member_id": id, "role": nextRole, "membership_status": nextStatus})
+		return
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE workspace_memberships SET role=$1,status=$2,revoked_at=NULL,updated_at=NOW()
+		WHERE id=$3 AND workspace_id=$4`, nextRole, nextStatus, id, access.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	action := "updated"
+	if nextRole != currentRole && nextStatus == currentStatus {
+		action = "role_changed"
+	} else if nextStatus != currentStatus {
+		if nextStatus == "suspended" {
+			action = "suspended"
+		} else {
+			action = "restored"
+		}
+	}
+	if err := recordMembershipAudit(ctx, tx, membershipAuditEvent{
+		ScopeKind: "workspace", WorkspaceID: access.WorkspaceID, MembershipID: id,
+		TargetUserID: targetUserID, ActorUserID: access.UserID, Action: action,
+		PreviousRole: currentRole, NextRole: nextRole, PreviousState: currentStatus, NextState: nextStatus,
+	}); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "member_id": id, "role": nextRole, "membership_status": nextStatus})
+}
+
+func (app *application) revokeWorkspaceMember(w http.ResponseWriter, r *http.Request) {
+	access := currentWorkspaceAccess(r)
+	ctx := r.Context()
+	tx, err := app.db.Begin(ctx)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	id := r.PathValue("memberId")
+	if err := lockWorkspaceMembershipScope(ctx, tx, access.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	var targetUserID, currentRole, currentStatus string
+	if err := tx.QueryRow(ctx, `SELECT user_id,role,status FROM workspace_memberships
+		WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, id, access.WorkspaceID).Scan(&targetUserID, &currentRole, &currentStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			errorJSON(w, http.StatusNotFound, "member_not_found", "工作空间成员不存在")
+		} else {
+			serverError(w, err)
+		}
+		return
+	}
+	if currentStatus == "revoked" {
+		errorJSON(w, http.StatusNotFound, "member_not_found", "工作空间成员不存在")
+		return
+	}
+	if !workspaceMemberActionAllowed(access, currentRole, currentRole) {
+		errorJSON(w, http.StatusForbidden, "workspace_member_forbidden", "当前角色不能移除该成员")
+		return
+	}
+	if currentRole == workspaceRoleOwner && currentStatus == "active" {
+		var otherOwners int
+		if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM workspace_memberships
+			WHERE workspace_id=$1 AND role=$2 AND status='active' AND id<>$3`,
+			access.WorkspaceID, workspaceRoleOwner, id).Scan(&otherOwners); err != nil {
+			serverError(w, err)
+			return
+		}
+		if otherOwners == 0 {
+			errorJSON(w, http.StatusConflict, "workspace_last_owner", "工作空间至少需要一名启用中的 Owner")
+			return
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE workspace_memberships SET status='revoked',revoked_at=NOW(),updated_at=NOW()
+		WHERE id=$1 AND workspace_id=$2`, id, access.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := recordMembershipAudit(ctx, tx, membershipAuditEvent{
+		ScopeKind: "workspace", WorkspaceID: access.WorkspaceID, MembershipID: id,
+		TargetUserID: targetUserID, ActorUserID: access.UserID, Action: "revoked",
+		PreviousRole: currentRole, NextRole: currentRole, PreviousState: currentStatus, NextState: "revoked",
+	}); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked", "member_id": id})
 }
 
 // putLastWorkspace 持久化「最近使用的工作空间」。

@@ -134,6 +134,8 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/workspaces/{id}", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.getWorkspace))))
 	mux.Handle("PATCH /v1/workspaces/{id}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateWorkspace))))
 	mux.Handle("GET /v1/workspaces/{id}/members", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceMembers))))
+	mux.Handle("PATCH /v1/workspaces/{id}/members/{memberId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateWorkspaceMember))))
+	mux.Handle("DELETE /v1/workspaces/{id}/members/{memberId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.revokeWorkspaceMember))))
 	mux.Handle("GET /v1/workspaces/{id}/invitations", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.listWorkspaceInvitations))))
 	mux.Handle("POST /v1/workspaces/{id}/invitations", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createWorkspaceInvitation))))
 	mux.Handle("DELETE /v1/workspaces/{id}/invitations/{invitationId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.revokeWorkspaceInvitation))))

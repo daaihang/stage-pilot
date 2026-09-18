@@ -318,3 +318,63 @@ func mustLastWorkspaceID(t *testing.T, app *application, userID string) string {
 	}
 	return got
 }
+
+func TestWorkspaceMemberLifecycleAndLastOwnerProtection(t *testing.T) {
+	app := newIntegrationApp(t)
+	owner := createTestUser(t, app, "membership-owner-"+newID()+"@example.test")
+	member := createTestUser(t, app, "membership-member-"+newID()+"@example.test")
+	ownerToken := issueTestToken(t, app, owner)
+	memberToken := issueTestToken(t, app, member)
+	workspaceID := createWorkspaceFor(t, app, ownerToken, "成员生命周期工作空间")["id"].(string)
+	memberID := newID()
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO workspace_memberships(id,workspace_id,user_id,role,status) VALUES($1,$2,$3,'member','active')`, memberID, workspaceID, member); err != nil {
+		t.Fatalf("insert member: %v", err)
+	}
+
+	roleChanged := authedRequest(t, app, ownerToken, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/members/"+memberID, map[string]any{"role": "admin"})
+	if roleChanged.Code != http.StatusOK {
+		t.Fatalf("change member role = %d: %s", roleChanged.Code, roleChanged.Body.String())
+	}
+	if response := authedRequest(t, app, memberToken, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/members/"+memberID, map[string]any{"role": "member"}); response.Code != http.StatusForbidden {
+		t.Fatalf("admin changing own role = %d, want 403: %s", response.Code, response.Body.String())
+	}
+
+	paused := authedRequest(t, app, ownerToken, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/members/"+memberID, map[string]any{"status": "suspended"})
+	if paused.Code != http.StatusOK {
+		t.Fatalf("pause member = %d: %s", paused.Code, paused.Body.String())
+	}
+	if response := authedRequest(t, app, memberToken, http.MethodGet, "/v1/workspaces/"+workspaceID, nil); response.Code != http.StatusForbidden {
+		t.Fatalf("suspended member workspace access = %d, want 403", response.Code)
+	}
+	restored := authedRequest(t, app, ownerToken, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/members/"+memberID, map[string]any{"status": "active"})
+	if restored.Code != http.StatusOK {
+		t.Fatalf("restore member = %d: %s", restored.Code, restored.Body.String())
+	}
+
+	revoked := authedRequest(t, app, ownerToken, http.MethodDelete, "/v1/workspaces/"+workspaceID+"/members/"+memberID, nil)
+	if revoked.Code != http.StatusOK {
+		t.Fatalf("revoke member = %d: %s", revoked.Code, revoked.Body.String())
+	}
+	var status string
+	if err := app.db.QueryRow(t.Context(), `SELECT status FROM workspace_memberships WHERE id=$1`, memberID).Scan(&status); err != nil || status != "revoked" {
+		t.Fatalf("stored membership status = %q err=%v, want revoked", status, err)
+	}
+	var auditCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*) FROM membership_audit_events WHERE membership_id=$1`, memberID).Scan(&auditCount); err != nil || auditCount < 3 {
+		t.Fatalf("membership audit count = %d err=%v, want at least 3", auditCount, err)
+	}
+
+	var ownerID string
+	if err := app.db.QueryRow(t.Context(), `SELECT id FROM workspace_memberships WHERE workspace_id=$1 AND user_id=$2`, workspaceID, owner).Scan(&ownerID); err != nil {
+		t.Fatalf("read owner membership: %v", err)
+	}
+	for _, body := range []map[string]any{{"role": "admin"}, {"status": "suspended"}} {
+		response := authedRequest(t, app, ownerToken, http.MethodPatch, "/v1/workspaces/"+workspaceID+"/members/"+ownerID, body)
+		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "workspace_last_owner") {
+			t.Fatalf("last owner patch body=%v status=%d, want 409 workspace_last_owner", body, response.Code)
+		}
+	}
+	if response := authedRequest(t, app, ownerToken, http.MethodDelete, "/v1/workspaces/"+workspaceID+"/members/"+ownerID, nil); response.Code != http.StatusConflict {
+		t.Fatalf("last owner delete = %d, want 409: %s", response.Code, response.Body.String())
+	}
+}
