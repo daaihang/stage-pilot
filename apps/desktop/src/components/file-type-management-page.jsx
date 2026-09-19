@@ -510,10 +510,10 @@ export function FileTypeManagementPage({ workspace }) {
   const currentMeta = FILE_TYPE_SCOPE_META[activeScope];
   const activeCount = scopeItems.filter((item) => item.is_active).length;
   const selectedItem = dialog?.type === "edit" || dialog?.type === "delete" ? dialog.item : null;
-  const pageActions = canWrite ? <>
-    <Button variant="outline" disabled={saving} onClick={() => setDialog({ type: "restore", scope: activeScope })}><RefreshCw />恢复默认</Button>
-    <Button onClick={() => setDialog({ type: "create" })}><Plus />新建文件类型</Button>
-  </> : null;
+  const pageActions = canWrite ? {
+    primary: <Button onClick={() => setDialog({ type: "create" })}><Plus />新建文件类型</Button>,
+    secondary: [<Button key="restore" variant="outline" disabled={saving} onClick={() => setDialog({ type: "restore", scope: activeScope })}><RefreshCw />恢复默认</Button>],
+  } : null;
   const selectedScope = selectedItem?.scope || activeScope;
 
   const empty = error

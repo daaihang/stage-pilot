@@ -187,7 +187,7 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
   };
   const description = scope === "workspace" ? "管理进入整个工作空间的成员邀请。" : "管理只授予当前活动访问权的邀请。";
   return <div className="min-w-0 space-y-5">
-    <PageHeader headingLevel="h2" title={title} description={description} actions={<PageHeaderActions>{canManage && <Button size="sm" onClick={() => setDialogOpen(true)}><Plus />新建邀请</Button>}<Button variant="outline" size="sm" onClick={() => load(true)}><RefreshCw />刷新</Button></PageHeaderActions>} />
+    <PageHeader headingLevel="h2" title={title} description={description} actions={<PageHeaderActions primary={canManage ? <Button size="sm" onClick={() => setDialogOpen(true)}><Plus />新建邀请</Button> : null} secondary={[<Button key="refresh" variant="outline" size="sm" onClick={() => load(true)}><RefreshCw />刷新</Button>]} />} />
 
     <Card>
       <CardHeader>

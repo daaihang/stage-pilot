@@ -27,7 +27,7 @@ export function ProductionPageHeader({ workspace, production, title, titleConten
     titleContent={titleContent}
     titleAccessory={!titleContent && status ? <Badge className={status.className} variant="secondary">{status.label}</Badge> : null}
     description={subtitle || `${workspace.name} · 活动工作区`}
-    actions={actions ? <PageHeaderActions>{actions}</PageHeaderActions> : null}
+    actions={actions ? <PageHeaderActions {...actions} /> : null}
   >{children}</PageHeader>;
 }
 

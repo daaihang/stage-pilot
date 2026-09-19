@@ -1,5 +1,4 @@
-import { FileText, LayoutGrid, LayoutList, Plus, Search, SlidersHorizontal, X } from "@/components/ui/icons";
-import { Button } from "@/components/ui/button";
+import { FileText, LayoutGrid, LayoutList, Search, SlidersHorizontal, X } from "@/components/ui/icons";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,9 +33,7 @@ export function ResourcePage({
   filters,
   view,
   onViewChange,
-  onCreate,
-  createLabel = "新建",
-  headerActions,
+  actions,
   showViewToggle = true,
   loading,
   loadingContent,
@@ -50,9 +47,7 @@ export function ResourcePage({
 }) {
   const resolvedHeaderMode = resolveResourcePageHeaderMode({ headingLevel, headerMode });
   const header = resolveResourcePageHeader({ title, headerTitle, headerMode: resolvedHeaderMode });
-  const headerActionContent = headerActions || onCreate
-    ? <PageHeaderActions>{headerActions}{onCreate && <Button onClick={onCreate}><Plus />{createLabel}</Button>}</PageHeaderActions>
-    : null;
+  const headerActionContent = actions ? <PageHeaderActions {...actions} /> : null;
   return <div className="@container/resource-page min-w-0 space-y-5">
     {header.showHeader && <PageHeader
       back={back ? <AppBackLink to={back.to} label={back.label} onBeforeNavigate={back.onBeforeNavigate} replace={back.replace} preventScrollReset={back.preventScrollReset} /> : null}

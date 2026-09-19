@@ -462,28 +462,15 @@ export function ProductionProgramsPage({ route, workspace, production }) {
         production={production}
         title="节目"
         subtitle={route.meta.description}
-        actions={
-          <>
-            <Button
-              variant="outline"
-              onClick={() => load({ toast: true })}
-              disabled={refreshing}
-            >
+        actions={{
+          primary: canWrite ? <Button onClick={() => { setPickerOpen(true); }}><Plus />添加节目</Button> : null,
+          secondary: [
+            <Button key="refresh" variant="outline" onClick={() => load({ toast: true })} disabled={refreshing}>
               <RefreshCw className={refreshing ? "animate-spin" : ""} />
               刷新
-            </Button>
-            {canWrite && (
-              <Button
-                onClick={() => {
-                  setPickerOpen(true);
-                }}
-              >
-                <Plus />
-                添加节目
-              </Button>
-            )}
-          </>
-        }
+            </Button>,
+          ],
+        }}
       />
       <ResourcePage
         headingLevel="h2"

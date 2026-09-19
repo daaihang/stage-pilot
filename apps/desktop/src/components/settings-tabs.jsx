@@ -3,24 +3,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/sonner";
 import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
+import { resolveSettingsTabsOrientation } from "@/lib/settings-tabs-layout";
 
-const SETTINGS_TABS_MEDIA_QUERY = "(min-width: 1024px)";
 export const CATEGORY_TABS_STICKY_STORE_KEY = "categoryTabsSticky:v1";
 
-function useSettingsTabsOrientation() {
-  const [isWide, setIsWide] = useState(() => (
-    typeof window !== "undefined" && window.matchMedia(SETTINGS_TABS_MEDIA_QUERY).matches
-  ));
+function useSettingsTabsOrientation(containerRef) {
+  const [orientation, setOrientation] = useState("horizontal");
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia(SETTINGS_TABS_MEDIA_QUERY);
-    const onChange = () => setIsWide(mediaQuery.matches);
-    onChange();
-    mediaQuery.addEventListener("change", onChange);
-    return () => mediaQuery.removeEventListener("change", onChange);
-  }, []);
+    const container = containerRef.current;
+    if (!container) return undefined;
 
-  return isWide ? "vertical" : "horizontal";
+    const update = () => setOrientation(resolveSettingsTabsOrientation(container.clientWidth));
+    update();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(container);
+    return () => observer?.disconnect();
+  }, [containerRef]);
+
+  return orientation;
 }
 
 function useHorizontalScrollIndicators(enabled) {
@@ -175,7 +176,8 @@ export function SectionTabsLayout({
   sticky,
   pinned,
 }) {
-  const orientation = useSettingsTabsOrientation();
+  const containerRef = useRef(null);
+  const orientation = useSettingsTabsOrientation(containerRef);
   const preference = useCategoryTabsPreference();
   const shouldPin = pinned ?? sticky ?? preference.pinned;
   const [tabsListRef, horizontalScrollState] = useHorizontalScrollIndicators(orientation === "horizontal");
@@ -190,57 +192,59 @@ export function SectionTabsLayout({
   }, [activeGroup, orientation, shouldPin, verticalTabsListRef]);
 
   return (
-    <Tabs
-      value={activeGroup}
-      onValueChange={(value) => {
-        if (value != null) onGroupChange(value);
-      }}
-      orientation={orientation}
-      className={cn(
-        "w-full items-start gap-6 lg:grid lg:grid-cols-[220px_minmax(0,1fr)]",
-        disabled && "opacity-50 blur-[1px]",
-        className,
-      )}
-      aria-disabled={disabled}
-    >
-      <div className={cn(
-        "relative w-full min-w-0 lg:h-fit",
-        shouldPin && "sticky top-0 z-20 self-start bg-background/95 py-1 backdrop-blur-sm",
-      )}>
-        <TabsList
-          ref={activeTabsListRef}
-          aria-label={ariaLabel}
-          className={cn(
-            "w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none lg:h-fit lg:w-full lg:flex-col lg:items-stretch",
-            shouldPin && orientation === "horizontal" && "shadow-[0_5px_12px_-8px_rgba(0,0,0,0.45)]",
-            shouldPin && orientation === "vertical" && "max-h-[calc(100dvh-var(--app-titlebar-height)-2rem)] overflow-y-auto overflow-x-hidden scrollbar-thin",
-            orientation === "vertical" && !shouldPin && "lg:overflow-visible",
+    <div ref={containerRef} className="@container/settings-tabs min-w-0">
+      <Tabs
+        value={activeGroup}
+        onValueChange={(value) => {
+          if (value != null) onGroupChange(value);
+        }}
+        orientation={orientation}
+        className={cn(
+          "w-full items-start gap-6 @min-[56rem]/settings-tabs:grid @min-[56rem]/settings-tabs:grid-cols-[220px_minmax(0,1fr)]",
+          disabled && "opacity-50 blur-[1px]",
+          className,
+        )}
+        aria-disabled={disabled}
+      >
+        <div className={cn(
+          "relative w-full min-w-0 @min-[56rem]/settings-tabs:h-fit",
+          shouldPin && "sticky top-0 z-20 self-start bg-background/95 py-1 backdrop-blur-sm",
+        )}>
+          <TabsList
+            ref={activeTabsListRef}
+            aria-label={ariaLabel}
+            className={cn(
+              "w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none @min-[56rem]/settings-tabs:h-fit @min-[56rem]/settings-tabs:w-full @min-[56rem]/settings-tabs:flex-col @min-[56rem]/settings-tabs:items-stretch",
+              shouldPin && orientation === "horizontal" && "shadow-[0_5px_12px_-8px_rgba(0,0,0,0.45)]",
+              shouldPin && orientation === "vertical" && "max-h-[calc(100dvh-var(--app-titlebar-height)-2rem)] overflow-y-auto overflow-x-hidden scrollbar-thin",
+              orientation === "vertical" && !shouldPin && "@min-[56rem]/settings-tabs:overflow-visible",
+            )}
+          >
+            {groups.map(([id, label, Icon]) => (
+              <TabsTrigger key={id} value={id} data-category-tab={id} disabled={disabled} className="min-w-28">
+                <Icon className="size-4" />
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {orientation === "horizontal" && horizontalScrollState.canScrollLeft && (
+            <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-muted via-muted/80 to-transparent" />
           )}
-        >
-          {groups.map(([id, label, Icon]) => (
-            <TabsTrigger key={id} value={id} data-category-tab={id} disabled={disabled} className="max-lg:min-w-28">
-              <Icon className="size-4" />
-              {label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {orientation === "horizontal" && horizontalScrollState.canScrollLeft && (
-          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-muted via-muted/80 to-transparent" />
-        )}
-        {orientation === "horizontal" && horizontalScrollState.canScrollRight && (
-          <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-muted via-muted/80 to-transparent" />
-        )}
-        {orientation === "vertical" && shouldPin && verticalScrollState.canScrollTop && (
-          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-1 z-10 h-5 bg-gradient-to-b from-background via-background/80 to-transparent" />
-        )}
-        {orientation === "vertical" && shouldPin && verticalScrollState.canScrollBottom && (
-          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-1 z-10 h-5 bg-gradient-to-t from-background via-background/80 to-transparent" />
-        )}
-      </div>
-      <TabsContent value={activeGroup} className="w-full min-w-0">
-        {children}
-      </TabsContent>
-    </Tabs>
+          {orientation === "horizontal" && horizontalScrollState.canScrollRight && (
+            <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-muted via-muted/80 to-transparent" />
+          )}
+          {orientation === "vertical" && shouldPin && verticalScrollState.canScrollTop && (
+            <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-1 z-10 h-5 bg-gradient-to-b from-background via-background/80 to-transparent" />
+          )}
+          {orientation === "vertical" && shouldPin && verticalScrollState.canScrollBottom && (
+            <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-1 z-10 h-5 bg-gradient-to-t from-background via-background/80 to-transparent" />
+          )}
+        </div>
+        <TabsContent value={activeGroup} className="w-full min-w-0">
+          {children}
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 

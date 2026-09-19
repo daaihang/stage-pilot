@@ -73,7 +73,7 @@ export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, on
   const onboarding = status === "none";
 
   return <div className="@container/work-context mx-auto min-w-0 w-full space-y-6">
-    <PageHeader title="我的工作" description="访问你的工作空间、参与的活动和协作事项" actions={<PageHeaderActions><Button variant="outline" onClick={onJoinInvitation}><Link2 />加入工作空间或活动</Button><Button onClick={onCreateWorkspace}><Plus />创建工作空间</Button></PageHeaderActions>} />
+    <PageHeader title="我的工作" description="访问你的工作空间、参与的活动和协作事项" actions={<PageHeaderActions primary={<Button onClick={onCreateWorkspace}><Plus />创建工作空间</Button>} secondary={[<Button key="join" variant="outline" onClick={onJoinInvitation}><Link2 />加入工作空间或活动</Button>]} />} />
 
     <Tabs value={tab} onValueChange={changeTab}>
       <TabsList variant="line" className="w-full justify-start border-b">

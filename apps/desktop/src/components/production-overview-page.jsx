@@ -295,7 +295,7 @@ export function ProductionOverviewPage({ workspace, production, onUpdateProducti
         production={production}
         onLeaveCreation={isCreationSession ? onLeaveCreation : undefined}
         subtitle={isCreationSession ? "活动工作区 · 填写基础信息后创建正式活动" : `${workspace.name} · 活动工作区`}
-        actions={<ProductionActions />}
+        actions={{ overflow: <ProductionActions /> }}
         titleContent={
           <div className="flex flex-wrap items-center gap-3">
             <ProductionOverviewField

@@ -16,6 +16,6 @@ export function WorkspacePageHeader({ workspace, role, title, description, actio
     title={title || workspace.name}
     titleAccessory={role ? <Badge variant="outline">{roleLabel(role)}</Badge> : null}
     description={description}
-    actions={actions ? <PageHeaderActions>{actions}</PageHeaderActions> : null}
+    actions={actions ? <PageHeaderActions {...actions} /> : null}
   />;
 }
