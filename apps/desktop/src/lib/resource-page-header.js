@@ -9,3 +9,7 @@ export function resolveResourcePageHeader({ title, headerTitle, headerMode = "st
     title: headerTitle || title,
   };
 }
+
+export function resolveResourcePageHeaderMode({ headingLevel = "h1", headerMode } = {}) {
+  return headerMode ?? (headingLevel === "h1" ? "standalone" : "none");
+}

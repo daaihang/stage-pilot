@@ -510,6 +510,10 @@ export function FileTypeManagementPage({ workspace }) {
   const currentMeta = FILE_TYPE_SCOPE_META[activeScope];
   const activeCount = scopeItems.filter((item) => item.is_active).length;
   const selectedItem = dialog?.type === "edit" || dialog?.type === "delete" ? dialog.item : null;
+  const pageActions = canWrite ? <>
+    <Button variant="outline" disabled={saving} onClick={() => setDialog({ type: "restore", scope: activeScope })}><RefreshCw />恢复默认</Button>
+    <Button onClick={() => setDialog({ type: "create" })}><Plus />新建文件类型</Button>
+  </> : null;
   const selectedScope = selectedItem?.scope || activeScope;
 
   const empty = error
@@ -556,6 +560,7 @@ export function FileTypeManagementPage({ workspace }) {
         role={workspace.role}
         title="文件类型"
         description="管理工作空间各类资源的文件分类。分类配置独立于文件本身，后续可由各资源页面复用。"
+        actions={pageActions}
       />
       <SettingsTabs groups={scopeGroups} activeGroup={activeScope} onGroupChange={setActiveScope} ariaLabel="文件归属范围">
         <ResourcePage
@@ -566,9 +571,6 @@ export function FileTypeManagementPage({ workspace }) {
           search={{ value: search, onChange: setSearch, placeholder: `搜索${currentMeta.label}文件类型…` }}
           filters={<><ResourceFilters fields={filterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />{sortControls}</>}
           showViewToggle={false}
-          onCreate={canWrite ? () => setDialog({ type: "create" }) : undefined}
-          createLabel="新建文件类型"
-          headerActions={<Button variant="outline" disabled={!canWrite || saving} onClick={() => setDialog({ type: "restore", scope: activeScope })}><RefreshCw />恢复默认</Button>}
           loading={loading}
           loadingContent={<ManagementSkeleton />}
           empty={empty}

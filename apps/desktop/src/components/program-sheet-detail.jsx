@@ -573,7 +573,6 @@ export function ProgramSheetDetail({
           <TabsContent value="timing" className="min-w-0 pt-4">
             <Card variant="flush">
               <CardHeader className="border-b">
-                <CardTitle>场次与时间</CardTitle>
                 <CardDescription>
                   节目单不保存独立时区，所有计划时间继承活动时区。
                 </CardDescription>

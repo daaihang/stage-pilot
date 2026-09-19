@@ -82,7 +82,7 @@ function PlaceholderCard({ icon: Icon, title, description, children, action }) {
     <CardHeader className="flex flex-row items-start justify-between gap-4">
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted"><Icon className="size-4 text-muted-foreground" /></div>
-        <div className="min-w-0"><CardTitle className="text-base">{title}</CardTitle><CardDescription className="mt-1">{description}</CardDescription></div>
+        <div className="min-w-0">{title && <CardTitle className="text-base">{title}</CardTitle>}<CardDescription className={title ? "mt-1" : undefined}>{description}</CardDescription></div>
       </div>
       {action}
     </CardHeader>
@@ -112,10 +112,10 @@ function ActivityInfoContent({ group, production }) {
     ["现场联系电话", "尚未配置"],
   ];
   const content = {
-    basic: <PlaceholderCard icon={FileText} title="活动基础信息" description="活动名称、状态与时区等基础字段。" action={<Button variant="outline" size="sm" onClick={() => notify.info("活动信息编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={basicRows} /></PlaceholderCard>,
-    public: <PlaceholderCard icon={Info} title="对外信息" description="这些内容可以在表单说明、报名页和公开链接中复用。" action={<Button variant="outline" size="sm" onClick={() => notify.info("对外信息编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={publicRows} /></PlaceholderCard>,
-    schedule: <PlaceholderCard icon={CalendarDays} title="时间与地点" description="统一维护表单展示时使用的活动时间和地点信息。" action={<Button variant="outline" size="sm" onClick={() => notify.info("时间与地点编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={scheduleRows} /></PlaceholderCard>,
-    contact: <PlaceholderCard icon={UsersRound} title="联系信息" description="为报名者或申请者提供统一的对外联系渠道。" action={<Button variant="outline" size="sm" onClick={() => notify.info("联系信息编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={contactRows} /></PlaceholderCard>,
+    basic: <PlaceholderCard icon={FileText} description="活动名称、状态与时区等基础字段。" action={<Button variant="outline" size="sm" onClick={() => notify.info("活动信息编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={basicRows} /></PlaceholderCard>,
+    public: <PlaceholderCard icon={Info} description="这些内容可以在表单说明、报名页和公开链接中复用。" action={<Button variant="outline" size="sm" onClick={() => notify.info("对外信息编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={publicRows} /></PlaceholderCard>,
+    schedule: <PlaceholderCard icon={CalendarDays} description="统一维护表单展示时使用的活动时间和地点信息。" action={<Button variant="outline" size="sm" onClick={() => notify.info("时间与地点编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={scheduleRows} /></PlaceholderCard>,
+    contact: <PlaceholderCard icon={UsersRound} description="为报名者或申请者提供统一的对外联系渠道。" action={<Button variant="outline" size="sm" onClick={() => notify.info("联系信息编辑将在数据服务接入后开放")}>编辑</Button>}><InfoRows rows={contactRows} /></PlaceholderCard>,
   };
   return content[group] || content.basic;
 }
@@ -228,7 +228,7 @@ export function ProductionFormTemplatesPage({ route, workspace, production }) {
   const empty = scope === "workspace" ? { icon: LayoutTemplate, title: "还没有工作空间模板", description: "从系统模板开始自定义后，可以保存为工作空间模板供活动复用。", action: <Button onClick={() => navigate(workspacePath(workspace.id, "templates"))}><Plus />管理工作空间模板</Button> } : { icon: LayoutTemplate, title: "没有匹配的模板", description: "调整搜索条件，或从空白表单开始。" };
   return <div className="@container/production-form-templates min-w-0 space-y-6">
     <ProductionPageHeader workspace={workspace} production={production} title="表单模板" subtitle={route.meta.description} actions={<><Button variant="outline" onClick={() => navigate(workspacePath(workspace.id, "templates"))}>管理工作空间模板</Button><Button onClick={() => setCreateTemplate(false)}><Plus />从空白创建</Button></>} />
-    <ResourcePage headingLevel="h2" title="可用模板" description="系统模板只读；工作空间模板用于沉淀本团队的最佳实践。" count={filteredTemplates.length} search={{ value: query, onChange: setQuery, placeholder: "搜索模板名称或用途" }} filters={<div className="flex items-center gap-1"><Button type="button" size="sm" variant={scope === "all" ? "secondary" : "ghost"} onClick={() => setScope("all")}>全部模板</Button><Button type="button" size="sm" variant={scope === "system" ? "secondary" : "ghost"} onClick={() => setScope("system")}>系统模板</Button><Button type="button" size="sm" variant={scope === "workspace" ? "secondary" : "ghost"} onClick={() => setScope("workspace")}>工作空间模板</Button></div>} showViewToggle={false} loading={loading} summary={<span>模板会在创建表单时复制为活动快照</span>} empty={filteredTemplates.length ? null : empty}>
+    <ResourcePage headingLevel="h2" headerMode="none" title="可用模板" description="系统模板只读；工作空间模板用于沉淀本团队的最佳实践。" count={filteredTemplates.length} search={{ value: query, onChange: setQuery, placeholder: "搜索模板名称或用途" }} filters={<div className="flex items-center gap-1"><Button type="button" size="sm" variant={scope === "all" ? "secondary" : "ghost"} onClick={() => setScope("all")}>全部模板</Button><Button type="button" size="sm" variant={scope === "system" ? "secondary" : "ghost"} onClick={() => setScope("system")}>系统模板</Button><Button type="button" size="sm" variant={scope === "workspace" ? "secondary" : "ghost"} onClick={() => setScope("workspace")}>工作空间模板</Button></div>} showViewToggle={false} loading={loading} summary={<span>模板会在创建表单时复制为活动快照</span>} empty={filteredTemplates.length ? null : empty}>
       <div className="grid gap-4 @min-[40rem]/resource-page:grid-cols-2 @min-[72rem]/resource-page:grid-cols-3">{filteredTemplates.map((template) => <TemplateCard key={`${template.scope}-${template.id}`} template={template} onUse={setCreateTemplate} />)}</div>
     </ResourcePage>
     <CampaignCreateDialog open={createTemplate !== null} template={createTemplate || null} production={production} onOpenChange={(open) => !open && setCreateTemplate(null)} onCreated={(created) => { setCreateTemplate(null); if (created?.campaign?.id) navigate(productionCampaignPath(workspace.id, production.id, created.campaign.id)); }} />
@@ -300,12 +300,12 @@ export function ProductionCollectionWorkflowsPage({ route, workspace, production
   const [activeGroup, setActiveGroup] = useState("overview");
   const groups = [["overview", "工作流概览", Workflow], ["stages", "审核阶段", ClipboardCheck], ["automation", "自动化", Settings]];
   const panels = {
-    overview: <PlaceholderCard icon={Workflow} title="当前工作流概览" description="把 Entry 从提交、审核、决定到转化串成可复用流程。" action={<Button onClick={() => notify.info("工作流创建将在后端流程引擎接入后开放")}><Plus />新建工作流</Button>}><InfoRows rows={[["当前工作流", "尚未配置"], ["可用阶段", "提交 → 审核 → 决定 → 转化"], ["执行方式", "手动推进（占位）"]]} /></PlaceholderCard>,
-    stages: <PlaceholderCard icon={ClipboardCheck} title="审核阶段" description="未来可在这里配置多阶段审核、评分量表和分配规则。"><div className="space-y-2 text-sm text-muted-foreground"><p>阶段 1 · 资格检查</p><p>阶段 2 · 内容评分</p><p>阶段 3 · 最终决定</p></div></PlaceholderCard>,
-    automation: <PlaceholderCard icon={Settings} title="自动化规则" description="未来可根据字段答案、评分和名额自动推进状态。"><div className="flex items-center gap-2 text-sm text-muted-foreground"><Clock3 className="size-4" />自动化触发器和通知规则尚未开放。</div></PlaceholderCard>,
+    overview: <PlaceholderCard icon={Workflow} description="把 Entry 从提交、审核、决定到转化串成可复用流程。"><InfoRows rows={[["当前工作流", "尚未配置"], ["可用阶段", "提交 → 审核 → 决定 → 转化"], ["执行方式", "手动推进（占位）"]]} /></PlaceholderCard>,
+    stages: <PlaceholderCard icon={ClipboardCheck} description="未来可在这里配置多阶段审核、评分量表和分配规则。"><div className="space-y-2 text-sm text-muted-foreground"><p>阶段 1 · 资格检查</p><p>阶段 2 · 内容评分</p><p>阶段 3 · 最终决定</p></div></PlaceholderCard>,
+    automation: <PlaceholderCard icon={Settings} description="未来可根据字段答案、评分和名额自动推进状态。"><div className="flex items-center gap-2 text-sm text-muted-foreground"><Clock3 className="size-4" />自动化触发器和通知规则尚未开放。</div></PlaceholderCard>,
   };
   return <div className="@container/production-collection-workflows min-w-0 space-y-6">
-    <ProductionPageHeader workspace={workspace} production={production} title="收集工作流" subtitle={route.meta.description} />
+    <ProductionPageHeader workspace={workspace} production={production} title="收集工作流" subtitle={route.meta.description} actions={activeGroup === "overview" ? <Button onClick={() => notify.info("工作流创建将在后端流程引擎接入后开放")}><Plus />新建工作流</Button> : null} />
     <SettingsTabs groups={groups} activeGroup={activeGroup} onGroupChange={setActiveGroup} ariaLabel="收集工作流分类">{panels[activeGroup]}</SettingsTabs>
   </div>;
 }

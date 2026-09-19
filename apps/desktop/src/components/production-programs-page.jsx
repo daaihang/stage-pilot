@@ -487,6 +487,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
       />
       <ResourcePage
         headingLevel="h2"
+        headerMode="none"
         title="活动节目"
         description="本场活动的节目资料与准备状态。节目单负责排序和编排。"
         count={filteredPrograms.length}

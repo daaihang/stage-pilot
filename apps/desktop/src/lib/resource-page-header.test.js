@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveResourcePageHeader } from "./resource-page-header.js";
+import { resolveResourcePageHeader, resolveResourcePageHeaderMode } from "./resource-page-header.js";
 
 test("standalone resource pages retain their resource title", () => {
   assert.deepEqual(resolveResourcePageHeader({ title: "全部表单" }), {
@@ -21,4 +21,10 @@ test("embedded resource pages can use a distinct section title", () => {
     showHeader: true,
     title: "环节类型列表",
   });
+});
+
+test("nested resource pages suppress their own header unless explicitly requested", () => {
+  assert.equal(resolveResourcePageHeaderMode({ headingLevel: "h2" }), "none");
+  assert.equal(resolveResourcePageHeaderMode({ headingLevel: "h2", headerMode: "standalone" }), "standalone");
+  assert.equal(resolveResourcePageHeaderMode({ headingLevel: "h1" }), "standalone");
 });

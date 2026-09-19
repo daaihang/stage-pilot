@@ -11,7 +11,7 @@ import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
 import { useTree } from "@headless-tree/react";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -390,10 +390,7 @@ function LegacyWorkspaceRolesPage({ route, workspace }) {
           <CardHeader className="gap-4 border-b">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0 space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle>{role.label}</CardTitle>
-                  <Badge variant={role.key === "owner" ? "warning-light" : "primary-light"} size="sm">只读预览</Badge>
-                </div>
+                <Badge variant={role.key === "owner" ? "warning-light" : "primary-light"} size="sm">只读预览</Badge>
                 <CardDescription>{role.description}</CardDescription>
               </div>
               <div className="flex shrink-0 gap-5 text-xs">
