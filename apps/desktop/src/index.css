@@ -405,7 +405,7 @@
 .app-sonner[data-x-position="center"][data-y-position="bottom"] {
   left: var(--app-sonner-left, 0px);
   right: 0;
-  bottom: 0;
+  bottom: var(--app-sonner-bottom, 0px);
   width: var(--width);
   transform: none;
   gap: 0;

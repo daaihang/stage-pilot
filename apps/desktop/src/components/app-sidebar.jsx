@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   ArrowLeft, Building2, CalendarDays, CalendarRange, ClipboardCheck, ClipboardList, ContactRound, FileCog, FileText, FolderKanban,
   Gauge, KeyRound, LayoutTemplate, ListMusic, ListTree, MapPin, Mic2, MonitorCog, Package, Plus,
-  Search, Settings, Sparkles, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal, Link2,
+  Settings, Sparkles, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal, Link2,
 } from "@/components/ui/icons";
 import { NavLink } from "react-router-dom";
 import {
@@ -14,9 +14,8 @@ import {
   Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupLabel, SidebarHeader,
   SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarRail, useSidebar,
 } from "@/components/ui/sidebar";
-import { NavUser } from "@/components/nav-user";
+import { GlobalUtilityBar } from "@/components/global-utility-bar";
 import { accountPath, directProductionPath, productionPath, workspacePath } from "@/lib/navigation";
-import { notify } from "@/components/ui/sonner";
 
 const workspaceGroups = [
   { label: "核心", items: [["home", "工作台", Gauge], ["productions", "活动", FolderKanban], ["calendar", "日历", CalendarDays], ["files", "文件资料", FileText]] },
@@ -111,7 +110,7 @@ function SidebarNavigationLoading() {
   </SidebarMenu></SidebarGroup>;
 }
 
-export function AppSidebar({ route, workspace, production, navigationLoading = false, recentContexts = [], workspaceSelectionMode = false, railEnabled = true, accountReturnPath, accountReturnLabel, onOpenRecentContext, onLeaveCreation, onCreateWorkspace, onManageWorkspaces, onJoinInvitation, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, onRequireAuth, ...props }) {
+export function AppSidebar({ route, workspace, production, navigationLoading = false, recentContexts = [], workspaceSelectionMode = false, railEnabled = true, accountReturnPath, accountReturnLabel, onOpenRecentContext, onLeaveCreation, onCreateWorkspace, onManageWorkspaces, onJoinInvitation, onOpenSearch, onOpenDocuments, user, subscription, onOpenAccountCenter, onLogout, onRequireAuth, ...props }) {
   return <Sidebar collapsible="icon" {...props}>
     <SidebarHeader>{navigationLoading ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" disabled className="animate-pulse"><Sparkles /><span>正在加载导航</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : route?.mode === "account" || route?.mode === "work" ? <SidebarMenu><SidebarMenuItem><SidebarMenuButton size="lg" tooltip={route.mode === "work" ? "我的工作" : "账户中心"} className="group-data-[collapsible=icon]:justify-center"><div className="flex size-8 shrink-0 items-center justify-center bg-sidebar-primary text-sidebar-primary-foreground">{route.mode === "work" ? <Sparkles className="size-4" /> : <UserRound className="size-4" />}</div><div className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden"><span className="truncate text-sm font-medium">{route.mode === "work" ? "我的工作" : "账户中心"}</span><span className="truncate text-xs text-muted-foreground">{route.mode === "work" ? "全局工作上下文" : "个人设置"}</span></div></SidebarMenuButton></SidebarMenuItem></SidebarMenu> : <WorkspaceSwitcher workspace={workspace} production={production} recentContexts={recentContexts} onOpenRecentContext={onOpenRecentContext} onCreateWorkspace={onCreateWorkspace} onManageWorkspaces={onManageWorkspaces} onJoinInvitation={onJoinInvitation} />}</SidebarHeader>
     <SidebarContent>
@@ -127,11 +126,16 @@ export function AppSidebar({ route, workspace, production, navigationLoading = f
       </>}
     </SidebarContent>
     <SidebarFooter>
-      <SidebarMenu>
-        <SidebarMenuItem><SidebarMenuButton tooltip="搜索" onClick={() => notify.message("全局搜索将在数据服务接入后开放", { description: "计划快捷键：Ctrl / Cmd + K" })}><Search /><span>搜索</span><span className="ml-auto text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden">Ctrl K</span></SidebarMenuButton></SidebarMenuItem>
-        <SidebarMenuItem><SidebarMenuButton tooltip="帮助与文档" onClick={onOpenDocuments}><FileText /><span>帮助与文档</span></SidebarMenuButton></SidebarMenuItem>
-      </SidebarMenu>
-      {user ? <NavUser user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} /> : <SidebarMenu><SidebarMenuItem><SidebarMenuButton tooltip="登录" onClick={onRequireAuth}><Sparkles /><span>登录 StagePilot</span></SidebarMenuButton></SidebarMenuItem></SidebarMenu>}
+      <GlobalUtilityBar
+        variant="sidebar"
+        user={user}
+        subscription={subscription}
+        onOpenSearch={onOpenSearch}
+        onOpenDocuments={onOpenDocuments}
+        onOpenAccountCenter={onOpenAccountCenter}
+        onLogout={onLogout}
+        onRequireAuth={onRequireAuth}
+      />
     </SidebarFooter>
     <SidebarRail disabled={!railEnabled} />
   </Sidebar>;

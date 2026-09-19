@@ -8,6 +8,7 @@ import { HashRouter, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/app-sidebar";
 import { AppContentLayout } from "@/components/app-content-layout";
+import { GlobalUtilityBar } from "@/components/global-utility-bar";
 import { AccountCenter } from "@/components/account-center";
 import { DeveloperTools } from "@/components/developer-tools";
 import { PageChromeProvider, PageDetailTitlebarAction } from "@/components/page-chrome";
@@ -51,6 +52,7 @@ import { JoinInvitationDialog } from "@/components/invitation-management-ui";
 import { login as loginAccount, register as registerAccount, onSessionInvalidated, restoreSession, logout as logoutAccount } from "@/lib/auth";
 import { appStore, getRecentContexts, isTauriRuntime, saveRecentContext } from "@/lib/app-store";
 import { accountPath, buildBreadcrumbItems, directProductionPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
+import { resolveAppShellLayout } from "@/lib/app-shell-layout";
 import { TitlebarBreadcrumbs } from "@/components/titlebar-breadcrumbs";
 import { createProduction, getAccessibleProduction, toProductionSummary, updateAccessibleProduction, updateProduction } from "@/lib/production-api";
 
@@ -119,6 +121,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const [directProductionState, setDirectProductionState] = useState({ id: "", loading: false, value: null, failed: false });
   const isWorkspacesRoute = location.pathname === "/workspaces";
   const isWorkRoute = route?.mode === "work";
+  const shellLayout = resolveAppShellLayout(route);
   const isInviteRoute = route?.mode === "invite";
   const isAccountRoute = route?.mode === "account";
   const accountReturnPath = isAccountRoute ? resolveAccountReturnTarget(location.search, currentWorkspace ? workspacePath(currentWorkspace.id) : "/workspaces") : null;
@@ -478,6 +481,9 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     }
     onNativeAction(action);
   }, [navigateAccount, onNativeAction]);
+  const handleGlobalSearch = useCallback(() => {
+    notify.message("全局搜索将在数据服务接入后开放", { description: "计划快捷键：Ctrl / Cmd + K" });
+  }, []);
   useEffect(() => {
     const onWindowAction = (event) => handleShellNativeAction(event.detail);
     window.addEventListener("stagepilot-native-action", onWindowAction);
@@ -567,12 +573,21 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   // 但它从未加入 productionsByWorkspace，因此不会出现在正式活动预览中。
   const sidebarProduction = production;
   const navigationLoading = authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading" && !workspace && !isWorkRoute && !isAccountRoute && !isInviteRoute);
+  const utilityBarProps = {
+    user,
+    subscription,
+    onOpenSearch: handleGlobalSearch,
+    onOpenDocuments,
+    onOpenAccountCenter: navigateAccount,
+    onLogout: handleShellLogout,
+    onRequireAuth,
+  };
   if (route?.mode === "public-program-sheet") return <div className="min-h-svh bg-background">{content}</div>;
   if (route?.mode === "public-campaign") return <div className="min-h-svh bg-background">{content}</div>;
   return <PageChromeProvider><WindowDetailProvider contentWidth={contentWidth} detailOpenMode={detailOpenMode}><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
-    <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("relative z-20 flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}><SidebarTrigger className="shrink-0" /><Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div><TitlebarBreadcrumbs items={titlebarBreadcrumbItems} title={pageTitle} showTitle={showTitlebarTitle} /><div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region /><PageDetailTitlebarAction />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
-    <div className="flex min-h-0 min-w-0 flex-1"><AppSidebar navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onJoinInvitation={() => setJoinInvitationOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} onOpenDocuments={onOpenDocuments} user={user} subscription={subscription} onOpenAccountCenter={navigateAccount} onLogout={handleShellLogout} onRequireAuth={onRequireAuth} /><SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
-   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /><JoinInvitationDialog open={joinInvitationOpen} onOpenChange={setJoinInvitationOpen} onAccepted={handleInvitationAccepted} /><AppSonner /></SidebarProvider></WindowDetailProvider></PageChromeProvider>;
+    <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("relative z-20 flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}>{shellLayout.showSidebarTrigger && <SidebarTrigger className="shrink-0" />}<Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div><TitlebarBreadcrumbs items={titlebarBreadcrumbItems} title={pageTitle} showTitle={showTitlebarTitle} /><div className="min-w-8 flex-1 self-stretch" data-tauri-drag-region /><PageDetailTitlebarAction />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
+    <div className="flex min-h-0 min-w-0 flex-1">{shellLayout.showSidebar && <AppSidebar navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onJoinInvitation={() => setJoinInvitationOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} {...utilityBarProps} />}<SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth} bottomBar={shellLayout.showGlobalUtilityBar ? <GlobalUtilityBar variant="bottom" {...utilityBarProps} /> : null}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
+   </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /><JoinInvitationDialog open={joinInvitationOpen} onOpenChange={setJoinInvitationOpen} onAccepted={handleInvitationAccepted} /><AppSonner sidebarVisible={shellLayout.toastSidebarVisible} bottomOffset={shellLayout.toastBottomOffset} /></SidebarProvider></WindowDetailProvider></PageChromeProvider>;
 }
 
 function SafeRoutedMainShell(props) {

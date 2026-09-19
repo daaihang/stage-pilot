@@ -141,10 +141,10 @@ const notify = {
   },
 }
 
-function AppSonner() {
+function AppSonner({ sidebarVisible = true, bottomOffset = "0px" }) {
   const { theme = "system" } = useTheme()
   const { open, isMobile } = useSidebar()
-  const sidebarOffset = !isMobile && (open ? "var(--sidebar-width)" : "var(--sidebar-width-icon)")
+  const sidebarOffset = sidebarVisible && !isMobile && (open ? "var(--sidebar-width)" : "var(--sidebar-width-icon)")
 
   return (
     <Sonner
@@ -157,6 +157,7 @@ function AppSonner() {
       style={{
         "--width": sidebarOffset ? `calc(100% - ${sidebarOffset})` : "100%",
         "--app-sonner-left": sidebarOffset || "0px",
+        "--app-sonner-bottom": bottomOffset,
         fontFamily: "var(--font-sans)",
       }}
     />
