@@ -4,11 +4,14 @@ import { CampaignFormRenderer } from "@/components/campaign-form-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Eye, RefreshCw, Search, Star } from "@/components/ui/icons";
 import { notify } from "@/components/ui/sonner";
-import { getEntry, listCampaignEntries, listEntryRevisions, updateEntryInboxState } from "@/lib/campaign-api";
+import { createEntryDecision, getEntry, listCampaignEntries, listEntryRevisions, updateEntryInboxState } from "@/lib/campaign-api";
 
 const STATUS_LABELS = {
   draft: "草稿", submitted: "已提交", in_review: "审核中", needs_changes: "待补件",
@@ -16,15 +19,75 @@ const STATUS_LABELS = {
   converted: "已转化", conversion_failed: "转化异常",
 };
 
+const DECISION_ACTIONS = {
+  accept: { label: "接受", loading: "正在接受提交…", success: "已接受提交", variant: "default" },
+  waitlist: { label: "候补", loading: "正在设为候补…", success: "已设为候补", variant: "secondary" },
+  reject: { label: "拒绝", loading: "正在拒绝提交…", success: "已拒绝提交", variant: "destructive" },
+};
+
+const DECIDABLE_STATUSES = new Set(["submitted", "in_review", "accepted", "waitlisted", "rejected"]);
+
 function formatDate(value) {
   if (!value) return "未设置";
   try { return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); } catch { return value; }
 }
 
-function InboxDetail({ detail, revisions, onStateChanged }) {
+function DecisionDialog({ actionType, busy, onOpenChange, onSubmit }) {
+  const [reason, setReason] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const action = actionType ? DECISION_ACTIONS[actionType] : null;
+  const requiresReason = actionType === "reject";
+  const missingReason = requiresReason && attempted && !reason.trim();
+
+  useEffect(() => {
+    if (actionType) {
+      setReason("");
+      setAttempted(false);
+    }
+  }, [actionType]);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    setAttempted(true);
+    if (!action || (requiresReason && !reason.trim())) return;
+    try {
+      await onSubmit({ type: actionType, reason: reason.trim() });
+      onOpenChange(false);
+    } catch {
+      // notify.promise in the owning mutation already presents the failure.
+    }
+  };
+
+  if (!action) return null;
+  return (
+    <Dialog open={Boolean(actionType)} onOpenChange={(open) => !busy && onOpenChange(open)}>
+      <DialogContent>
+        <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
+          <DialogHeader>
+            <DialogTitle>确认{action.label}提交</DialogTitle>
+            <DialogDescription>{requiresReason ? "拒绝原因将作为当前决定的一部分保存，并向可查看该 Entry 的成员展示。" : "此操作会追加一条决定记录，并将 Entry 状态更新为当前决定结果。"}</DialogDescription>
+          </DialogHeader>
+          <Field data-invalid={missingReason || undefined}>
+            <FieldLabel htmlFor="entry-decision-reason">决定备注{requiresReason ? "（必填）" : "（可选）"}</FieldLabel>
+            <Textarea id="entry-decision-reason" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} aria-invalid={missingReason || undefined} aria-describedby={missingReason ? "entry-decision-reason-error" : undefined} autoFocus />
+            {missingReason ? <FieldError id="entry-decision-reason-error">请填写拒绝原因。</FieldError> : null}
+          </Field>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button>
+            <Button type="submit" variant={action.variant} disabled={busy}>{busy ? "正在保存…" : "确认" + action.label}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InboxDetail({ detail, revisions, onStateChanged, onDecision, decisionBusy }) {
   const [raw, setRaw] = useState(false);
+  const [decisionType, setDecisionType] = useState(null);
   const entry = detail?.entry;
   const state = detail?.inboxState || {};
+  const canDecide = Boolean(detail?.canDecide && DECIDABLE_STATUSES.has(entry?.status));
 
   const toggle = async (key, value) => {
     try {
@@ -79,9 +142,19 @@ function InboxDetail({ detail, revisions, onStateChanged }) {
         </CardContent>
       </Card>
       <div className="grid gap-4 sm:grid-cols-2">
-        <Card><CardHeader><CardTitle className="text-sm">决定</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{detail.decision ? `${detail.decision.type} · ${detail.decision.reason || "无备注"}` : "当前没有 Decision。"}</CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm">转化</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{detail.materializations?.length ? `${detail.materializations.length} 条转化记录` : "当前没有 Materialization。"}</CardContent></Card>
+        <Card>
+          <CardHeader className="gap-3">
+            <CardTitle className="text-sm">决定</CardTitle>
+            {canDecide ? <div className="flex flex-wrap gap-2">{Object.entries(DECISION_ACTIONS).map(([type, action]) => <Button key={type} type="button" size="sm" variant={action.variant} onClick={() => setDecisionType(type)} disabled={decisionBusy}>{action.label}</Button>)}</div> : null}
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm text-muted-foreground">
+            {detail.decision ? <div className="rounded-md border p-3"><p className="font-medium text-foreground">当前：{DECISION_ACTIONS[detail.decision.type]?.label || detail.decision.type}</p><p className="mt-1">{detail.decision.reason || "无备注"}</p><p className="mt-1 text-xs">作出于 {formatDate(detail.decision.decidedAt)}</p></div> : <p>当前没有 Decision。</p>}
+            {detail.decisionHistory?.length ? <div className="space-y-2"><p className="text-xs font-medium text-foreground">决定历史</p>{detail.decisionHistory.map((decision) => <div key={decision.id} className="border-t pt-2 text-xs"><p className="font-medium text-foreground">{DECISION_ACTIONS[decision.type]?.label || decision.type}</p><p>{decision.reason || "无备注"} · {formatDate(decision.decidedAt)}</p></div>)}</div> : null}
+          </CardContent>
+        </Card>
+        <Card><CardHeader><CardTitle className="text-sm">转化</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{detail.materializations?.length ? detail.materializations.length + " 条转化记录" : "当前没有 Materialization。"}</CardContent></Card>
       </div>
+      <DecisionDialog actionType={decisionType} busy={decisionBusy} onOpenChange={(open) => !open && setDecisionType(null)} onSubmit={(payload) => onDecision(entry.id, payload)} />
     </div>
   );
 }
@@ -103,6 +176,7 @@ export function CampaignEntryInbox({ campaignId }) {
   const [detail, setDetail] = useState(null);
   const [revisions, setRevisions] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [decisionBusy, setDecisionBusy] = useState(false);
   const listRequestSeqRef = useRef(0);
   const detailRequestSeqRef = useRef(0);
   const nextCursorRef = useRef(null);
@@ -181,7 +255,33 @@ export function CampaignEntryInbox({ campaignId }) {
     setDetail((current) => current ? { ...current, inboxState: { isRead: next.isRead, isStarred: next.isStarred } } : current);
     setItems((current) => current.map((item) => item.id === selectedId ? { ...item, inboxState: { isRead: next.isRead, isStarred: next.isStarred } } : item));
   }, [selectedId]);
-  const getDetail = useCallback(() => detailLoading ? <div className="p-5 text-sm text-muted-foreground">正在加载提交详情…</div> : <InboxDetail detail={detail} revisions={revisions} onStateChanged={onStateChanged} />, [detail, detailLoading, onStateChanged, revisions]);
+
+  const onDecision = useCallback(async (entryId, payload) => {
+    if (decisionBusy) return;
+    const action = DECISION_ACTIONS[payload.type];
+    setDecisionBusy(true);
+    try {
+      await notify.promise(createEntryDecision(entryId, payload), {
+        loading: action.loading,
+        success: action.success,
+        error: (nextError) => action.label + "失败：" + (nextError?.message || String(nextError)),
+      });
+      try {
+        const [nextDetail, history] = await Promise.all([getEntry(entryId), listEntryRevisions(entryId)]);
+        if (entryId === selectedId) {
+          setDetail(nextDetail);
+          setRevisions(history.items || []);
+        }
+        await load();
+      } catch (nextError) {
+        notify.error("决定已保存，但刷新失败", { description: nextError?.message || String(nextError) });
+      }
+    } finally {
+      setDecisionBusy(false);
+    }
+  }, [decisionBusy, load, selectedId]);
+
+  const getDetail = useCallback(() => detailLoading ? <div className="p-5 text-sm text-muted-foreground">正在加载提交详情…</div> : <InboxDetail detail={detail} revisions={revisions} onStateChanged={onStateChanged} onDecision={onDecision} decisionBusy={decisionBusy} />, [decisionBusy, detail, detailLoading, onDecision, onStateChanged, revisions]);
 
   useWindowDetailRegistration({
     key: `campaign-entry:${campaignId}`,

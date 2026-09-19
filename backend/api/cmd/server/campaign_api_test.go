@@ -188,6 +188,117 @@ func TestCampaignRevisionCreationAndTenantBoundary(t *testing.T) {
 	}
 }
 
+func TestEntryManualDecisionAPI(t *testing.T) {
+	app := newIntegrationApp(t)
+	requireCampaignSchemaV1(t, app)
+
+	owner := createTestUser(t, app, "entry-decision-owner-"+newID()+"@example.test")
+	viewer := createTestUser(t, app, "entry-decision-viewer-"+newID()+"@example.test")
+	ownerToken := issueTestToken(t, app, owner)
+	viewerToken := issueTestToken(t, app, viewer)
+	workspace := createWorkspaceFor(t, app, ownerToken, "Entry 决定 API")
+	workspaceID := workspace["id"].(string)
+	production := createProductionFor(t, app, ownerToken, workspaceID, "Entry 决定活动", "", "")
+	productionID := production["id"].(string)
+	if _, err := app.db.Exec(t.Context(), "INSERT INTO workspace_memberships(id,workspace_id,user_id,role,status) VALUES($1,$2,$3,'member','active')", newID(), workspaceID, viewer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), "INSERT INTO production_memberships(id,production_id,user_id,role_key,status,invited_by) VALUES($1,$2,$3,'viewer','active',$4)", newID(), productionID, viewer, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	formVersion, campaignID, revisionID, entryID := newID(), newID(), newID(), newID()
+	if _, err := app.db.Exec(t.Context(), "INSERT INTO form_versions(id,workspace_id,created_by) VALUES($1,$2,$3)", formVersion, workspaceID, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), "INSERT INTO campaigns(id,workspace_id,production_id,kind,name,created_by) VALUES($1,$2,$3,'COLLECTION',$4,$5)", campaignID, workspaceID, productionID, "人工决定", owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), "INSERT INTO campaign_revisions(id,workspace_id,campaign_id,revision_no,form_version_id,created_by) VALUES($1,$2,$3,1,$4,$5)", revisionID, workspaceID, campaignID, formVersion, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), "INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'submitted')", entryID, workspaceID, productionID, campaignID, revisionID); err != nil {
+		t.Fatal(err)
+	}
+
+	if viewed := authedRequest(t, app, viewerToken, http.MethodGet, "/v1/entries/"+entryID, nil); viewed.Code != http.StatusOK {
+		t.Fatalf("viewer detail = %d: %s", viewed.Code, viewed.Body.String())
+	}
+	if denied := authedRequest(t, app, viewerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "accept"}); denied.Code != http.StatusForbidden {
+		t.Fatalf("viewer decision = %d: %s", denied.Code, denied.Body.String())
+	}
+	if invalid := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "request_changes"}); invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid decision = %d: %s", invalid.Code, invalid.Body.String())
+	}
+	if missingReason := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "reject"}); missingReason.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing rejection reason = %d: %s", missingReason.Code, missingReason.Body.String())
+	}
+
+	accepted := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "accept", "reason": "符合条件"})
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("accept entry = %d: %s", accepted.Code, accepted.Body.String())
+	}
+	var acceptedBody map[string]any
+	if err := json.Unmarshal(accepted.Body.Bytes(), &acceptedBody); err != nil {
+		t.Fatal(err)
+	}
+	firstDecisionID := acceptedBody["decision"].(map[string]any)["id"].(string)
+	if acceptedBody["entry"].(map[string]any)["status"] != "accepted" {
+		t.Fatalf("accept response = %#v", acceptedBody)
+	}
+
+	waitlisted := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "waitlist"})
+	if waitlisted.Code != http.StatusOK {
+		t.Fatalf("waitlist entry = %d: %s", waitlisted.Code, waitlisted.Body.String())
+	}
+	var waitlistedBody map[string]any
+	if err := json.Unmarshal(waitlisted.Body.Bytes(), &waitlistedBody); err != nil {
+		t.Fatal(err)
+	}
+	secondDecisionID := waitlistedBody["decision"].(map[string]any)["id"].(string)
+	if waitlistedBody["entry"].(map[string]any)["status"] != "waitlisted" {
+		t.Fatalf("waitlist response = %#v", waitlistedBody)
+	}
+	var currentDecisionID, entryStatus, supersedesID string
+	var currentCount, materializationCount int
+	if err := app.db.QueryRow(t.Context(), "SELECT current_decision_id,status FROM entries WHERE id=$1", entryID).Scan(&currentDecisionID, &entryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), "SELECT supersedes_id FROM decisions WHERE id=$1", secondDecisionID).Scan(&supersedesID); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), "SELECT count(*)::int FROM decisions WHERE entry_id=$1 AND is_current", entryID).Scan(&currentCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), "SELECT count(*)::int FROM entry_materializations WHERE entry_id=$1", entryID).Scan(&materializationCount); err != nil {
+		t.Fatal(err)
+	}
+	if currentDecisionID != secondDecisionID || entryStatus != "waitlisted" || supersedesID != firstDecisionID || currentCount != 1 || materializationCount != 0 {
+		t.Fatalf("decision mutation state pointer=%q status=%q supersedes=%q current=%d materializations=%d", currentDecisionID, entryStatus, supersedesID, currentCount, materializationCount)
+	}
+
+	rejected := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "reject", "reason": "名额已满"})
+	if rejected.Code != http.StatusOK || !containsJSONValue(t, rejected.Body.Bytes(), "status", "rejected") {
+		t.Fatalf("reject entry = %d: %s", rejected.Code, rejected.Body.String())
+	}
+	detail := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/entries/"+entryID, nil)
+	var detailBody map[string]any
+	if err := json.Unmarshal(detail.Body.Bytes(), &detailBody); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Code != http.StatusOK || len(detailBody["decision_history"].([]any)) != 3 || detailBody["decision"].(map[string]any)["type"] != "reject" {
+		t.Fatalf("decision history = %d: %s", detail.Code, detail.Body.String())
+	}
+
+	draftID := newID()
+	if _, err := app.db.Exec(t.Context(), "INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'draft')", draftID, workspaceID, productionID, campaignID, revisionID); err != nil {
+		t.Fatal(err)
+	}
+	if invalidStatus := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+draftID+"/decisions", map[string]any{"type": "accept"}); invalidStatus.Code != http.StatusConflict {
+		t.Fatalf("draft decision = %d: %s", invalidStatus.Code, invalidStatus.Body.String())
+	}
+}
+
 func containsJSONID(t *testing.T, body []byte, id string) bool {
 	t.Helper()
 	return string(body) != "" && string(body) != "null" && jsonContains(body, id)

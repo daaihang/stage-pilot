@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"testing"
@@ -33,5 +34,37 @@ func TestParseEntryStatuses(t *testing.T) {
 	r.URL.RawQuery = "status=unknown"
 	if _, err := parseEntryStatuses(r); err == nil {
 		t.Fatal("expected invalid status")
+	}
+}
+
+func TestNormalizeEntryDecision(t *testing.T) {
+	decisionType, status, reason, err := normalizeEntryDecision(createEntryDecisionInput{Type: " accept ", Reason: "  已确认  "})
+	if err != nil || decisionType != "accept" || status != "accepted" || reason != "已确认" {
+		t.Fatalf("unexpected accept decision: %q %q %q %v", decisionType, status, reason, err)
+	}
+	if _, _, _, err = normalizeEntryDecision(createEntryDecisionInput{Type: "reject"}); !errors.Is(err, errEntryDecisionReasonRequired) {
+		t.Fatalf("expected rejection reason error, got %v", err)
+	}
+	if _, _, _, err = normalizeEntryDecision(createEntryDecisionInput{Type: "request_changes"}); !errors.Is(err, errInvalidEntryDecisionType) {
+		t.Fatalf("expected unsupported decision type error, got %v", err)
+	}
+}
+
+func TestEntryDecisionStatusRules(t *testing.T) {
+	for decisionType, status := range map[string]string{"accept": "accepted", "waitlist": "waitlisted", "reject": "rejected"} {
+		actual, ok := entryStatusForDecision(decisionType)
+		if !ok || actual != status {
+			t.Fatalf("unexpected status for %s: %q, %t", decisionType, actual, ok)
+		}
+	}
+	for _, status := range []string{"submitted", "in_review", "accepted", "waitlisted", "rejected"} {
+		if !canChangeEntryDecision(status) {
+			t.Fatalf("status should be mutable: %s", status)
+		}
+	}
+	for _, status := range []string{"draft", "needs_changes", "withdrawn", "converted", "conversion_failed"} {
+		if canChangeEntryDecision(status) {
+			t.Fatalf("status should not be mutable: %s", status)
+		}
 	}
 }

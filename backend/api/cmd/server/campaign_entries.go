@@ -118,6 +118,47 @@ type entryDecisionResponse struct {
 	Metadata  json.RawMessage `json:"metadata"`
 }
 
+var entryDecisionStatuses = map[string]string{
+	"accept":   "accepted",
+	"waitlist": "waitlisted",
+	"reject":   "rejected",
+}
+
+var entryDecisionMutableStatuses = map[string]bool{
+	"submitted":  true,
+	"in_review":  true,
+	"accepted":   true,
+	"waitlisted": true,
+	"rejected":   true,
+}
+
+var (
+	errInvalidEntryDecisionType    = errors.New("invalid entry decision type")
+	errEntryDecisionReasonRequired = errors.New("entry decision reason required")
+)
+
+func entryStatusForDecision(decisionType string) (string, bool) {
+	status, ok := entryDecisionStatuses[strings.ToLower(strings.TrimSpace(decisionType))]
+	return status, ok
+}
+
+func canChangeEntryDecision(status string) bool {
+	return entryDecisionMutableStatuses[status]
+}
+
+func normalizeEntryDecision(input createEntryDecisionInput) (decisionType, status, reason string, err error) {
+	decisionType = strings.ToLower(strings.TrimSpace(input.Type))
+	status, ok := entryStatusForDecision(decisionType)
+	if !ok {
+		return "", "", "", errInvalidEntryDecisionType
+	}
+	reason = strings.TrimSpace(input.Reason)
+	if decisionType == "reject" && reason == "" {
+		return "", "", "", errEntryDecisionReasonRequired
+	}
+	return decisionType, status, reason, nil
+}
+
 type entryMaterializationResponse struct {
 	ID             string     `json:"id"`
 	DecisionID     string     `json:"decision_id"`
@@ -155,8 +196,10 @@ type entryDetailResponse struct {
 	FormVersion      *formVersionItem               `json:"form_version,omitempty"`
 	CurrentRevision  *entryRevisionResponse         `json:"current_revision,omitempty"`
 	Decision         *entryDecisionResponse         `json:"decision"`
+	DecisionHistory  []entryDecisionResponse        `json:"decision_history"`
 	Materializations []entryMaterializationResponse `json:"materializations"`
 	InboxState       inboxState                     `json:"inbox_state"`
+	CanDecide        bool                           `json:"can_decide"`
 	Review           any                            `json:"review"`
 }
 
@@ -432,6 +475,7 @@ func (app *application) getEntry(w http.ResponseWriter, r *http.Request) {
 
 func (app *application) loadEntryResponseByID(ctx context.Context, access entryAccess, entryID, userID string) (entryDetailResponse, error) {
 	var response entryDetailResponse
+	response.CanDecide = access.Access.Permissions[productionEdit]
 	var entry entryResponse
 	var deletedAt *time.Time
 	err := app.db.QueryRow(ctx, `SELECT e.id,e.workspace_id,e.production_id,e.campaign_id,e.campaign_revision_id,e.status,e.contact_email,e.submitted_at,e.last_activity_at,e.anonymized_at,e.created_at,e.updated_at,COALESCE(latest.revision_no,0),e.deleted_at FROM entries e LEFT JOIN LATERAL (SELECT er.revision_no FROM entry_revisions er WHERE er.workspace_id=e.workspace_id AND er.entry_id=e.id ORDER BY er.revision_no DESC LIMIT 1) latest ON TRUE WHERE e.id=$1 AND e.workspace_id=$2`, entryID, access.WorkspaceID).Scan(&entry.ID, &entry.WorkspaceID, &entry.ProductionID, &entry.CampaignID, &entry.CampaignRevisionID, &entry.Status, &entry.ContactEmail, &entry.SubmittedAt, &entry.LastActivityAt, &entry.AnonymizedAt, &entry.CreatedAt, &entry.UpdatedAt, &entry.CurrentRevisionNo, &deletedAt)
@@ -470,6 +514,22 @@ func (app *application) loadEntryResponseByID(ctx context.Context, access entryA
 	if err == nil {
 		response.Decision = &decision
 	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return response, err
+	}
+	decisionRows, err := app.db.Query(ctx, `SELECT id,type,reason,decided_by,decided_at,metadata FROM decisions WHERE workspace_id=$1 AND entry_id=$2 ORDER BY decided_at DESC,id DESC`, access.WorkspaceID, entryID)
+	if err != nil {
+		return response, err
+	}
+	defer decisionRows.Close()
+	response.DecisionHistory = []entryDecisionResponse{}
+	for decisionRows.Next() {
+		var item entryDecisionResponse
+		if err := decisionRows.Scan(&item.ID, &item.Type, &item.Reason, &item.DecidedBy, &item.DecidedAt, &item.Metadata); err != nil {
+			return response, err
+		}
+		response.DecisionHistory = append(response.DecisionHistory, item)
+	}
+	if err := decisionRows.Err(); err != nil {
 		return response, err
 	}
 	rows, err := app.db.Query(ctx, `SELECT id,decision_id,target_kind,operation,status,idempotency_key,target_id,error_code,error_message,created_at,started_at,completed_at FROM entry_materializations WHERE workspace_id=$1 AND entry_id=$2 ORDER BY created_at DESC,id DESC`, access.WorkspaceID, entryID)
@@ -524,6 +584,92 @@ func (app *application) listEntryRevisions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": nil, "total": len(items)})
+}
+
+type createEntryDecisionInput struct {
+	Type   string `json:"type"`
+	Reason string `json:"reason"`
+}
+
+func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Request) {
+	entryID := r.PathValue("entryId")
+	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, productionEdit)
+	if err != nil {
+		if errors.Is(err, errCampaignPermissionDenied) {
+			errorJSON(w, http.StatusForbidden, "forbidden", "没有决定提交结果的权限")
+		} else {
+			errorJSON(w, http.StatusNotFound, "entry_not_found", "提交记录不存在或无权访问")
+		}
+		return
+	}
+	var input createEntryDecisionInput
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	decisionType, status, reason, err := normalizeEntryDecision(input)
+	if errors.Is(err, errInvalidEntryDecisionType) {
+		errorJSON(w, http.StatusBadRequest, "invalid_decision_type", "决定类型必须是接受、候补或拒绝")
+		return
+	}
+	if errors.Is(err, errEntryDecisionReasonRequired) {
+		errorJSON(w, http.StatusUnprocessableEntity, "decision_reason_required", "拒绝提交时必须填写原因")
+		return
+	}
+
+	tx, err := app.db.Begin(r.Context())
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var currentStatus string
+	var deletedAt *time.Time
+	if err := tx.QueryRow(r.Context(), `SELECT status,deleted_at FROM entries WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, entryID, access.WorkspaceID).Scan(&currentStatus, &deletedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			errorJSON(w, http.StatusNotFound, "entry_not_found", "提交记录不存在")
+		} else {
+			serverError(w, err)
+		}
+		return
+	}
+	if deletedAt != nil || !canChangeEntryDecision(currentStatus) {
+		errorJSON(w, http.StatusConflict, "entry_decision_not_allowed", "当前提交状态不能作出或修正决定")
+		return
+	}
+
+	var previousDecisionID *string
+	var previousID string
+	err = tx.QueryRow(r.Context(), `SELECT id FROM decisions WHERE workspace_id=$1 AND entry_id=$2 AND is_current=true FOR UPDATE`, access.WorkspaceID, entryID).Scan(&previousID)
+	if err == nil {
+		previousDecisionID = &previousID
+		if _, err = tx.Exec(r.Context(), `UPDATE decisions SET is_current=false WHERE workspace_id=$1 AND id=$2 AND is_current=true`, access.WorkspaceID, previousID); err != nil {
+			serverError(w, err)
+			return
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		serverError(w, err)
+		return
+	}
+
+	decision := entryDecisionResponse{ID: newID(), Type: decisionType, Reason: reason, DecidedBy: claims(r).Subject}
+	if err = tx.QueryRow(r.Context(), `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,reason,supersedes_id,decided_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING decided_at,metadata`, decision.ID, access.WorkspaceID, entryID, access.CampaignID, decision.Type, decision.Reason, previousDecisionID, decision.DecidedBy).Scan(&decision.DecidedAt, &decision.Metadata); err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE entries SET status=$1,current_decision_id=$2,last_activity_at=NOW(),updated_at=NOW() WHERE id=$3 AND workspace_id=$4 AND deleted_at IS NULL`, status, decision.ID, entryID, access.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
+		return
+	}
+	updated, err := app.loadEntryResponseByID(r.Context(), access, entryID, claims(r).Subject)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"entry": updated.Entry, "decision": decision})
 }
 
 type updateEntryInboxStateInput struct {

@@ -257,6 +257,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("GET /v1/campaigns/{campaignId}/entries", app.auth(http.HandlerFunc(app.listCampaignEntries)))
 	mux.Handle("GET /v1/entries/{entryId}", app.auth(http.HandlerFunc(app.getEntry)))
 	mux.Handle("GET /v1/entries/{entryId}/revisions", app.auth(http.HandlerFunc(app.listEntryRevisions)))
+	mux.Handle("POST /v1/entries/{entryId}/decisions", app.auth(http.HandlerFunc(app.createEntryDecision)))
 	mux.Handle("PATCH /v1/entries/{entryId}/inbox-state", app.auth(http.HandlerFunc(app.updateEntryInboxState)))
 	mux.Handle("GET /v1/campaigns/{campaignId}/share-links", app.auth(http.HandlerFunc(app.listCampaignShareLinks)))
 	mux.Handle("POST /v1/campaigns/{campaignId}/share-links", app.auth(http.HandlerFunc(app.createCampaignShareLink)))

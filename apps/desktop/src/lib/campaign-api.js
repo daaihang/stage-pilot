@@ -307,8 +307,10 @@ function mapEntryDetail(value) {
     formVersion: mapFormVersion(value.form_version),
     currentRevision: mapEntryRevision(value.current_revision),
     decision: mapDecision(value.decision),
+    decisionHistory: Array.isArray(value.decision_history) ? value.decision_history.map(mapDecision) : [],
     materializations: Array.isArray(value.materializations) ? value.materializations.map(mapMaterialization) : [],
     inboxState: mapInboxState(value.inbox_state),
+    canDecide: Boolean(value.can_decide),
     review: value.review || null,
   };
 }
@@ -603,6 +605,14 @@ export async function listCampaignEntries(campaignId, filters = {}) {
 export async function getEntry(entryId) {
   const result = await request(`/v1/entries/${encodeURIComponent(entryId)}`);
   return mapEntryDetail(result);
+}
+
+export async function createEntryDecision(entryId, payload) {
+  const result = await request(`/v1/entries/${encodeURIComponent(entryId)}/decisions`, {
+    method: "POST",
+    body: JSON.stringify({ type: payload?.type, reason: payload?.reason || "" }),
+  });
+  return { entry: mapEntry(result.entry), decision: mapDecision(result.decision) };
 }
 
 export async function listEntryRevisions(entryId) {
