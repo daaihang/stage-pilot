@@ -185,6 +185,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
     commit({ ...current, sheets: current.sheets.map((item) => item.id === sheetId ? nextSheet : item) }, options.toast);
   }, [commit]);
   const onAddItem = useCallback((kind, values = {}) => {
+    if (!selectedSheet) return;
     changeSheet(selectedSheet.id, (current) => ({
       ...current,
       items: [...current.items, makeSheetItem(kind, {
@@ -195,7 +196,7 @@ export function ProgramSheetsPage({ route, workspace, production }) {
       })],
       updatedAt: nowIso(),
     }), { toast: `正在添加${kind === "segment" ? "环节" : kind === "section" ? "章节" : kind === "interval" ? "休息" : "备注"}` });
-  }, [changeSheet, selectedSheet.id]);
+  }, [changeSheet, selectedSheet]);
 
   const getDetail = useCallback(() => selectedSheet ? (programCreateContext ? <ProductionProgramCreateDetail workspacePrograms={workspacePrograms} programTypes={programTypes} existingPrograms={state.productionPrograms} mode={programCreateContext.mode} sourceProgram={programCreateContext.sourceProgram} initialDraft={programCreateContext.initialDraft} onCancel={() => setProgramCreateContext(null)} onSave={async (values) => {
     const result = await createProductionProgram(production.id, { name: values.name, program_type_id: values.programTypeId || null, program_type_name: values.programTypeName || "", performers: values.performers || [], duration_seconds: Number(values.durationSeconds || 0), description: values.description || "", technical_notes: values.technicalNotes || "", source_kind: values.sourceKind || (programCreateContext.mode === "workspace-copy" ? "workspace_copy" : "manual"), workspace_program_id: values.sourceProgramId || programCreateContext.sourceProgram?.id || null });
