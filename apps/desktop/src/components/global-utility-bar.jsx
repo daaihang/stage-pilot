@@ -1,26 +1,52 @@
+import { useEffect, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { FileText, Search, Sparkles } from "@/components/ui/icons";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ContentWidthContainer } from "@/components/app-content-layout";
 import { getUserIdentity, NavUser, UserAccountMenu } from "@/components/nav-user";
 import { GLOBAL_UTILITY_BAR_HEIGHT } from "@/lib/app-shell-layout";
 import { cn } from "@/lib/utils";
 
-function BottomUtilityAction({ icon: Icon, label, shortcut, onClick }) {
-  return <Tooltip>
-    <TooltipTrigger render={<Button
+const COMPACT_UTILITY_QUERY = "(max-width: 36rem)";
+
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(query).matches);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const mediaQuery = window.matchMedia(query);
+    const update = () => setMatches(mediaQuery.matches);
+    update();
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener("change", update);
+      return () => mediaQuery.removeEventListener("change", update);
+    }
+    mediaQuery.addListener(update);
+    return () => mediaQuery.removeListener(update);
+  }, [query]);
+
+  return matches;
+}
+
+function BottomUtilityAction({ icon: Icon, label, shortcut, onClick, compact }) {
+  const button = <Button
       type="button"
       variant="ghost"
       size="sm"
       className="min-w-0 max-[36rem]:size-8 max-[36rem]:px-0"
       aria-label={label}
       onClick={onClick}
-    />}>
-      <Icon aria-hidden="true" focusable="false" />
-      <span className="max-[36rem]:hidden">{label}</span>
-      {shortcut && <kbd className="ml-1 text-[10px] text-muted-foreground max-[48rem]:hidden">{shortcut}</kbd>}
-    </TooltipTrigger>
+    >
+    <Icon aria-hidden="true" focusable="false" />
+    <span className="max-[36rem]:hidden">{label}</span>
+    {shortcut && <kbd className="ml-1 text-[10px] text-muted-foreground max-[48rem]:hidden">{shortcut}</kbd>}
+  </Button>;
+
+  if (!compact) return button;
+  return <Tooltip>
+    <TooltipTrigger render={button} />
     <TooltipContent side="top" sideOffset={6}>{shortcut ? `${label} · ${shortcut}` : label}</TooltipContent>
   </Tooltip>;
 }
@@ -79,6 +105,8 @@ export function GlobalUtilityBar({
   onRequireAuth,
   className,
 }) {
+  const compact = useMediaQuery(COMPACT_UTILITY_QUERY);
+
   if (variant === "sidebar") {
     return <div data-slot="global-utility-bar" data-variant="sidebar" className={className}>
       <SidebarMenu>
@@ -111,15 +139,17 @@ export function GlobalUtilityBar({
     data-slot="global-utility-bar"
     data-variant="bottom"
     aria-label="全局工具"
-    className={cn("flex h-12 shrink-0 items-center justify-between gap-2 border-t bg-background px-3", className)}
+    className={cn("h-12 shrink-0 border-t bg-background", className)}
     style={{ height: GLOBAL_UTILITY_BAR_HEIGHT }}
   >
-    <div className="flex min-w-0 items-center gap-1">
-      <BottomUtilityAction icon={Search} label="搜索" shortcut="Ctrl K" onClick={onOpenSearch} />
-      <BottomUtilityAction icon={FileText} label="帮助与文档" onClick={onOpenDocuments} />
-    </div>
-    <div className="flex min-w-0 items-center">
-      {user ? <BottomAccount user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} /> : <BottomLogin onRequireAuth={onRequireAuth} />}
-    </div>
+    <ContentWidthContainer className="flex h-full items-center justify-between gap-2 px-3">
+      <div className="flex min-w-0 items-center gap-1">
+        <BottomUtilityAction icon={Search} label="搜索" shortcut="Ctrl K" onClick={onOpenSearch} compact={compact} />
+        <BottomUtilityAction icon={FileText} label="帮助与文档" onClick={onOpenDocuments} compact={compact} />
+      </div>
+      <div className="flex min-w-0 items-center">
+        {user ? <BottomAccount user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} /> : <BottomLogin onRequireAuth={onRequireAuth} />}
+      </div>
+    </ContentWidthContainer>
   </footer>;
 }
