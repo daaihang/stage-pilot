@@ -61,6 +61,58 @@ type programSheetAssignment struct {
 	AssignedBy   *string   `json:"assigned_by,omitempty"`
 	AssignedAt   time.Time `json:"assigned_at"`
 }
+
+// Legacy desktop storage uses camelCase. Keep this payload separate from the
+// API response types so importing older local program sheets preserves their
+// program and occurrence references.
+type legacyProgramSheetMigrationInput struct {
+	State legacyProgramSheetMigrationState `json:"state"`
+}
+
+type legacyProgramSheetMigrationState struct {
+	ProductionPrograms []legacyProgramSheetMigrationProgram `json:"productionPrograms"`
+	Sheets             []legacyProgramSheetMigrationSheet   `json:"sheets"`
+}
+
+type legacyProgramSheetMigrationProgram struct {
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	ProgramTypeID   *string  `json:"programTypeId"`
+	ProgramTypeName string   `json:"programTypeName"`
+	Performers      []string `json:"performers"`
+	DurationSeconds int      `json:"durationSeconds"`
+	Description     string   `json:"description"`
+	TechnicalNotes  string   `json:"technicalNotes"`
+	SourceKind      string   `json:"sourceKind"`
+}
+
+type legacyProgramSheetMigrationSheet struct {
+	ID          string                                  `json:"id"`
+	Name        string                                  `json:"name"`
+	Revision    int                                     `json:"revision"`
+	Status      string                                  `json:"status"`
+	ChangeNote  string                                  `json:"changeNote"`
+	Items       []legacyProgramSheetMigrationItem       `json:"items"`
+	Assignments []legacyProgramSheetMigrationAssignment `json:"assignments"`
+}
+
+type legacyProgramSheetMigrationItem struct {
+	ID                      string  `json:"id"`
+	Kind                    string  `json:"kind"`
+	ProductionProgramID     *string `json:"productionProgramId"`
+	SegmentTypeID           *string `json:"segmentTypeId"`
+	TitleOverride           *string `json:"titleOverride"`
+	DurationSecondsOverride *int    `json:"durationSecondsOverride"`
+	CountsTowardDuration    bool    `json:"countsTowardDuration"`
+	AudienceVisible         bool    `json:"audienceVisible"`
+	RequiresExecution       bool    `json:"requiresExecution"`
+	Notes                   string  `json:"notes"`
+}
+
+type legacyProgramSheetMigrationAssignment struct {
+	OccurrenceID string `json:"occurrenceId"`
+	Role         string `json:"role"`
+}
 type programRelease struct {
 	ID           string          `json:"id"`
 	WorkspaceID  string          `json:"workspace_id"`
@@ -396,30 +448,7 @@ func (app *application) createProgramSheet(w http.ResponseWriter, r *http.Reques
 
 func (app *application) migrateProgramSheets(w http.ResponseWriter, r *http.Request) {
 	access := currentProductionAccess(r)
-	var in struct {
-		State struct {
-			ProductionPrograms []struct {
-				ID              string   `json:"id"`
-				Name            string   `json:"name"`
-				ProgramTypeID   *string  `json:"programTypeId"`
-				ProgramTypeName string   `json:"programTypeName"`
-				Performers      []string `json:"performers"`
-				DurationSeconds int      `json:"durationSeconds"`
-				Description     string   `json:"description"`
-				TechnicalNotes  string   `json:"technicalNotes"`
-				SourceKind      string   `json:"sourceKind"`
-			} `json:"productionPrograms"`
-			Sheets []struct {
-				ID          string                   `json:"id"`
-				Name        string                   `json:"name"`
-				Revision    int                      `json:"revision"`
-				Status      string                   `json:"status"`
-				ChangeNote  string                   `json:"changeNote"`
-				Items       []programSheetItem       `json:"items"`
-				Assignments []programSheetAssignment `json:"assignments"`
-			} `json:"sheets"`
-		} `json:"state"`
-	}
+	var in legacyProgramSheetMigrationInput
 	if !decodeJSON(w, r, &in) {
 		return
 	}
