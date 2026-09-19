@@ -7,6 +7,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { AppBackLink } from "@/components/app-back-link";
 import { PageHeader, PageHeaderActions } from "@/components/page-header";
+import { resolveResourcePageHeader } from "@/lib/resource-page-header";
 
 // 卡片型页面根据网格容器的实际宽度决定列数，而不是绑定窗口 viewport 断点。
 // 14rem（默认 224px）是卡片保持可读性的最小宽度；auto-fill 保持未填满的列轨道，避免最后一行卡片异常变宽。
@@ -43,19 +44,22 @@ export function ResourcePage({
   summary,
   back,
   headingLevel = "h1",
+  headerMode = "standalone",
+  headerTitle,
   children,
 }) {
+  const header = resolveResourcePageHeader({ title, headerTitle, headerMode });
   const headerActionContent = headerActions || onCreate
     ? <PageHeaderActions>{headerActions}{onCreate && <Button onClick={onCreate}><Plus />{createLabel}</Button>}</PageHeaderActions>
     : null;
   return <div className="@container/resource-page min-w-0 space-y-5">
-    <PageHeader
+    {header.showHeader && <PageHeader
       back={back ? <AppBackLink to={back.to} label={back.label} onBeforeNavigate={back.onBeforeNavigate} replace={back.replace} preventScrollReset={back.preventScrollReset} /> : null}
-      title={title}
+      title={header.title}
       description={description}
       headingLevel={headingLevel}
       actions={headerActionContent}
-    />
+    />}
     <ResourceToolbar title={title} search={search} filters={filters} view={view} onViewChange={onViewChange} showViewToggle={showViewToggle} />
     <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground"><span>共 {count} 项</span>{summary}{search.value && <button type="button" className="inline-flex items-center gap-1 hover:text-foreground" onClick={() => search.onChange("")}>清除搜索<X className="size-3" /></button>}</div>
     {loading ? (loadingContent || <ResourceSkeleton />) : empty ? <ResourceEmpty {...empty} /> : children}

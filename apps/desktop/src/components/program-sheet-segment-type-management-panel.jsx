@@ -30,7 +30,7 @@ function filterValues(query, field) {
   return getResourceFilterConditions(query).find((item) => item.field === field && item.operator === "is_any_of")?.values?.filter(Boolean) || [];
 }
 
-const ResourcePage = (props) => <BaseResourcePage headingLevel="h2" {...props} />;
+const ResourcePage = (props) => <BaseResourcePage headingLevel="h2" headerTitle="环节类型列表" {...props} />;
 
 function formatDuration(seconds) {
   const minutes = Math.round(Number(seconds || 0) / 60);
