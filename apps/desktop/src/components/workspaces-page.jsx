@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useWorkspaceContext } from "@/components/workspace-provider";
+import { PageHeader, PageHeaderActions } from "@/components/page-header";
 
 /**
  * 工作空间入口页：没有工作空间时是 onboarding，
@@ -20,15 +21,7 @@ export function WorkspacesPage({ onCreateWorkspace }) {
   const onboarding = status === "none";
   return (
     <div className="mx-auto w-full max-w-xl space-y-5">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{onboarding ? "创建你的第一个工作空间" : "选择工作空间"}</h1>
-        <p className="text-sm text-muted-foreground">
-          {onboarding ? "工作空间沉淀长期组织资产，未来的活动都在它里面进行。" : "你拥有多个工作空间，选择一个继续，或创建新的工作空间。"}
-        </p>
-        </div>
-        <Button className="shrink-0" onClick={onCreateWorkspace}>＋ 创建新的工作空间</Button>
-      </div>
+      <PageHeader title={onboarding ? "创建你的第一个工作空间" : "选择工作空间"} description={onboarding ? "工作空间沉淀长期组织资产，未来的活动都在它里面进行。" : "你拥有多个工作空间，选择一个继续，或创建新的工作空间。"} actions={<PageHeaderActions><Button onClick={onCreateWorkspace}>＋ 创建新的工作空间</Button></PageHeaderActions>} />
       {!onboarding && workspaces.length > 0 && (
         <div className="space-y-2">
           {workspaces.map((workspace) => (

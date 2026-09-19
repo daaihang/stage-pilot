@@ -398,7 +398,7 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
   };
 
   if (loading) return <div className="min-h-full text-sm text-muted-foreground">正在加载资源…</div>;
-  if (error || !item) return <div className="space-y-3"><p className="text-sm text-destructive">无法加载{resourceDefinitions[type].singular}</p><div className="flex gap-2"><Button variant="outline" onClick={load}>重试</Button><Button variant="ghost" onClick={onClose}>返回资源库</Button></div></div>;
+  if (error || !item) return <div className="space-y-3"><p className="text-sm text-destructive">无法加载{resourceDefinitions[type].singular}</p><Button variant="outline" onClick={load}>重试</Button></div>;
 
   return <>
     <div className="@container/resource-detail min-h-full min-w-0 space-y-5">

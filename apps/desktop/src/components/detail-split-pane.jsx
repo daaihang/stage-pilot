@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { notify } from "@/components/ui/sonner";
 import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
+import { contentWidthClass } from "@/lib/content-width";
 import { usePageChrome } from "@/components/page-chrome";
 import { normalizeDetailOpenMode, resolveDetailLayoutMode, resolveDetailPresentation, resolveRestoredDetailMode } from "@/lib/detail-open-mode";
 import { createDetailSurfaceState, transitionDetailSurface } from "@/lib/detail-surface-state";
@@ -10,7 +11,6 @@ const MIN_DETAIL_WIDTH = 280;
 const DEFAULT_DETAIL_WIDTH = 420;
 const MIN_MAIN_WIDTH = 320;
 const INLINE_MIN_WIDTH = 960;
-const contentWidthClassName = { standard: "max-w-6xl", wide: "max-w-7xl", full: "max-w-none" };
 
 function maxDetailWidth(containerWidth) {
   return Math.max(MIN_DETAIL_WIDTH, Math.floor(containerWidth - MIN_MAIN_WIDTH));
@@ -449,7 +449,7 @@ export function DetailSplitPane({
       }}
     >
       <div className="app-content-scroll min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-        <div className={cn("min-h-full w-full", surfaceMode === "inline" ? "" : cn("mx-auto", contentWidthClassName[contentWidth] || contentWidthClassName.standard))}>{detail}</div>
+        <div className={cn("min-h-full w-full", surfaceMode === "inline" ? "" : cn("mx-auto", contentWidthClass(contentWidth)))}>{detail}</div>
       </div>
       {surfaceMode === "inline" && <div
         role="separator"

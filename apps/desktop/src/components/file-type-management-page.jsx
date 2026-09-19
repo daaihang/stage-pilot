@@ -559,6 +559,7 @@ export function FileTypeManagementPage({ workspace }) {
       />
       <SettingsTabs groups={scopeGroups} activeGroup={activeScope} onGroupChange={setActiveScope} ariaLabel="文件归属范围">
         <ResourcePage
+          headingLevel="h2"
           title={currentMeta.label}
           description={currentMeta.description}
           count={visibleItems.length}

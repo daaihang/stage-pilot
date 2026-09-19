@@ -11,6 +11,7 @@ import { listAccessibleProductions, toProductionSummary } from "@/lib/production
 import { notify } from "@/components/ui/sonner";
 import { useUserPreferences } from "@/components/user-preferences-provider";
 import { formatInstantInTimeZone } from "@/lib/timezone";
+import { PageHeader, PageHeaderActions } from "@/components/page-header";
 
 const tabs = [
   ["workspaces", "工作空间"],
@@ -72,13 +73,7 @@ export function UnifiedWorkContextPage({ onCreateWorkspace, onEnterWorkspace, on
   const onboarding = status === "none";
 
   return <div className="@container/work-context mx-auto min-w-0 w-full space-y-6">
-    <div className="flex flex-wrap items-start justify-between gap-4">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">我的工作</h1>
-        <p className="mt-1 text-sm text-muted-foreground">访问你的工作空间、参与的活动和协作事项</p>
-      </div>
-      <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={onJoinInvitation}><Link2 />加入工作空间或活动</Button><Button onClick={onCreateWorkspace}><Plus />创建工作空间</Button></div>
-    </div>
+    <PageHeader title="我的工作" description="访问你的工作空间、参与的活动和协作事项" actions={<PageHeaderActions><Button variant="outline" onClick={onJoinInvitation}><Link2 />加入工作空间或活动</Button><Button onClick={onCreateWorkspace}><Plus />创建工作空间</Button></PageHeaderActions>} />
 
     <Tabs value={tab} onValueChange={changeTab}>
       <TabsList variant="line" className="w-full justify-start border-b">

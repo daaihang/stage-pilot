@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical, ListMusic, Pencil, Plus, RefreshCw, Trash2 } from "@/components/ui/icons";
 import { Sortable, SortableItem, SortableItemHandle } from "@/components/reui/sortable";
 import { ResourceFilters, getResourceFilterConditions } from "@/components/resource-filters";
-import { ResourcePage } from "@/components/resource-page";
+import { ResourcePage as BaseResourcePage } from "@/components/resource-page";
 import { WorkspacePageHeader } from "@/components/workspace-page-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,8 @@ const usageFilter = { id: "usage", label: "使用情况", type: "select", defaul
 function filterValues(query, field) {
   return getResourceFilterConditions(query).find((item) => item.field === field && item.operator === "is_any_of")?.values?.filter(Boolean) || [];
 }
+
+const ResourcePage = (props) => <BaseResourcePage headingLevel="h2" {...props} />;
 
 function formatDuration(seconds) {
   const minutes = Math.round(Number(seconds || 0) / 60);

@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageHeader, PageHeaderActions } from "@/components/page-header";
 import { notify } from "@/components/ui/sonner";
 import { acceptInvitation, buildInvitationUrl, normalizeInvitationCode, parseInvitationInput } from "@/lib/invitation-api";
 import { ListSurface } from "@/components/resource-page";
@@ -186,16 +187,7 @@ export function InvitationListPanel({ scope, scopeKey, canManage, listInvitation
   };
   const description = scope === "workspace" ? "管理进入整个工作空间的成员邀请。" : "管理只授予当前活动访问权的邀请。";
   return <div className="min-w-0 space-y-5">
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        <p className="text-sm text-muted-foreground">{description}</p>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {canManage && <Button size="sm" onClick={() => setDialogOpen(true)}><Plus />新建邀请</Button>}
-        <Button variant="outline" size="sm" onClick={() => load(true)}><RefreshCw />刷新</Button>
-      </div>
-    </div>
+    <PageHeader headingLevel="h2" title={title} description={description} actions={<PageHeaderActions>{canManage && <Button size="sm" onClick={() => setDialogOpen(true)}><Plus />新建邀请</Button>}<Button variant="outline" size="sm" onClick={() => load(true)}><RefreshCw />刷新</Button></PageHeaderActions>} />
 
     <Card>
       <CardHeader>

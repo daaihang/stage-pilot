@@ -14,6 +14,7 @@ export function PageDetailTitlebarAction() {
   const toggleIcon = detailAction.exclusive ? <PanelRightOpen className="size-4" /> : <Maximize2 className="size-4" />;
   const closeIcon = <X className="size-4" />;
   return <>
+    <span className="hidden max-w-32 shrink truncate text-xs text-muted-foreground lg:inline" title={detailAction.detailLabel} aria-hidden="true">{detailAction.detailLabel}</span>
     {detailAction.onToggleExclusive && labels.canToggle && <Tooltip>
       <TooltipTrigger render={<Button type="button" data-detail-titlebar-control variant="ghost" size="icon-sm" className="shrink-0" onClick={detailAction.onToggleExclusive} aria-label={toggleLabel} title={toggleLabel}>{toggleIcon}</Button>} />
       <TooltipContent side="bottom" sideOffset={6}>{toggleLabel}</TooltipContent>

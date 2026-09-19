@@ -463,7 +463,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
         title="节目"
         subtitle={route.meta.description}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <>
             <Button
               variant="outline"
               onClick={() => load({ toast: true })}
@@ -482,10 +482,11 @@ export function ProductionProgramsPage({ route, workspace, production }) {
                 添加节目
               </Button>
             )}
-          </div>
+          </>
         }
       />
       <ResourcePage
+        headingLevel="h2"
         title="活动节目"
         description="本场活动的节目资料与准备状态。节目单负责排序和编排。"
         count={filteredPrograms.length}

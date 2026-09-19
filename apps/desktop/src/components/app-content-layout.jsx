@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import { cn } from "@/lib/utils";
+import { contentWidthClass } from "@/lib/content-width";
 
 /**
  * Owns the scroll boundary below the application titlebar.
@@ -8,17 +9,11 @@ import { cn } from "@/lib/utils";
  * pages additionally provide a full-height main-area scroll boundary so the
  * window detail host can keep the detail surface independently scrollable.
  */
-const contentWidthClassName = {
-  standard: "max-w-6xl",
-  wide: "max-w-7xl",
-  full: "max-w-none",
-};
-
 const ContentWidthContext = createContext("standard");
 
 export function ContentWidthContainer({ children, className }) {
   const contentWidth = useContext(ContentWidthContext);
-  return <div className={cn("mx-auto min-w-0 w-full", contentWidthClassName[contentWidth] ?? contentWidthClassName.standard, className)}>{children}</div>;
+  return <div className={cn("mx-auto min-w-0 w-full", contentWidthClass(contentWidth), className)}>{children}</div>;
 }
 
 export function AppContentLayout({ mode = "document", contentWidth = "standard", children, bottomBar, className }) {
