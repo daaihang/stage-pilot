@@ -70,11 +70,12 @@
 .t-resize {
     transition:
         width var(--resize-dur) var(--resize-ease),
+        inline-size var(--resize-dur) var(--resize-ease),
         height var(--resize-dur) var(--resize-ease),
         inset var(--resize-dur) var(--resize-ease),
         left var(--resize-dur) var(--resize-ease),
         right var(--resize-dur) var(--resize-ease);
-    will-change: width, height, inset, left, right;
+    will-change: width, inline-size, height, inset, left, right;
 }
 
 .detail-surface {
@@ -165,6 +166,11 @@
     min-width: 0;
 }
 
+.titlebar-center-hidden {
+    visibility: hidden;
+    pointer-events: none;
+}
+
 .titlebar-breadcrumb-surface,
 .titlebar-title-surface {
     position: absolute;
@@ -188,8 +194,17 @@
 }
 
 .titlebar-title-surface {
-    width: max-content;
+    inline-size: 100%;
+    max-inline-size: 100%;
+}
+
+.titlebar-title-surface .t-text-swap {
+    display: block;
+    min-width: 0;
     max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .titlebar-breadcrumb-list {
@@ -478,6 +493,7 @@
 }
 
 .app-floating-action-dock {
+  margin-inline-start: auto;
   transform: translateY(0) scale(1);
   transform-origin: bottom right;
   opacity: 1;
@@ -487,6 +503,15 @@
     opacity var(--floating-action-close-dur) var(--floating-action-close-ease),
     filter var(--floating-action-close-dur) var(--floating-action-close-ease);
   will-change: transform, opacity, filter;
+}
+
+.app-floating-action-dock[data-expanded="true"] {
+  transform-origin: bottom center;
+}
+
+.app-floating-action-dock[data-expanded="true"] > [data-slot="floating-action-control"],
+.app-floating-action-dock[data-expanded="true"] > [data-slot="floating-action-control"] [data-slot="button"] {
+  width: 100%;
 }
 
 .app-floating-action-dock[data-open="true"] {

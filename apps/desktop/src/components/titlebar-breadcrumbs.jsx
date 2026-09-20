@@ -1,30 +1,10 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
 import { areTitlebarItemsEqual, normalizeTitlebarItems, resolveTitlebarDisplay } from "@/lib/titlebar-display";
 
 const TEXT_SWAP_DURATION = 150;
-
-function useTitlebarCenterWidth() {
-  const containerRef = useRef(null);
-  const [width, setWidth] = useState(0);
-
-  useLayoutEffect(() => {
-    const element = containerRef.current;
-    if (!element || typeof ResizeObserver === "undefined") {
-      return undefined;
-    }
-
-    const observer = new ResizeObserver(([entry]) => {
-      setWidth(Math.round(entry.contentRect.width));
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  return [containerRef, width];
-}
 
 function useCanonicalBreadcrumbItems(items) {
   const candidate = normalizeTitlebarItems(items);
@@ -151,6 +131,8 @@ function TitlebarTextSwap({ active, value }) {
 }
 
 export function TitlebarBreadcrumbs({
+  available = true,
+  bounds = { inlineStart: 0, inlineSize: 0 },
   items,
   pageHeaderVisible = true,
   showTitle = true,
@@ -160,7 +142,6 @@ export function TitlebarBreadcrumbs({
 }) {
   const canonicalItems = useCanonicalBreadcrumbItems(items);
   const [expanded, setExpanded] = useState(false);
-  const [centerRef, centerWidth] = useTitlebarCenterWidth();
   const display = resolveTitlebarDisplay({
     appTitle,
     expanded,
@@ -172,8 +153,8 @@ export function TitlebarBreadcrumbs({
   });
   const breadcrumbActive = display.kind === "breadcrumb";
   const titleActive = display.kind === "title";
-  const canFocusToExpand = canonicalItems.length > 0 && !breadcrumbActive;
-  const maxLabelWidth = Math.max(72, Math.floor((centerWidth - Math.max(0, canonicalItems.length - 1) * 28) / Math.max(1, canonicalItems.length)));
+  const canFocusToExpand = available && canonicalItems.length > 0 && !breadcrumbActive;
+  const maxLabelWidth = Math.max(72, Math.floor((bounds.inlineSize - Math.max(0, canonicalItems.length - 1) * 28) / Math.max(1, canonicalItems.length)));
 
   useEffect(() => {
     setExpanded(false);
@@ -181,8 +162,8 @@ export function TitlebarBreadcrumbs({
 
   return (
     <div
-      ref={centerRef}
-      className="titlebar-breadcrumbs relative flex h-full min-w-0 flex-1 items-center justify-center"
+      className={cn("titlebar-breadcrumbs pointer-events-none absolute z-10 h-full min-w-0", !available && "titlebar-center-hidden")}
+      style={{ insetInlineStart: `${bounds.inlineStart}px`, inlineSize: `${bounds.inlineSize}px` }}
       tabIndex={canFocusToExpand ? 0 : undefined}
       aria-label={canFocusToExpand ? "展开当前页面路径" : undefined}
       onBlur={(event) => {
@@ -195,11 +176,6 @@ export function TitlebarBreadcrumbs({
           setExpanded(true);
         }
       }}
-      onMouseEnter={() => {
-        if (canonicalItems.length > 0) {
-          setExpanded(true);
-        }
-      }}
       onMouseLeave={() => setExpanded(false)}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -208,7 +184,12 @@ export function TitlebarBreadcrumbs({
         }
       }}
     >
-      <div aria-hidden="true" className="absolute inset-0" data-tauri-drag-region />
+      {available && canonicalItems.length > 0 && <div
+        aria-hidden="true"
+        className="absolute inset-0 pointer-events-auto"
+        data-tauri-drag-region
+        onMouseEnter={() => setExpanded(true)}
+      />}
       <div className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 justify-center px-2">
         {canonicalItems.length > 0 && (
           <div

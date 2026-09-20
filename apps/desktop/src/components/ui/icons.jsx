@@ -90,6 +90,7 @@ const iconDefinitions = {
   lock: Remix.RiLockLine,
   logout: Remix.RiLogoutBoxLine,
   mapPin: Remix.RiMapPinLine,
+  menu: Remix.RiMenuLine,
   mic: Remix.RiMic2Line,
   minus: Remix.RiSubtractLine,
   more: Remix.RiMoreLine,
@@ -199,6 +200,7 @@ export const ListMusic = wrappedMap.playlist;
 export const ListTree = wrappedMap.list;
 export const LockKeyhole = wrappedMap.lock;
 export const MapPin = wrappedMap.mapPin;
+export const Menu = wrappedMap.menu;
 export const Maximize2 = withIconDefaults(Remix.RiFullscreenLine);
 export const Mic2 = wrappedMap.mic;
 export const Minus = wrappedMap.minus;

@@ -79,7 +79,7 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 `scrollRef` 指向 `.app-content-scroll`，不是 `window`。普通页面、工作区页面和打开详情后的主工作区都应以它作为页面滚动观察的根容器；详情面板自身仍有独立滚动边界。
 
-根级 `PageHeader` 会使用该滚动根通过 `IntersectionObserver` 报告 `pageHeaderVisible`。页头仍有任意可见区域时为 `true`，完全离开内容视口后为 `false`。状态由 `PageChromeContext` 暴露，标题栏和悬浮主操作都只消费根级 `h1` 的状态。
+根级 `PageHeader` 会在该滚动根上用被动 `scroll` 监听配合 `requestAnimationFrame` 读取页眉与滚动根的真实几何关系，报告 `pageHeaderVisible`。`IntersectionObserver` 和 `ResizeObserver` 只作为辅助唤醒；这样快速越过页眉边界时也不会残留旧状态。页头仍有任意可见区域时为 `true`，完全离开内容视口后为 `false`。状态由 `PageChromeContext` 暴露，标题栏和悬浮主操作都只消费根级 `h1` 的状态。
 
 页面切换后，旧页头必须注销，新页面在注册前保持安全的可见默认值。普通页面、工作区页面和详情打开后的主工作区都使用 `.app-content-scroll`；详情面板自己的滚动不能改变主页面状态。
 
@@ -101,6 +101,8 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 标题栏中部的空白区域必须归 `data-tauri-drag-region`。标题文本和 Breadcrumb 只允许实际链接区域接收指针，不能使用覆盖整个中部的透明交互层，否则会阻断窗口拖拽。
 
+标题栏中区以整扇窗口的物理中心为轴。左右控制组的较大一侧定义两边的同等安全预留，因此中心内容不会因左侧菜单更宽而视觉偏移；控件始终优先于标题内容。当安全中区少于 96px，视觉展示层隐藏且不可交互，但 canonical Breadcrumb DOM 与数据不变。完整菜单预测会把中区压到少于 14rem 时，标题栏改用位于侧栏切换左侧的“主菜单”汉堡按钮；只有预测宽度恢复到至少 16rem 时才展开完整菜单，避免拖动窗口尺寸时闪烁。macOS 还必须保留 native traffic lights 的 68px 左侧安全区。
+
 ## 悬浮主操作
 
 长表单和高频创建页可以显式传入 `floatingPrimary`，或者在没有直接 `PageHeader` 的编辑器内使用 `FloatingPrimaryAction`：
@@ -117,7 +119,9 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 悬浮按钮由内部 `FloatingActionDock` 持续挂载，使用位置层和动作层分离动画：位置层只处理 Toast 避让的 `bottom`，动作层才执行滑入、缩放、淡出和模糊。页眉离开时从下方滑入并轻微 pop；回到可见区时按钮会立刻失去焦点与指针能力，但保留到退出动画结束，滚动安全区也会在这段时间继续生效。减少动画偏好下应立即切换。
 
-悬浮按钮通过 `AppContentLayout` 的内容宽度容器对齐。`/work` 中必须避开 48px 全局工具栏；Toast 出现时才按实际高度向上避让，不能使用固定 `5rem` 空白。详情打开时仍属于主内容区，不进入详情面板。悬浮按钮必须复用原有点击、禁用、加载和 `notify` 行为。
+悬浮按钮以它所属的页面页眉（编辑器可显式提供编辑器壳）为水平锚点，因此必须匹配标准、宽、全宽和页面自定义最大宽度。`/work` 中必须避开 48px 全局工具栏；Toast 出现时才按实际高度向上避让，不能使用固定 `5rem` 空白。详情打开时仍属于主内容区，不进入详情面板。悬浮按钮必须复用原有点击、禁用、加载和 `notify` 行为。
+
+内容底部 sentinel 进入滚动安全区时，Dock 从右下角的紧凑按钮平滑过渡为锚点全宽的底部主按钮；离开末尾时恢复紧凑。sentinel 必须放在动态底部补偿之前，不能以滚动条最后一个 padding 像素作为触发条件，否则全宽状态会造成自身触发循环。
 
 `AppSonner` 会向 `OverlayAvoidanceProvider` 报告当前可见 Toast 的真实高度。`AppContentLayout` 用这份数据计算 Dock 位置，并写入 `--app-overlay-clearance`；主滚动区必须将它同时用于 `padding-block-end` 和 `scroll-padding-block-end`。这保证最后内容、键盘 Tab、表单错误定位和 `scrollIntoView()` 都不会落在 Toast 或 Dock 下方。不要只移动浮层而不补偿滚动区，也不要在业务页面手写固定底部预留。
 

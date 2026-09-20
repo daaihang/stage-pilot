@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Copy, Info, Minus, Moon, Power, Sparkles, Square, Terminal, X } from "@/components/ui/icons";
+import { Copy, Info, Menu, Minus, Moon, Power, Sparkles, Square, Terminal, X } from "@/components/ui/icons";
 import { HashRouter, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -44,8 +44,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Menubar, MenubarCheckboxItem, MenubarContent, MenubarItem, MenubarMenu, MenubarRadioItem, MenubarSeparator, MenubarShortcut, MenubarSub, MenubarSubContent, MenubarSubTrigger, MenubarTrigger } from "@/components/ui/menubar";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AppSonner, notify } from "@/components/ui/sonner";
 import { AuthDialog } from "@/components/auth-dialog";
 import { CreateWorkspaceDialog } from "@/components/create-workspace-dialog";
@@ -55,6 +56,7 @@ import { appStore, getRecentContexts, isTauriRuntime, saveRecentContext } from "
 import { accountPath, buildBreadcrumbItems, directProductionPath, matchStagePilotRoute, productionPath, resolveAccountReturnTarget, workspacePath } from "@/lib/navigation";
 import { resolveAppShellLayout } from "@/lib/app-shell-layout";
 import { TitlebarBreadcrumbs } from "@/components/titlebar-breadcrumbs";
+import { resolveTitlebarCenterBounds, resolveTitlebarMenuMode } from "@/lib/titlebar-layout";
 import { createProduction, getAccessibleProduction, toProductionSummary, updateAccessibleProduction, updateProduction } from "@/lib/production-api";
 
 const documentationUrl = "https://github.com/daaihang/stagepilot";
@@ -77,17 +79,103 @@ const contextMenuItems = [
   { label: "退出", action: "quit", icon: Power },
 ];
 
-function TitlebarMenu({ menu, onAction }) {
-  const renderItem = (item, index) => {
-    if (item === "separator" || item.type === "separator") return <MenubarSeparator key={`sep-${index}`} />;
-    const Icon = item.icon;
-    const label = <>{Icon && <Icon />}<span>{item.label}</span>{item.shortcut && <MenubarShortcut>{item.shortcut}</MenubarShortcut>}</>;
-    if (item.submenu) return <MenubarSub key={item.label}><MenubarSubTrigger>{label}</MenubarSubTrigger><MenubarSubContent>{item.submenu.map(renderItem)}</MenubarSubContent></MenubarSub>;
-    if (item.type === "checkbox") return <MenubarCheckboxItem key={item.label} checked={item.checked} onCheckedChange={item.onCheckedChange}>{label}</MenubarCheckboxItem>;
-    if (item.type === "radio") return <MenubarRadioItem key={item.label} value={item.value} disabled={item.disabled}>{label}</MenubarRadioItem>;
-    return <MenubarItem key={item.action ?? item.label} disabled={item.disabled} data-variant={item.variant} onClick={() => item.action && onAction(item.action)}>{label}</MenubarItem>;
+function TitlebarMenuItems({ items, onAction, variant = "menubar" }) {
+  const controls = variant === "menubar" ? {
+    checkbox: MenubarCheckboxItem,
+    content: MenubarContent,
+    item: MenubarItem,
+    radio: MenubarRadioItem,
+    separator: MenubarSeparator,
+    shortcut: MenubarShortcut,
+    sub: MenubarSub,
+    subContent: MenubarSubContent,
+    subTrigger: MenubarSubTrigger,
+  } : {
+    checkbox: DropdownMenuCheckboxItem,
+    content: DropdownMenuContent,
+    item: DropdownMenuItem,
+    radio: DropdownMenuRadioItem,
+    separator: DropdownMenuSeparator,
+    shortcut: DropdownMenuShortcut,
+    sub: DropdownMenuSub,
+    subContent: DropdownMenuSubContent,
+    subTrigger: DropdownMenuSubTrigger,
   };
-  return <MenubarMenu><MenubarTrigger>{menu.label}</MenubarTrigger><MenubarContent>{menu.items.map(renderItem)}</MenubarContent></MenubarMenu>;
+  const renderItem = (item, index) => {
+    if (item === "separator" || item.type === "separator") return <controls.separator key={`sep-${index}`} />;
+    const Icon = item.icon;
+    const label = <>{Icon && <Icon />}<span>{item.label}</span>{item.shortcut && <controls.shortcut>{item.shortcut}</controls.shortcut>}</>;
+    if (item.submenu) return <controls.sub key={item.label}><controls.subTrigger>{label}</controls.subTrigger><controls.subContent>{item.submenu.map(renderItem)}</controls.subContent></controls.sub>;
+    if (item.type === "checkbox") return <controls.checkbox key={item.label} checked={item.checked} onCheckedChange={item.onCheckedChange}>{label}</controls.checkbox>;
+    if (item.type === "radio") return <controls.radio key={item.label} value={item.value} disabled={item.disabled}>{label}</controls.radio>;
+    return <controls.item key={item.action ?? item.label} disabled={item.disabled} data-variant={item.variant} onClick={() => item.action && onAction(item.action)}>{label}</controls.item>;
+  };
+  return items.map(renderItem);
+}
+
+function TitlebarMenuBar({ onAction }) {
+  return <Menubar className="shrink-0">{menuBar.map((menu) => <MenubarMenu key={menu.label}><MenubarTrigger>{menu.label}</MenubarTrigger><MenubarContent><TitlebarMenuItems items={menu.items} onAction={onAction} /></MenubarContent></MenubarMenu>)}</Menubar>;
+}
+
+function TitlebarMainMenu({ onAction }) {
+  return <DropdownMenu>
+    <Tooltip>
+      <TooltipTrigger render={<DropdownMenuTrigger render={<Button type="button" variant="ghost" size="icon-sm" className="shrink-0" aria-label="主菜单"><Menu className="size-4" /></Button>} />} />
+      <TooltipContent side="bottom" sideOffset={6}>主菜单</TooltipContent>
+    </Tooltip>
+    <DropdownMenuContent align="start" className="min-w-48">
+      {menuBar.map((menu, index) => <DropdownMenuSub key={menu.label}><DropdownMenuSubTrigger>{menu.label}</DropdownMenuSubTrigger><DropdownMenuSubContent className="min-w-48"><TitlebarMenuItems items={menu.items} onAction={onAction} variant="dropdown" /></DropdownMenuSubContent></DropdownMenuSub>)}
+    </DropdownMenuContent>
+  </DropdownMenu>;
+}
+
+function useTitlebarLayout({ headerRef, leftControlsRef, fullMenuMeasureRef, compactMenuMeasureRef, rightControlsRef }) {
+  const [layout, setLayout] = useState({ center: { inlineStart: 0, inlineSize: 0, visible: false }, menuMode: "full" });
+
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const leftControls = leftControlsRef.current;
+    const fullMenu = fullMenuMeasureRef.current;
+    const compactMenu = compactMenuMeasureRef.current;
+    const rightControls = rightControlsRef.current;
+    if (!header || !leftControls || !fullMenu || !compactMenu || !rightControls) return undefined;
+
+    const update = () => {
+      const headerRect = header.getBoundingClientRect();
+      const leftRect = leftControls.getBoundingClientRect();
+      const fullMenuRect = fullMenu.getBoundingClientRect();
+      const compactMenuRect = compactMenu.getBoundingClientRect();
+      const rightRect = rightControls.getBoundingClientRect();
+      const actualMenuWidth = layout.menuMode === "full" ? fullMenuRect.width : compactMenuRect.width;
+      const leftWithoutMenu = Math.max(0, leftRect.right - headerRect.left - actualMenuWidth);
+      const fullCenter = resolveTitlebarCenterBounds({
+        width: headerRect.width,
+        leftEnd: leftWithoutMenu + fullMenuRect.width,
+        rightStart: rightRect.left - headerRect.left,
+      });
+      const nextMode = resolveTitlebarMenuMode({ mode: layout.menuMode, fullMenuCenterWidth: fullCenter.inlineSize });
+      const targetMenuWidth = nextMode === "full" ? fullMenuRect.width : compactMenuRect.width;
+      const center = resolveTitlebarCenterBounds({
+        width: headerRect.width,
+        leftEnd: leftWithoutMenu + targetMenuWidth,
+        rightStart: rightRect.left - headerRect.left,
+      });
+      setLayout((current) => current.menuMode === nextMode
+        && current.center.inlineStart === center.inlineStart
+        && current.center.inlineSize === center.inlineSize
+        && current.center.visible === center.visible
+        ? current
+        : { menuMode: nextMode, center });
+    };
+
+    update();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(update);
+    [header, leftControls, fullMenu, compactMenu, rightControls].forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [compactMenuMeasureRef, fullMenuMeasureRef, headerRef, layout.menuMode, leftControlsRef, rightControlsRef]);
+
+  return layout;
 }
 
 function AppLoading() {
@@ -112,6 +200,18 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   const navigate = useNavigate();
   const { detailOpenMode } = useUserPreferences();
   const { pageHeaderVisible } = usePageChrome();
+  const titlebarRef = useRef(null);
+  const titlebarLeftControlsRef = useRef(null);
+  const fullMenuMeasureRef = useRef(null);
+  const compactMenuMeasureRef = useRef(null);
+  const titlebarRightControlsRef = useRef(null);
+  const titlebarLayout = useTitlebarLayout({
+    headerRef: titlebarRef,
+    leftControlsRef: titlebarLeftControlsRef,
+    fullMenuMeasureRef,
+    compactMenuMeasureRef,
+    rightControlsRef: titlebarRightControlsRef,
+  });
   const { status: workspaceStatus, workspaces, currentWorkspace, switchWorkspace, adoptCreatedWorkspace, refreshWorkspaces, error: workspaceError, retry: retryWorkspaces } = useWorkspaceContext();
   const { productionsByWorkspace, creationSession, loadProductions, repository, setProductionsByWorkspaceEntry, createCreationSession, updateCreationSession, discardCreationSession, getCreationSession } = useNavigationData();
   const navigationRepositoryRef = useRef(repository);
@@ -587,7 +687,30 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   if (route?.mode === "public-program-sheet") return <div className="min-h-svh bg-background">{content}</div>;
   if (route?.mode === "public-campaign") return <div className="min-h-svh bg-background">{content}</div>;
   return <OverlayAvoidanceProvider><WindowDetailProvider contentWidth={contentWidth} detailOpenMode={detailOpenMode}><SidebarProvider desktopOnly className="min-h-0 min-w-0 flex h-svh flex-col" defaultOpen><div className="app-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
-    <header className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2"><div className={cn("relative z-20 flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}>{shellLayout.showSidebarTrigger && <SidebarTrigger className="shrink-0" />}<Menubar className="shrink-0">{menuBar.map((menu) => <TitlebarMenu key={menu.label} menu={menu} onAction={handleShellNativeAction} />)}</Menubar></div><TitlebarBreadcrumbs items={titlebarBreadcrumbItems} pageTitle={pageTitle} showTitle={showTitlebarTitle} pageHeaderVisible={pageHeaderVisible} titlebarTitleMode={titlebarTitleMode} /><PageDetailTitlebarAction />{isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}</header>
+    <header ref={titlebarRef} className="titlebar-content relative z-30 flex h-[var(--app-titlebar-height)] shrink-0 items-center border-b bg-background pl-2">
+      <div aria-hidden="true" className="absolute inset-0" data-tauri-drag-region />
+      <div ref={titlebarLeftControlsRef} className={cn("relative z-20 flex min-w-0 shrink-0 items-center gap-1", isMac && "pl-[68px]")}>
+        {titlebarLayout.menuMode === "compact" ? <TitlebarMainMenu onAction={handleShellNativeAction} /> : <TitlebarMenuBar onAction={handleShellNativeAction} />}
+        {shellLayout.showSidebarTrigger && <SidebarTrigger className="shrink-0" />}
+      </div>
+      <div aria-hidden="true" inert="" className="pointer-events-none absolute -left-[10000px] top-0 flex h-[var(--app-titlebar-height)] items-center opacity-0">
+        <div ref={fullMenuMeasureRef}><TitlebarMenuBar onAction={handleShellNativeAction} /></div>
+        <div ref={compactMenuMeasureRef}><Button type="button" variant="ghost" size="icon-sm"><Menu className="size-4" /></Button></div>
+      </div>
+      <TitlebarBreadcrumbs
+        available={titlebarLayout.center.visible}
+        bounds={titlebarLayout.center}
+        items={titlebarBreadcrumbItems}
+        pageTitle={pageTitle}
+        showTitle={showTitlebarTitle}
+        pageHeaderVisible={pageHeaderVisible}
+        titlebarTitleMode={titlebarTitleMode}
+      />
+      <div ref={titlebarRightControlsRef} className="relative z-20 ml-auto flex h-full shrink-0 items-center">
+        <PageDetailTitlebarAction />
+        {isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}
+      </div>
+    </header>
     <div className="flex min-h-0 min-w-0 flex-1">{shellLayout.showSidebar && <AppSidebar navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onJoinInvitation={() => setJoinInvitationOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} {...utilityBarProps} />}<SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth} bottomBar={shellLayout.showGlobalUtilityBar ? <GlobalUtilityBar variant="bottom" {...utilityBarProps} /> : null}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
    </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /><JoinInvitationDialog open={joinInvitationOpen} onOpenChange={setJoinInvitationOpen} onAccepted={handleInvitationAccepted} /><AppSonner sidebarVisible={shellLayout.toastSidebarVisible} bottomOffset={shellLayout.toastBottomOffset} /></SidebarProvider></WindowDetailProvider></OverlayAvoidanceProvider>;
 }

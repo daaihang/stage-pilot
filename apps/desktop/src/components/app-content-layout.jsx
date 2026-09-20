@@ -16,7 +16,9 @@ const defaultAppContentLayout = {
   contentWidth: "standard",
   scrollRef: null,
   floatingActionHost: null,
-  registerFloatingActionNode: () => {},
+  floatingActionLayout: { inlineStart: 0, inlineSize: 0 },
+  contentEndVisible: false,
+  registerFloatingAction: () => () => {},
   setFloatingActionOpen: () => {},
 };
 const AppContentLayoutContext = createContext(defaultAppContentLayout);
@@ -32,15 +34,31 @@ export function ContentWidthContainer({ children, className }) {
 
 export function AppContentLayout({ mode = "document", contentWidth = "standard", children, bottomBar, className }) {
   const scrollRef = useRef(null);
+  const layoutRef = useRef(null);
+  const contentEndRef = useRef(null);
   const [floatingActionHost, setFloatingActionHost] = useState(null);
-  const [floatingActionNode, setFloatingActionNode] = useState(null);
+  const [floatingAction, setFloatingAction] = useState(null);
   const [floatingActionHeight, setFloatingActionHeight] = useState(0);
-  const [floatingActionOpen, setFloatingActionOpen] = useState(false);
+  const [floatingActionLayout, setFloatingActionLayout] = useState({ inlineStart: 0, inlineSize: 0 });
+  const [contentEndVisible, setContentEndVisible] = useState(false);
   const { toastHeight } = useOverlayAvoidance();
   const assignFloatingActionHost = useCallback((node) => setFloatingActionHost(node), []);
-  const registerFloatingActionNode = useCallback((node) => setFloatingActionNode(node), []);
+  const registerFloatingAction = useCallback((nextAction) => {
+    if (!nextAction?.id || !nextAction.node) return () => {};
+    setFloatingAction((current) => {
+      if (current && current.id !== nextAction.id) return current;
+      return { ...nextAction, open: current?.id === nextAction.id ? current.open : false };
+    });
+    return () => setFloatingAction((current) => current?.id === nextAction.id ? null : current);
+  }, []);
+  const setFloatingActionOpen = useCallback((id, open) => {
+    setFloatingAction((current) => current?.id === id && current.open !== Boolean(open)
+      ? { ...current, open: Boolean(open) }
+      : current);
+  }, []);
 
   useLayoutEffect(() => {
+    const floatingActionNode = floatingAction?.node;
     if (!floatingActionNode) {
       setFloatingActionHeight(0);
       return undefined;
@@ -55,12 +73,50 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
     const observer = new ResizeObserver(updateHeight);
     observer.observe(floatingActionNode);
     return () => observer.disconnect();
-  }, [floatingActionNode]);
+  }, [floatingAction?.node]);
+
+  useLayoutEffect(() => {
+    const layout = layoutRef.current;
+    const anchor = floatingAction?.anchorNode;
+    if (!layout || !anchor) {
+      setFloatingActionLayout({ inlineStart: 0, inlineSize: 0 });
+      return undefined;
+    }
+    const updateLayout = () => {
+      const layoutRect = layout.getBoundingClientRect();
+      const anchorRect = anchor.getBoundingClientRect();
+      const next = {
+        inlineStart: Math.max(0, Math.round(anchorRect.left - layoutRect.left)),
+        inlineSize: Math.max(0, Math.round(Math.min(anchorRect.width, layoutRect.width))),
+      };
+      setFloatingActionLayout((current) => current.inlineStart === next.inlineStart && current.inlineSize === next.inlineSize ? current : next);
+    };
+    updateLayout();
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const observer = new ResizeObserver(updateLayout);
+    observer.observe(layout);
+    observer.observe(anchor);
+    return () => observer.disconnect();
+  }, [floatingAction?.anchorNode]);
+
+  useLayoutEffect(() => {
+    const root = scrollRef.current;
+    const sentinel = contentEndRef.current;
+    if (!root || !sentinel || typeof IntersectionObserver === "undefined") {
+      setContentEndVisible(false);
+      return undefined;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      setContentEndVisible(Boolean(entry?.isIntersecting));
+    }, { root, threshold: [0] });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [contentWidth, mode]);
 
   const overlayLayout = resolveOverlayLayout({
     toastHeight,
     floatingActionHeight,
-    floatingActionOpen,
+    floatingActionOpen: Boolean(floatingAction?.open),
     bottomBarHeight: bottomBar ? GLOBAL_UTILITY_BAR_HEIGHT_PX : 0,
   });
   const scrollClassName = cn(
@@ -71,9 +127,11 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
     contentWidth,
     scrollRef,
     floatingActionHost,
-    registerFloatingActionNode,
+    floatingActionLayout,
+    contentEndVisible,
+    registerFloatingAction,
     setFloatingActionOpen,
-  }), [contentWidth, floatingActionHost, registerFloatingActionNode, scrollRef]);
+  }), [contentWidth, contentEndVisible, floatingActionHost, floatingActionLayout, registerFloatingAction, scrollRef, setFloatingActionOpen]);
   const scrollStyle = {
     "--app-overlay-clearance": `calc(env(safe-area-inset-bottom, 0px) + ${overlayLayout.overlayClearance}px)`,
   };
@@ -82,14 +140,12 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
   };
 
   return <AppContentLayoutContext.Provider value={contextValue}>
-    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", className)}>
+    <div ref={layoutRef} className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", className)}>
       <div ref={scrollRef} className={scrollClassName} style={scrollStyle}>
-        <ContentWidthContainer className="min-h-full">{children}</ContentWidthContainer>
+        <ContentWidthContainer className="min-h-full">{children}<div ref={contentEndRef} data-slot="app-content-end" className="h-px w-full" aria-hidden="true" /></ContentWidthContainer>
       </div>
-      <div data-slot="floating-action-position" className="app-floating-action-position pointer-events-none absolute inset-x-0 z-20 flex justify-end px-4 md:px-6" style={floatingActionStyle}>
-        <ContentWidthContainer className="flex justify-end">
-          <div ref={assignFloatingActionHost} className="pointer-events-none max-w-full" />
-        </ContentWidthContainer>
+      <div data-slot="floating-action-position" className="app-floating-action-position pointer-events-none absolute inset-x-0 z-20" style={floatingActionStyle}>
+        <div ref={assignFloatingActionHost} className="pointer-events-none relative h-full w-full" />
       </div>
       {bottomBar}
     </div>
