@@ -40,6 +40,7 @@ export function ResourcePage({
   empty,
   summary,
   back,
+  floatingPrimary,
   headingLevel = "h1",
   headerMode,
   headerTitle,
@@ -55,6 +56,7 @@ export function ResourcePage({
       description={description}
       headingLevel={headingLevel}
       actions={headerActionContent}
+      floatingPrimary={floatingPrimary}
     />}
     {!header.showHeader && headerActionContent && <div className="@container/page-header flex justify-end">{headerActionContent}</div>}
     <ResourceToolbar title={title} search={search} filters={filters} view={view} onViewChange={onViewChange} showViewToggle={showViewToggle} />

@@ -79,9 +79,47 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 `scrollRef` 指向 `.app-content-scroll`，不是 `window`。普通页面、工作区页面和打开详情后的主工作区都应以它作为页面滚动观察的根容器；详情面板自身仍有独立滚动边界。
 
-根级 `PageHeader` 会使用该滚动根通过 `IntersectionObserver` 报告 `pageHeaderVisible`。页头仍有任意可见区域时为 `true`，完全离开内容视口后为 `false`。状态由 `PageChromeContext` 暴露，当前只建立能力，不改变标题栏的现有显示。
+根级 `PageHeader` 会使用该滚动根通过 `IntersectionObserver` 报告 `pageHeaderVisible`。页头仍有任意可见区域时为 `true`，完全离开内容视口后为 `false`。状态由 `PageChromeContext` 暴露，标题栏和悬浮主操作都只消费根级 `h1` 的状态。
 
-后续接入标题栏或悬浮操作时，必须遵守以下规则：
+页面切换后，旧页头必须注销，新页面在注册前保持安全的可见默认值。普通页面、工作区页面和详情打开后的主工作区都使用 `.app-content-scroll`；详情面板自己的滚动不能改变主页面状态。
+
+## 标题栏 Breadcrumb
+
+标题栏只使用 `buildBreadcrumbItems()` 生成的一套完整路径。不要同时渲染两套路径 DOM，也不要通过透明度动画在不同路径结构之间切换。
+
+标题栏偏好和页头状态的规则如下：
+
+| 状态 | 默认内容 | Hover / Focus |
+| --- | --- | --- |
+| 页眉可见 + 页面/应用偏好 | 完整 Breadcrumb | 保持完整 Breadcrumb |
+| 页眉可见 + 无偏好 | 空 | 展开完整 Breadcrumb |
+| 页眉已滚出 + 页面偏好 | 页面名称 | 展开完整 Breadcrumb |
+| 页眉已滚出 + 应用偏好 | `StagePilot` | 展开完整 Breadcrumb |
+| 页眉已滚出 + 无偏好 | 空 | 展开完整 Breadcrumb |
+
+“完整”表示路径数据不被业务逻辑裁剪。窄窗口可以使用 CSS 省略单个标签，并通过 `title` 保留完整文本；不能因为窗口变窄而创建另一套语义路径。
+
+标题栏中部的空白区域必须归 `data-tauri-drag-region`。标题文本和 Breadcrumb 只允许实际链接区域接收指针，不能使用覆盖整个中部的透明交互层，否则会阻断窗口拖拽。
+
+## 悬浮主操作
+
+长表单和高频创建页可以显式传入 `floatingPrimary`，或者在没有直接 `PageHeader` 的编辑器内使用 `FloatingPrimaryAction`：
+
+```jsx
+<PageHeader
+  title="全部表单"
+  actions={<PageHeaderActions primary={<Button onClick={openCreate}>新建表单</Button>} />}
+  floatingPrimary={<Button onClick={openCreate}>新建表单</Button>}
+/>
+```
+
+悬浮主操作只在根级 `h1` 页眉完全滚出后出现；页眉可见时只显示页头中的原按钮。每个页面最多一个悬浮主操作，必须由页面显式启用，不能因为存在 `primary` 自动生成。
+
+悬浮按钮通过 `AppContentLayout` 的内容宽度容器对齐。`/work` 中必须避开 48px 全局工具栏和 Toast 安全区域；详情打开时仍属于主内容区，不进入详情面板。悬浮按钮必须复用原有点击、禁用、加载和 `notify` 行为。
+
+悬浮操作适合创建、发布等单一主动作，不适合详情关闭、页面返回、侧栏切换、保存草稿或低频菜单。长表单只能选择一个高频主动作，例如发布；保存、校验和预览继续保留在编辑器工具栏。
+
+接入标题栏或悬浮操作时，必须遵守以下规则：
 
 - 只消费根级 `h1` 页头状态，不能让嵌入式 `h2` 改写状态。
 - 页面切换和页头卸载后清理注册，默认恢复为可见。

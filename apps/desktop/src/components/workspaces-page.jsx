@@ -21,7 +21,7 @@ export function WorkspacesPage({ onCreateWorkspace }) {
   const onboarding = status === "none";
   return (
     <div className="mx-auto w-full max-w-xl space-y-5">
-      <PageHeader title={onboarding ? "创建你的第一个工作空间" : "选择工作空间"} description={onboarding ? "工作空间沉淀长期组织资产，未来的活动都在它里面进行。" : "你拥有多个工作空间，选择一个继续，或创建新的工作空间。"} actions={<PageHeaderActions primary={<Button onClick={onCreateWorkspace}>＋ 创建新的工作空间</Button>} />} />
+      <PageHeader title={onboarding ? "创建你的第一个工作空间" : "选择工作空间"} description={onboarding ? "工作空间沉淀长期组织资产，未来的活动都在它里面进行。" : "你拥有多个工作空间，选择一个继续，或创建新的工作空间。"} actions={<PageHeaderActions primary={<Button onClick={onCreateWorkspace}>＋ 创建新的工作空间</Button>} />} floatingPrimary={<Button onClick={onCreateWorkspace}>＋ 创建新的工作空间</Button>} />
       {!onboarding && workspaces.length > 0 && (
         <div className="space-y-2">
           {workspaces.map((workspace) => (

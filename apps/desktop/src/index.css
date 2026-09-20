@@ -154,7 +154,7 @@
 }
 
 .titlebar-breadcrumbs {
-    width: var(--titlebar-safe-width, 0px);
+    min-width: 0;
 }
 
 .titlebar-breadcrumb-list {

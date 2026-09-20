@@ -19,7 +19,7 @@ export function ProductionPageBackLink({ workspace, production, children = "活�
   return <AppBackLink to={target} label={label} onBeforeNavigate={onLeaveCreation ? async () => { await onLeaveCreation(); return false; } : undefined} />;
 }
 
-export function ProductionPageHeader({ workspace, production, title, titleContent, subtitle, actions, children, onLeaveCreation, backTo, backLabel = "活动概览" }) {
+export function ProductionPageHeader({ workspace, production, title, titleContent, subtitle, actions, floatingPrimary, children, onLeaveCreation, backTo, backLabel = "活动概览" }) {
   const status = production ? productionStatusLabel(production.status) : null;
   return <PageHeader
     back={<ProductionPageBackLink workspace={workspace} production={production} onLeaveCreation={onLeaveCreation} backTo={backTo}>{backLabel}</ProductionPageBackLink>}
@@ -28,6 +28,7 @@ export function ProductionPageHeader({ workspace, production, title, titleConten
     titleAccessory={!titleContent && status ? <Badge className={status.className} variant="secondary">{status.label}</Badge> : null}
     description={subtitle || `${workspace.name} · 活动工作区`}
     actions={actions ? <PageHeaderActions {...actions} /> : null}
+    floatingPrimary={floatingPrimary}
   >{children}</PageHeader>;
 }
 

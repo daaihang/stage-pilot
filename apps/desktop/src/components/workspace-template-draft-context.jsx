@@ -110,5 +110,5 @@ export function TemplateDraftProvider({ mode = "campaign", template, version, wo
 }
 
 export function TemplateEditorShell({ mode = "campaign", children }) {
-  return <RevisionEditorShell showPreview={mode === "campaign"} previewButtonLabel="预览模板">{children}</RevisionEditorShell>;
+  return <RevisionEditorShell showPreview={mode === "campaign"} previewButtonLabel="预览模板" floatingPrimary>{children}</RevisionEditorShell>;
 }
