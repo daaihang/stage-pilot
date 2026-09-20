@@ -10,6 +10,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
+import { resolveTitlebarDefault } from "@/lib/titlebar-display";
 
 const TEXT_SWAP_DURATION = 150;
 const TITLEBAR_SAFE_GAP = 12;
@@ -104,12 +105,37 @@ function useTitlebarSafeArea(rootRef) {
   return safeArea;
 }
 
-export function TitlebarBreadcrumbs({ items = [], title, showTitle = true }) {
+function BreadcrumbPath({ items }) {
+  return <Breadcrumb>
+    <BreadcrumbList className="titlebar-breadcrumb-list">
+      {items.map((item, index) => (
+        <Fragment key={`${item.label}-${index}`}>
+          {index > 0 && <BreadcrumbSeparator />}
+          <BreadcrumbItem>
+            {item.ellipsis ? (
+              <BreadcrumbEllipsis />
+            ) : item.current || !item.to ? (
+              <BreadcrumbPage className="titlebar-breadcrumb-label">{item.label}</BreadcrumbPage>
+            ) : (
+              <BreadcrumbLink render={<Link to={item.to} />} className="titlebar-breadcrumb-label">
+                {item.label}
+              </BreadcrumbLink>
+            )}
+          </BreadcrumbItem>
+        </Fragment>
+      ))}
+    </BreadcrumbList>
+  </Breadcrumb>;
+}
+
+export function TitlebarBreadcrumbs({ items = [], title, showTitle = true, pageHeaderVisible = true }) {
   const rootRef = useRef(null);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const expanded = (hovered || focused) && items.length > 0;
-  const collapsedLabel = showTitle ? title : "";
+  const collapsed = resolveTitlebarDefault({ pageHeaderVisible, showTitle, pageTitle: title, items });
+  const collapsedLabel = collapsed.mode === "title" ? collapsed.label : "";
+  const hasCollapsedContent = collapsed.mode !== "empty";
   const safeArea = useTitlebarSafeArea(rootRef);
   const swap = useTextSwap(expanded);
   const swapClassName = (isExpanded) => cn(
@@ -145,42 +171,30 @@ export function TitlebarBreadcrumbs({ items = [], title, showTitle = true }) {
       }}
       aria-label="当前页面路径"
     >
-      <div className="relative flex w-full min-w-0 max-w-[900px] items-center justify-center">
+      <div className="relative inline-grid min-w-0 max-w-full items-center justify-center">
         <div
           className={cn(
-            "pointer-events-none absolute left-1/2 top-1/2 flex h-6 max-w-full -translate-x-1/2 -translate-y-1/2 items-center justify-center overflow-hidden whitespace-nowrap",
+            "pointer-events-none col-start-1 row-start-1 flex h-6 max-w-full items-center justify-center overflow-hidden whitespace-nowrap",
           )}
-          aria-hidden={swap.value || !collapsedLabel}
+          aria-hidden={swap.value || !hasCollapsedContent}
         >
-          <span className={cn("titlebar-breadcrumb-label px-1 text-xs font-medium", swapClassName(false))}>{collapsedLabel}</span>
+          {collapsed.mode === "compact-breadcrumb" ? (
+            <div className={cn("pointer-events-auto", swapClassName(false))}>
+              <BreadcrumbPath items={collapsed.items} />
+            </div>
+          ) : (
+            <span className={cn("pointer-events-auto titlebar-breadcrumb-label px-1 text-xs font-medium", swapClassName(false))}>{collapsedLabel}</span>
+          )}
         </div>
         <div
           className={cn(
-            "pointer-events-auto flex h-6 max-w-full items-center justify-center overflow-hidden whitespace-nowrap",
+            "col-start-1 row-start-1 flex h-6 max-w-full items-center justify-center overflow-hidden whitespace-nowrap",
+            expanded ? "pointer-events-auto" : "pointer-events-none",
           )}
           aria-hidden={!swap.value}
         >
-          <div className={cn(swapClassName(true), swap.value !== true && "pointer-events-none")}>
-            <Breadcrumb>
-              <BreadcrumbList className="titlebar-breadcrumb-list">
-              {visibleItems.map((item, index) => (
-                <Fragment key={`${item.label}-${index}`}>
-                  {index > 0 && <BreadcrumbSeparator />}
-                  <BreadcrumbItem>
-                    {item.ellipsis ? (
-                      <BreadcrumbEllipsis />
-                    ) : item.current || !item.to ? (
-                      <BreadcrumbPage className="titlebar-breadcrumb-label">{item.label}</BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink render={<Link to={item.to} />} className="titlebar-breadcrumb-label">
-                        {item.label}
-                      </BreadcrumbLink>
-                    )}
-                  </BreadcrumbItem>
-                </Fragment>
-              ))}
-              </BreadcrumbList>
-            </Breadcrumb>
+          <div className={swapClassName(true)}>
+            <BreadcrumbPath items={visibleItems} />
           </div>
         </div>
       </div>

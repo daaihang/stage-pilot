@@ -1,4 +1,5 @@
 import { Children, useEffect, useId, useRef } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { PAGE_HEADER_ACTION_MIN_INLINE_SIZE, resolvePageHeaderActionsLayout } from "@/lib/page-header-actions-layout";
 import { resolvePageHeaderVisibility, shouldTrackPageHeader } from "@/lib/page-header-visibility";
@@ -16,6 +17,7 @@ export function PageHeader({
   titleAccessory,
   description,
   actions,
+  floatingPrimary,
   headingLevel = "h1",
   children,
   className,
@@ -23,8 +25,8 @@ export function PageHeader({
   const Heading = headingLevel;
   const headerRef = useRef(null);
   const pageHeaderId = useId();
-  const { scrollRef } = useAppContentLayout();
-  const { registerPageHeader, reportPageHeaderVisibility } = usePageChrome();
+  const { scrollRef, floatingActionHost } = useAppContentLayout();
+  const { pageHeaderVisible, registerPageHeader, reportPageHeaderVisibility } = usePageChrome();
   const trackVisibility = shouldTrackPageHeader(headingLevel);
   const resolvedTitle = titleContent || (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -55,7 +57,7 @@ export function PageHeader({
     };
   }, [pageHeaderId, registerPageHeader, reportPageHeaderVisibility, scrollRef, trackVisibility]);
 
-  return (
+  return <>
     <header ref={headerRef} data-page-header={trackVisibility ? "root" : "section"} className={cn("@container/page-header min-w-0 space-y-2", className)}>
       {back}
       <div className="flex min-w-0 flex-col gap-4 @min-[40rem]/page-header:flex-row @min-[40rem]/page-header:items-start @min-[40rem]/page-header:justify-between">
@@ -67,7 +69,13 @@ export function PageHeader({
         {actions}
       </div>
     </header>
-  );
+    {floatingPrimary && trackVisibility && !pageHeaderVisible && floatingActionHost ? createPortal(
+      <div data-page-header-floating-primary className="pointer-events-auto max-w-full [&_[data-slot=button]]:shadow-lg">
+        {floatingPrimary}
+      </div>,
+      floatingActionHost,
+    ) : null}
+  </>;
 }
 
 /**
