@@ -85,7 +85,7 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 ## 标题栏 Breadcrumb
 
-标题栏只使用 `buildBreadcrumbItems()` 生成的一套完整路径。不要同时渲染两套路径 DOM，也不要通过透明度动画在不同路径结构之间切换。
+标题栏只使用 `buildBreadcrumbItems()` 生成的一套完整路径。路径会被规范化为 canonical items；页眉滚动、Hover、Focus 和偏好切换只能改变展示层，不能切片、排序、替换或重建 Breadcrumb 数据。路径真实变化只能来自路由或上下文名称变化。
 
 标题栏偏好和页头状态的规则如下：
 
@@ -97,7 +97,7 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 | 页眉已滚出 + 应用偏好 | `StagePilot` | 展开完整 Breadcrumb |
 | 页眉已滚出 + 无偏好 | 空 | 展开完整 Breadcrumb |
 
-“完整”表示路径数据不被业务逻辑裁剪。窄窗口可以使用 CSS 省略单个标签，并通过 `title` 保留完整文本；不能因为窗口变窄而创建另一套语义路径。
+“完整”表示路径数据不被业务逻辑裁剪。窄窗口可以使用 CSS 省略单个标签，并通过 `title` 保留完整文本；不能因为窗口变窄而创建另一套语义路径。路径存在时，标题栏中始终只保留一个 `<Breadcrumb>` DOM；页面名和空状态是同一中部区域内的独立展示层。隐藏的路径必须 `aria-hidden`、`inert` 且不可点击。
 
 标题栏中部的空白区域必须归 `data-tauri-drag-region`。标题文本和 Breadcrumb 只允许实际链接区域接收指针，不能使用覆盖整个中部的透明交互层，否则会阻断窗口拖拽。
 
@@ -115,7 +115,11 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 悬浮主操作只在根级 `h1` 页眉完全滚出后出现；页眉可见时只显示页头中的原按钮。每个页面最多一个悬浮主操作，必须由页面显式启用，不能因为存在 `primary` 自动生成。
 
-悬浮按钮通过 `AppContentLayout` 的内容宽度容器对齐。`/work` 中必须避开 48px 全局工具栏和 Toast 安全区域；详情打开时仍属于主内容区，不进入详情面板。悬浮按钮必须复用原有点击、禁用、加载和 `notify` 行为。
+悬浮按钮由内部 `FloatingActionDock` 持续挂载，使用位置层和动作层分离动画：位置层只处理 Toast 避让的 `bottom`，动作层才执行滑入、缩放、淡出和模糊。页眉离开时从下方滑入并轻微 pop；回到可见区时按钮会立刻失去焦点与指针能力，但保留到退出动画结束，滚动安全区也会在这段时间继续生效。减少动画偏好下应立即切换。
+
+悬浮按钮通过 `AppContentLayout` 的内容宽度容器对齐。`/work` 中必须避开 48px 全局工具栏；Toast 出现时才按实际高度向上避让，不能使用固定 `5rem` 空白。详情打开时仍属于主内容区，不进入详情面板。悬浮按钮必须复用原有点击、禁用、加载和 `notify` 行为。
+
+`AppSonner` 会向 `OverlayAvoidanceProvider` 报告当前可见 Toast 的真实高度。`AppContentLayout` 用这份数据计算 Dock 位置，并写入 `--app-overlay-clearance`；主滚动区必须将它同时用于 `padding-block-end` 和 `scroll-padding-block-end`。这保证最后内容、键盘 Tab、表单错误定位和 `scrollIntoView()` 都不会落在 Toast 或 Dock 下方。不要只移动浮层而不补偿滚动区，也不要在业务页面手写固定底部预留。
 
 悬浮操作适合创建、发布等单一主动作，不适合详情关闭、页面返回、侧栏切换、保存草稿或低频菜单。长表单只能选择一个高频主动作，例如发布；保存、校验和预览继续保留在编辑器工具栏。
 

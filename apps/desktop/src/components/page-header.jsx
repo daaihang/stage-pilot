@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { PAGE_HEADER_ACTION_MIN_INLINE_SIZE, resolvePageHeaderActionsLayout } from "@/lib/page-header-actions-layout";
 import { resolvePageHeaderVisibility, shouldTrackPageHeader } from "@/lib/page-header-visibility";
-import { shouldShowFloatingPrimary } from "@/lib/page-header-floating";
+import { resolveFloatingPrimaryState } from "@/lib/page-header-floating";
 import { useAppContentLayout } from "@/components/app-content-layout";
 import { usePageChrome } from "@/components/page-chrome";
 
@@ -77,10 +77,50 @@ export function PageHeader({
 export function FloatingPrimaryAction({ children, enabled = true }) {
   const { pageHeaderVisible } = usePageChrome();
   const { floatingActionHost } = useAppContentLayout();
-  if (!shouldShowFloatingPrimary({ enabled, pageHeaderVisible, hasHost: Boolean(floatingActionHost) })) return null;
+  const state = resolveFloatingPrimaryState({ enabled, pageHeaderVisible, hasHost: Boolean(floatingActionHost) });
+
+  if (!state.mounted) return null;
+  return <FloatingActionDock state={state}>{children}</FloatingActionDock>;
+}
+
+function FloatingActionDock({ children, state }) {
+  const { floatingActionHost, registerFloatingActionNode, setFloatingActionOpen } = useAppContentLayout();
+  const wasOpenRef = useRef(state.open);
+
+  useEffect(() => {
+    if (state.open) {
+      wasOpenRef.current = true;
+      setFloatingActionOpen(true);
+      return undefined;
+    }
+
+    if (!wasOpenRef.current) {
+      setFloatingActionOpen(false);
+      return undefined;
+    }
+
+    const reducedMotion = typeof window !== "undefined"
+      && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const timer = window.setTimeout(() => {
+      wasOpenRef.current = false;
+      setFloatingActionOpen(false);
+    }, reducedMotion ? 0 : 180);
+
+    return () => window.clearTimeout(timer);
+  }, [setFloatingActionOpen, state.open]);
+
+  useEffect(() => () => setFloatingActionOpen(false), [setFloatingActionOpen]);
+
   return createPortal(
-    <div data-page-header-floating-primary className="pointer-events-auto flex max-w-full justify-end [&_[data-slot=button]]:shadow-lg">
-      {children}
+    <div
+      ref={registerFloatingActionNode}
+      data-page-header-floating-primary
+      data-open={state.open ? "true" : "false"}
+      aria-hidden={state.inert || undefined}
+      inert={state.inert ? "" : undefined}
+      className="app-floating-action-dock pointer-events-auto flex max-w-full justify-end [&_[data-slot=button]]:shadow-lg"
+    >
+      <div data-slot="floating-action-control">{children}</div>
     </div>,
     floatingActionHost,
   );

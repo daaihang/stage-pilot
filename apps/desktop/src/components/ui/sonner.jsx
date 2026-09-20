@@ -15,6 +15,7 @@ import {
 
 import { cn } from "@/lib/utils"
 import { useSidebar } from "@/components/ui/sidebar"
+import { useOverlayAvoidance } from "@/components/overlay-avoidance-context"
 
 const notificationIcons = {
   success: RiCheckboxCircleLine,
@@ -144,10 +145,46 @@ const notify = {
 function AppSonner({ sidebarVisible = true, bottomOffset = "0px" }) {
   const { theme = "system" } = useTheme()
   const { open, isMobile } = useSidebar()
+  const { setToastHeight } = useOverlayAvoidance()
+  const toasterRef = React.useRef(null)
   const sidebarOffset = sidebarVisible && !isMobile && (open ? "var(--sidebar-width)" : "var(--sidebar-width-icon)")
+
+  React.useLayoutEffect(() => {
+    const toaster = toasterRef.current
+    if (!toaster) {
+      setToastHeight(0)
+      return undefined
+    }
+
+    let observedToast = null
+    let resizeObserver = null
+    const report = () => {
+      const activeToast = toaster.querySelector('[data-sonner-toast][data-mounted="true"]:not([data-removed="true"]):not([data-visible="false"])')
+      if (activeToast !== observedToast) {
+        resizeObserver?.disconnect()
+        observedToast = activeToast
+        if (observedToast && typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver(() => report())
+          resizeObserver.observe(observedToast)
+        }
+      }
+      setToastHeight(observedToast ? observedToast.getBoundingClientRect().height : 0)
+    }
+
+    report()
+    const mutationObserver = new MutationObserver(report)
+    mutationObserver.observe(toaster, { attributes: true, childList: true, subtree: true })
+
+    return () => {
+      mutationObserver.disconnect()
+      resizeObserver?.disconnect()
+      setToastHeight(0)
+    }
+  }, [setToastHeight])
 
   return (
     <Sonner
+      ref={toasterRef}
       theme={theme}
       position="bottom-center"
       offset={0}

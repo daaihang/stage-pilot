@@ -12,6 +12,14 @@
     --text-swap-translate-y: 4px;
     --text-swap-blur: 2px;
     --text-swap-ease: ease-in-out;
+    --floating-action-slide-dur: 260ms;
+    --floating-action-pop-dur: 500ms;
+    --floating-action-close-dur: 180ms;
+    --floating-action-blur: 2px;
+    --floating-action-offset-y: 12px;
+    --floating-action-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --floating-action-pop-ease: cubic-bezier(0.34, 1.36, 0.64, 1);
+    --floating-action-close-ease: cubic-bezier(0.4, 0, 0.2, 1);
     --resize-dur: 300ms;
     --resize-ease: cubic-bezier(0.22, 1, 0.36, 1);
     --modal-open-dur: 250ms;
@@ -157,6 +165,33 @@
     min-width: 0;
 }
 
+.titlebar-breadcrumb-surface,
+.titlebar-title-surface {
+    position: absolute;
+    inset-inline: 0;
+    top: 50%;
+    display: flex;
+    min-width: 0;
+    justify-content: center;
+    transform: translateY(-50%);
+}
+
+.titlebar-breadcrumb-surface {
+    transition:
+        opacity var(--text-swap-dur) var(--text-swap-ease),
+        filter var(--text-swap-dur) var(--text-swap-ease);
+}
+
+.titlebar-breadcrumb-surface-hidden {
+    opacity: 0;
+    filter: blur(var(--text-swap-blur));
+}
+
+.titlebar-title-surface {
+    width: max-content;
+    max-width: 100%;
+}
+
 .titlebar-breadcrumb-list {
     min-width: 0;
     max-width: 100%;
@@ -181,9 +216,14 @@
 
 @media (prefers-reduced-motion: reduce) {
     .t-text-swap,
+    .titlebar-breadcrumb-surface,
     .t-resize,
-    .t-modal {
+    .t-modal,
+    .app-floating-action-position,
+    .app-floating-action-dock,
+    .app-floating-action-dock > [data-slot="floating-action-control"] {
         transition: none !important;
+        animation: none !important;
     }
 
     .detail-surface {
@@ -399,6 +439,69 @@
 
 .app-content-scroll {
   scrollbar-gutter: stable;
+  padding-block-end: calc(1rem + var(--app-overlay-clearance, 0px));
+  scroll-padding-block-end: calc(1rem + var(--app-overlay-clearance, 0px));
+}
+
+@media (min-width: 48rem) {
+  .app-content-scroll {
+    padding-block-end: calc(1.5rem + var(--app-overlay-clearance, 0px));
+    scroll-padding-block-end: calc(1.5rem + var(--app-overlay-clearance, 0px));
+  }
+}
+
+@keyframes app-floating-action-slide-in {
+  from {
+    transform: translateY(var(--floating-action-offset-y));
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes app-floating-action-pop-in {
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+    filter: blur(var(--floating-action-blur));
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.app-floating-action-position {
+  transition: bottom var(--floating-action-close-dur) var(--floating-action-slide-ease);
+  will-change: bottom;
+}
+
+.app-floating-action-dock {
+  transform: translateY(0) scale(1);
+  transform-origin: bottom right;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    transform var(--floating-action-close-dur) var(--floating-action-close-ease),
+    opacity var(--floating-action-close-dur) var(--floating-action-close-ease),
+    filter var(--floating-action-close-dur) var(--floating-action-close-ease);
+  will-change: transform, opacity, filter;
+}
+
+.app-floating-action-dock[data-open="true"] {
+  animation: app-floating-action-slide-in var(--floating-action-slide-dur) var(--floating-action-slide-ease);
+}
+
+.app-floating-action-dock[data-open="true"] > [data-slot="floating-action-control"] {
+  animation: app-floating-action-pop-in var(--floating-action-pop-dur) var(--floating-action-pop-ease);
+}
+
+.app-floating-action-dock[data-open="false"] {
+  transform: translateY(var(--floating-action-offset-y)) scale(0.92);
+  opacity: 0;
+  filter: blur(var(--floating-action-blur));
+  pointer-events: none;
 }
 
 /* One project-wide Sonner: a flush, full-width bottom notification bar. */
