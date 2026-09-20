@@ -1,10 +1,17 @@
-import { createContext, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { Maximize2, PanelRightOpen, X } from "@/components/ui/icons";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getDetailActionLabels } from "@/lib/detail-action-labels";
 
-const PageChromeContext = createContext({ detailAction: null, setDetailAction: () => {} });
+const defaultPageChromeContext = {
+  detailAction: null,
+  setDetailAction: () => {},
+  pageHeaderVisible: true,
+  registerPageHeader: () => () => {},
+  reportPageHeaderVisibility: () => {},
+};
+const PageChromeContext = createContext(defaultPageChromeContext);
 
 export function PageDetailTitlebarAction() {
   const { detailAction } = usePageChrome();
@@ -28,7 +35,27 @@ export function PageDetailTitlebarAction() {
 
 export function PageChromeProvider({ children }) {
   const [detailAction, setDetailAction] = useState(null);
-  const value = useMemo(() => ({ detailAction, setDetailAction }), [detailAction]);
+  const [pageHeaderVisible, setPageHeaderVisible] = useState(true);
+  const activePageHeaderIdRef = useRef(null);
+  const registerPageHeader = useCallback((id) => {
+    activePageHeaderIdRef.current = id;
+    setPageHeaderVisible(true);
+    return () => {
+      if (activePageHeaderIdRef.current !== id) return;
+      activePageHeaderIdRef.current = null;
+      setPageHeaderVisible(true);
+    };
+  }, []);
+  const reportPageHeaderVisibility = useCallback((id, visible) => {
+    if (activePageHeaderIdRef.current === id) setPageHeaderVisible(Boolean(visible));
+  }, []);
+  const value = useMemo(() => ({
+    detailAction,
+    setDetailAction,
+    pageHeaderVisible,
+    registerPageHeader,
+    reportPageHeaderVisibility,
+  }), [detailAction, pageHeaderVisible, registerPageHeader, reportPageHeaderVisibility]);
   return <PageChromeContext.Provider value={value}>{children}</PageChromeContext.Provider>;
 }
 

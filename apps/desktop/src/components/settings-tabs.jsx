@@ -215,7 +215,6 @@ export function SectionTabsLayout({
             aria-label={ariaLabel}
             className={cn(
               "w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none @min-[56rem]/settings-tabs:h-fit @min-[56rem]/settings-tabs:w-full @min-[56rem]/settings-tabs:flex-col @min-[56rem]/settings-tabs:items-stretch",
-              shouldPin && orientation === "horizontal" && "shadow-[0_5px_12px_-8px_rgba(0,0,0,0.45)]",
               shouldPin && orientation === "vertical" && "max-h-[calc(100dvh-var(--app-titlebar-height)-2rem)] overflow-y-auto overflow-x-hidden scrollbar-thin",
               orientation === "vertical" && !shouldPin && "@min-[56rem]/settings-tabs:overflow-visible",
             )}

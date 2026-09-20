@@ -1,6 +1,9 @@
-import { Children } from "react";
+import { Children, useEffect, useId, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { PAGE_HEADER_ACTION_MIN_INLINE_SIZE, resolvePageHeaderActionsLayout } from "@/lib/page-header-actions-layout";
+import { resolvePageHeaderVisibility, shouldTrackPageHeader } from "@/lib/page-header-visibility";
+import { useAppContentLayout } from "@/components/app-content-layout";
+import { usePageChrome } from "@/components/page-chrome";
 
 /**
  * Shared page-level heading. Navigation belongs above the page title, while
@@ -18,6 +21,11 @@ export function PageHeader({
   className,
 }) {
   const Heading = headingLevel;
+  const headerRef = useRef(null);
+  const pageHeaderId = useId();
+  const { scrollRef } = useAppContentLayout();
+  const { registerPageHeader, reportPageHeaderVisibility } = usePageChrome();
+  const trackVisibility = shouldTrackPageHeader(headingLevel);
   const resolvedTitle = titleContent || (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
       <Heading className="min-w-0 break-words text-2xl font-semibold tracking-tight">{title}</Heading>
@@ -25,8 +33,30 @@ export function PageHeader({
     </div>
   );
 
+  useEffect(() => {
+    if (!trackVisibility) return undefined;
+
+    const unregister = registerPageHeader(pageHeaderId);
+    const header = headerRef.current;
+    const root = scrollRef?.current;
+    if (!header || !root || typeof IntersectionObserver === "undefined") {
+      reportPageHeaderVisibility(pageHeaderId, true);
+      return unregister;
+    }
+
+    const observer = new IntersectionObserver(([entry]) => {
+      reportPageHeaderVisibility(pageHeaderId, resolvePageHeaderVisibility(entry));
+    }, { root, threshold: [0] });
+    observer.observe(header);
+
+    return () => {
+      observer.disconnect();
+      unregister();
+    };
+  }, [pageHeaderId, registerPageHeader, reportPageHeaderVisibility, scrollRef, trackVisibility]);
+
   return (
-    <header className={cn("@container/page-header min-w-0 space-y-2", className)}>
+    <header ref={headerRef} data-page-header={trackVisibility ? "root" : "section"} className={cn("@container/page-header min-w-0 space-y-2", className)}>
       {back}
       <div className="flex min-w-0 flex-col gap-4 @min-[40rem]/page-header:flex-row @min-[40rem]/page-header:items-start @min-[40rem]/page-header:justify-between">
         <div className="min-w-0 flex-1 space-y-1">
