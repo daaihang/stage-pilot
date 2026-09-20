@@ -5,7 +5,7 @@ import { roleLabel } from "@/lib/workspace-api";
 import { AppBackLink } from "@/components/app-back-link";
 import { PageHeader, PageHeaderActions } from "@/components/page-header";
 
-export function WorkspacePageHeader({ workspace, role, title, description, actions, floatingPrimary, backTo, backLabel }) {
+export function WorkspacePageHeader({ workspace, role, title, description, actions, backTo, backLabel }) {
   const location = useLocation();
   const route = matchStagePilotRoute(location.pathname, location.search);
   const resolvedBack = resolvePageBack({ route, workspace });
@@ -17,6 +17,5 @@ export function WorkspacePageHeader({ workspace, role, title, description, actio
     titleAccessory={role ? <Badge variant="outline">{roleLabel(role)}</Badge> : null}
     description={description}
     actions={actions ? <PageHeaderActions {...actions} /> : null}
-    floatingPrimary={floatingPrimary}
   />;
 }
