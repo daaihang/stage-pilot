@@ -561,6 +561,7 @@ export function FileTypeManagementPage({ workspace }) {
         title="文件类型"
         description="管理工作空间各类资源的文件分类。分类配置独立于文件本身，后续可由各资源页面复用。"
         actions={pageActions}
+        floatingPrimary={pageActions?.primary || null}
       />
       <SettingsTabs groups={scopeGroups} activeGroup={activeScope} onGroupChange={setActiveScope} ariaLabel="文件归属范围">
         <ResourcePage

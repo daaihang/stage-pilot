@@ -204,9 +204,11 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   };
   const TypeIcon = ResourceTypeDefinition[type]?.icon;
   const resourceTypeAction = TypeIcon ? <Button ref={typePanelTriggerRef} variant="outline" onClick={() => navigate(resourceTypePanelPath(workspace.id, type))}><TypeIcon />管理{configs[type].label}</Button> : null;
+  const canCreate = canManage(workspace);
+  const createAction = <Button onClick={() => setOpen(true)}>新建{resourceDefinitions[type].singular}</Button>;
 
   return <>
-    <ResourcePage back={{ to: workspacePath(workspace.id, "home"), label: workspace.name }} title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} actions={{ primary: canManage(workspace) ? <Button onClick={() => setOpen(true)}>新建{resourceDefinitions[type].singular}</Button> : null, secondary: resourceTypeAction ? [resourceTypeAction] : [] }} loading={loading} empty={empty}>
+    <ResourcePage back={{ to: workspacePath(workspace.id, "home"), label: workspace.name }} title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} actions={{ primary: canCreate ? createAction : null, secondary: resourceTypeAction ? [resourceTypeAction] : [] }} floatingPrimary={canCreate ? createAction : null} loading={loading} empty={empty}>
       {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <ListSurface>{items.map((item) => <Item key={item.id} item={item} />)}</ListSurface>}
     </ResourcePage>
     <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} resourceTypes={types} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />

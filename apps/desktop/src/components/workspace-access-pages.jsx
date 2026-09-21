@@ -297,6 +297,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
       filters={<ResourceFilters fields={memberFilterFields} value={filterQuery} onChange={setFilterQuery} onClear={() => setFilterQuery(createFilterQuery())} />}
       showViewToggle={false}
       actions={{ primary: ["owner", "admin"].includes(workspace.role) ? <Button ref={invitationTriggerRef} onClick={() => navigate(`${workspacePath(workspace.id, "members")}?panel=invitations`)}><UsersRound />成员邀请</Button> : null, secondary: [<Button key="refresh" variant="outline" onClick={() => loadMembers({ withToast: true })} disabled={loading}><RefreshCw className={loading ? "animate-spin" : undefined} />刷新</Button>] }}
+      floatingPrimary={["owner", "admin"].includes(workspace.role) ? <Button onClick={() => navigate(`${workspacePath(workspace.id, "members")}?panel=invitations`)}><UsersRound />成员邀请</Button> : null}
       loading={loading && !members}
       loadingContent={<MembersLoadingState />}
       empty={empty}

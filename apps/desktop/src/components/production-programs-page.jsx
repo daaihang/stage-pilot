@@ -471,6 +471,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
             </Button>,
           ],
         }}
+        floatingPrimary={canWrite ? <Button onClick={() => { setPickerOpen(true); }}><Plus />添加节目</Button> : null}
       />
       <ResourcePage
         headingLevel="h2"
