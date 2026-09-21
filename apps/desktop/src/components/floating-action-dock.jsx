@@ -33,17 +33,23 @@ export function FloatingActionDock({ children, anchorRef, open = false }) {
   }, [anchorRef, dockId, registerFloatingAction, sizeNode]);
 
   useLayoutEffect(() => {
-    if (!sizeNode || presentation.expanded) return undefined;
+    // The compact width is the button's intrinsic width.  Measure it once,
+    // before any full-width transition starts: observing the size layer while
+    // it is animating would continuously replace the transition target and
+    // make the return animation snap.
+    if (!sizeNode || compactWidth > 0) return undefined;
     const updateWidth = () => {
       const nextWidth = Math.max(0, Math.ceil(sizeNode.getBoundingClientRect().width));
-      setCompactWidth((current) => current === nextWidth ? current : nextWidth);
+      if (nextWidth > 0) {
+        setCompactWidth((current) => current === nextWidth ? current : nextWidth);
+      }
     };
     updateWidth();
     if (typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver(updateWidth);
     observer.observe(sizeNode);
     return () => observer.disconnect();
-  }, [presentation.expanded, sizeNode]);
+  }, [compactWidth, sizeNode]);
 
   useEffect(() => {
     if (open) {
@@ -70,7 +76,7 @@ export function FloatingActionDock({ children, anchorRef, open = false }) {
   return createPortal(
     <div
       data-slot="floating-action-anchor"
-      className="pointer-events-none absolute flex max-w-full justify-end"
+      className="pointer-events-none absolute max-w-full"
       style={{
         insetBlockEnd: 0,
         insetInlineStart: `${floatingActionAnchor.inlineStart}px`,
@@ -81,7 +87,7 @@ export function FloatingActionDock({ children, anchorRef, open = false }) {
         ref={setSizeNode}
         data-page-header-floating-primary
         data-expanded={presentation.expanded ? "true" : "false"}
-        className="app-floating-action-size t-resize pointer-events-none ml-auto max-w-full"
+        className="app-floating-action-size t-resize pointer-events-none max-w-full"
         style={presentation.inlineSize ? { inlineSize: `${presentation.inlineSize}px` } : undefined}
       >
         <div

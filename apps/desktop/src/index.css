@@ -493,12 +493,16 @@
 }
 
 .app-floating-action-size {
+  position: absolute;
+  inset-inline-end: 0;
+  inset-block-end: 0;
   max-inline-size: 100%;
 }
 
 .app-floating-action-motion {
   transform: translateY(0) scale(1);
-  transform-origin: bottom right;
+  /* Layout owns the right edge; visual motion always grows from the control's center. */
+  transform-origin: center;
   opacity: 1;
   filter: blur(0);
   transition:
@@ -506,10 +510,6 @@
     opacity var(--floating-action-close-dur) var(--floating-action-close-ease),
     filter var(--floating-action-close-dur) var(--floating-action-close-ease);
   will-change: transform, opacity, filter;
-}
-
-.app-floating-action-size[data-expanded="true"] .app-floating-action-motion {
-  transform-origin: bottom center;
 }
 
 .app-floating-action-size[data-expanded="true"] [data-slot="floating-action-control"],
@@ -522,6 +522,7 @@
 }
 
 .app-floating-action-motion[data-open="true"] > [data-slot="floating-action-control"] {
+  transform-origin: center;
   animation: app-floating-action-pop-in var(--floating-action-pop-dur) var(--floating-action-pop-ease);
 }
 
