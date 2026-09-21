@@ -235,8 +235,8 @@
     .t-resize,
     .t-modal,
     .app-floating-action-position,
-    .app-floating-action-dock,
-    .app-floating-action-dock > [data-slot="floating-action-control"] {
+    .app-floating-action-motion,
+    .app-floating-action-motion > [data-slot="floating-action-control"] {
         transition: none !important;
         animation: none !important;
     }
@@ -492,8 +492,11 @@
   will-change: bottom;
 }
 
-.app-floating-action-dock {
-  margin-inline-start: auto;
+.app-floating-action-size {
+  max-inline-size: 100%;
+}
+
+.app-floating-action-motion {
   transform: translateY(0) scale(1);
   transform-origin: bottom right;
   opacity: 1;
@@ -505,24 +508,24 @@
   will-change: transform, opacity, filter;
 }
 
-.app-floating-action-dock[data-expanded="true"] {
+.app-floating-action-size[data-expanded="true"] .app-floating-action-motion {
   transform-origin: bottom center;
 }
 
-.app-floating-action-dock[data-expanded="true"] > [data-slot="floating-action-control"],
-.app-floating-action-dock[data-expanded="true"] > [data-slot="floating-action-control"] [data-slot="button"] {
+.app-floating-action-size[data-expanded="true"] [data-slot="floating-action-control"],
+.app-floating-action-size[data-expanded="true"] [data-slot="floating-action-control"] [data-slot="button"] {
   width: 100%;
 }
 
-.app-floating-action-dock[data-open="true"] {
+.app-floating-action-motion[data-open="true"] {
   animation: app-floating-action-slide-in var(--floating-action-slide-dur) var(--floating-action-slide-ease);
 }
 
-.app-floating-action-dock[data-open="true"] > [data-slot="floating-action-control"] {
+.app-floating-action-motion[data-open="true"] > [data-slot="floating-action-control"] {
   animation: app-floating-action-pop-in var(--floating-action-pop-dur) var(--floating-action-pop-ease);
 }
 
-.app-floating-action-dock[data-open="false"] {
+.app-floating-action-motion[data-open="false"] {
   transform: translateY(var(--floating-action-offset-y)) scale(0.92);
   opacity: 0;
   filter: blur(var(--floating-action-blur));

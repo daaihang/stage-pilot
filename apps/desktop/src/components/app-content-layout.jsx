@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { contentWidthClass } from "@/lib/content-width";
 import { GLOBAL_UTILITY_BAR_HEIGHT_PX } from "@/lib/app-shell-layout";
 import { resolveOverlayLayout } from "@/lib/overlay-layout";
+import { resolveContentEndInSafeZone, resolveFloatingActionAnchor } from "@/lib/floating-action-layout";
 import { useOverlayAvoidance } from "@/components/overlay-avoidance-context";
 
 /**
@@ -16,8 +17,8 @@ const defaultAppContentLayout = {
   contentWidth: "standard",
   scrollRef: null,
   floatingActionHost: null,
-  floatingActionLayout: { inlineStart: 0, inlineSize: 0 },
-  contentEndVisible: false,
+  floatingActionAnchor: { inlineStart: 0, inlineSize: 0 },
+  contentEndInSafeZone: false,
   registerFloatingAction: () => () => {},
   setFloatingActionOpen: () => {},
 };
@@ -39,8 +40,8 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
   const [floatingActionHost, setFloatingActionHost] = useState(null);
   const [floatingAction, setFloatingAction] = useState(null);
   const [floatingActionHeight, setFloatingActionHeight] = useState(0);
-  const [floatingActionLayout, setFloatingActionLayout] = useState({ inlineStart: 0, inlineSize: 0 });
-  const [contentEndVisible, setContentEndVisible] = useState(false);
+  const [floatingActionAnchor, setFloatingActionAnchor] = useState({ inlineStart: 0, inlineSize: 0 });
+  const [contentEndInSafeZone, setContentEndInSafeZone] = useState(false);
   const { toastHeight } = useOverlayAvoidance();
   const assignFloatingActionHost = useCallback((node) => setFloatingActionHost(node), []);
   const registerFloatingAction = useCallback((nextAction) => {
@@ -79,17 +80,12 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
     const layout = layoutRef.current;
     const anchor = floatingAction?.anchorNode;
     if (!layout || !anchor) {
-      setFloatingActionLayout({ inlineStart: 0, inlineSize: 0 });
+      setFloatingActionAnchor({ inlineStart: 0, inlineSize: 0 });
       return undefined;
     }
     const updateLayout = () => {
-      const layoutRect = layout.getBoundingClientRect();
-      const anchorRect = anchor.getBoundingClientRect();
-      const next = {
-        inlineStart: Math.max(0, Math.round(anchorRect.left - layoutRect.left)),
-        inlineSize: Math.max(0, Math.round(Math.min(anchorRect.width, layoutRect.width))),
-      };
-      setFloatingActionLayout((current) => current.inlineStart === next.inlineStart && current.inlineSize === next.inlineSize ? current : next);
+      const next = resolveFloatingActionAnchor({ layoutRect: layout.getBoundingClientRect(), anchorRect: anchor.getBoundingClientRect() });
+      setFloatingActionAnchor((current) => current.inlineStart === next.inlineStart && current.inlineSize === next.inlineSize ? current : next);
     };
     updateLayout();
     if (typeof ResizeObserver === "undefined") return undefined;
@@ -99,26 +95,47 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
     return () => observer.disconnect();
   }, [floatingAction?.anchorNode]);
 
-  useLayoutEffect(() => {
-    const root = scrollRef.current;
-    const sentinel = contentEndRef.current;
-    if (!root || !sentinel || typeof IntersectionObserver === "undefined") {
-      setContentEndVisible(false);
-      return undefined;
-    }
-    const observer = new IntersectionObserver(([entry]) => {
-      setContentEndVisible(Boolean(entry?.isIntersecting));
-    }, { root, threshold: [0] });
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [contentWidth, mode]);
-
   const overlayLayout = resolveOverlayLayout({
     toastHeight,
     floatingActionHeight,
     floatingActionOpen: Boolean(floatingAction?.open),
     bottomBarHeight: bottomBar ? GLOBAL_UTILITY_BAR_HEIGHT_PX : 0,
   });
+
+  useLayoutEffect(() => {
+    const root = scrollRef.current;
+    const sentinel = contentEndRef.current;
+    if (!root || !sentinel) {
+      setContentEndInSafeZone(false);
+      return undefined;
+    }
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const next = resolveContentEndInSafeZone({
+        rootRect: root.getBoundingClientRect(),
+        sentinelRect: sentinel.getBoundingClientRect(),
+        bottomClearance: overlayLayout.overlayClearance,
+      });
+      setContentEndInSafeZone((current) => current === next ? current : next);
+    };
+    const scheduleMeasure = () => {
+      if (!frame) frame = window.requestAnimationFrame(measure);
+    };
+    measure();
+    root.addEventListener("scroll", scheduleMeasure, { passive: true });
+    const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(scheduleMeasure, { root, threshold: [0] });
+    observer?.observe(sentinel);
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
+    resizeObserver?.observe(root);
+    resizeObserver?.observe(sentinel);
+    return () => {
+      root.removeEventListener("scroll", scheduleMeasure);
+      if (frame) window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+      resizeObserver?.disconnect();
+    };
+  }, [contentWidth, mode, overlayLayout.overlayClearance]);
   const scrollClassName = cn(
     "app-content-scroll min-h-0 min-w-0 overflow-x-hidden overflow-y-auto p-4 md:p-6",
     mode === "workspace" && !bottomBar ? "h-full" : "flex-1",
@@ -127,11 +144,11 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
     contentWidth,
     scrollRef,
     floatingActionHost,
-    floatingActionLayout,
-    contentEndVisible,
+    floatingActionAnchor,
+    contentEndInSafeZone,
     registerFloatingAction,
     setFloatingActionOpen,
-  }), [contentWidth, contentEndVisible, floatingActionHost, floatingActionLayout, registerFloatingAction, scrollRef, setFloatingActionOpen]);
+  }), [contentWidth, contentEndInSafeZone, floatingActionAnchor, floatingActionHost, registerFloatingAction, scrollRef, setFloatingActionOpen]);
   const scrollStyle = {
     "--app-overlay-clearance": `calc(env(safe-area-inset-bottom, 0px) + ${overlayLayout.overlayClearance}px)`,
   };
@@ -145,7 +162,7 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
         <ContentWidthContainer className="min-h-full">{children}<div ref={contentEndRef} data-slot="app-content-end" className="h-px w-full" aria-hidden="true" /></ContentWidthContainer>
       </div>
       <div data-slot="floating-action-position" className="app-floating-action-position pointer-events-none absolute inset-x-0 z-20" style={floatingActionStyle}>
-        <div ref={assignFloatingActionHost} className="pointer-events-none relative h-full w-full" />
+        <div ref={assignFloatingActionHost} className="pointer-events-none relative h-0 w-full" />
       </div>
       {bottomBar}
     </div>

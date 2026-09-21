@@ -117,11 +117,11 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 悬浮主操作只在根级 `h1` 页眉完全滚出后出现；页眉可见时只显示页头中的原按钮。每个页面最多一个悬浮主操作，必须由页面显式启用，不能因为存在 `primary` 自动生成。
 
-悬浮按钮由内部 `FloatingActionDock` 持续挂载，使用位置层和动作层分离动画：位置层只处理 Toast 避让的 `bottom`，动作层才执行滑入、缩放、淡出和模糊。页眉离开时从下方滑入并轻微 pop；回到可见区时按钮会立刻失去焦点与指针能力，但保留到退出动画结束，滚动安全区也会在这段时间继续生效。减少动画偏好下应立即切换。
+悬浮按钮由通用 `FloatingActionDock` 持续挂载，分为位置层、尺寸层和动作层：位置层只处理 Toast 避让的 `bottom`，尺寸层只在紧凑像素宽度与锚点像素宽度间过渡，动作层才执行滑入、缩放、淡出和模糊。页眉离开时从下方滑入并轻微 pop；回到可见区时按钮会立刻失去焦点与指针能力，但保留到退出动画结束，滚动安全区也会在这段时间继续生效。减少动画偏好下应立即切换。
 
 悬浮按钮以它所属的页面页眉（编辑器可显式提供编辑器壳）为水平锚点，因此必须匹配标准、宽、全宽和页面自定义最大宽度。`/work` 中必须避开 48px 全局工具栏；Toast 出现时才按实际高度向上避让，不能使用固定 `5rem` 空白。详情打开时仍属于主内容区，不进入详情面板。悬浮按钮必须复用原有点击、禁用、加载和 `notify` 行为。
 
-内容底部 sentinel 进入滚动安全区时，Dock 从右下角的紧凑按钮平滑过渡为锚点全宽的底部主按钮；离开末尾时恢复紧凑。sentinel 必须放在动态底部补偿之前，不能以滚动条最后一个 padding 像素作为触发条件，否则全宽状态会造成自身触发循环。
+内容底部 sentinel 进入扣除 Dock、Toast 与工具栏避让后的滚动安全区时，Dock 从右下角的紧凑按钮平滑过渡为锚点全宽的底部主按钮；离开安全区即恢复紧凑。sentinel 必须放在动态底部补偿之前，不能以滚动条最后一个 padding 像素作为触发条件，否则全宽状态会造成自身触发循环。
 
 `AppSonner` 会向 `OverlayAvoidanceProvider` 报告当前可见 Toast 的真实高度。`AppContentLayout` 用这份数据计算 Dock 位置，并写入 `--app-overlay-clearance`；主滚动区必须将它同时用于 `padding-block-end` 和 `scroll-padding-block-end`。这保证最后内容、键盘 Tab、表单错误定位和 `scrollIntoView()` 都不会落在 Toast 或 Dock 下方。不要只移动浮层而不补偿滚动区，也不要在业务页面手写固定底部预留。
 
@@ -133,6 +133,7 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 - 页面切换和页头卸载后清理注册，默认恢复为可见。
 - 不监听 `window` 滚动，也不在详情面板滚动时改变主页面状态。
 - 悬浮主操作应由页面明确选择，不能因为存在 `primary` 就自动出现。
+- 业务页面不得自行创建 `fixed` 或 `absolute` 的浮动操作；通过 `FloatingPrimaryAction` 或 `PageHeader.floatingPrimary` 接入通用 Dock。
 - `/work` 的底部工具栏和 Toast 偏移必须纳入悬浮操作的安全区域计算。
 
 ## 接入检查清单

@@ -1,7 +1,35 @@
-export function resolveFloatingActionPresentation({ open = false, contentEndVisible = false, compactWidth = 0 } = {}) {
-  const canExpand = Number.isFinite(compactWidth) && compactWidth > 0;
+function dimension(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : 0;
+}
+
+export function resolveFloatingActionAnchor({ layoutRect, anchorRect } = {}) {
+  if (!layoutRect || !anchorRect) return { inlineStart: 0, inlineSize: 0 };
+  const layoutWidth = dimension(layoutRect.width);
+  const inlineStart = Math.min(layoutWidth, Math.max(0, Math.round(anchorRect.left - layoutRect.left)));
   return {
-    expanded: Boolean(open && contentEndVisible && canExpand),
-    compactWidth: canExpand ? compactWidth : null,
+    inlineStart,
+    inlineSize: Math.max(0, Math.round(Math.min(anchorRect.width, layoutWidth - inlineStart))),
+  };
+}
+
+export function resolveContentEndInSafeZone({ rootRect, sentinelRect, bottomClearance = 0 } = {}) {
+  if (!rootRect || !sentinelRect) return false;
+  const safeBottom = rootRect.bottom - dimension(bottomClearance);
+  return sentinelRect.top <= safeBottom && sentinelRect.bottom > rootRect.top;
+}
+
+export function resolveFloatingActionPresentation({
+  open = false,
+  contentEndInSafeZone = false,
+  compactWidth = 0,
+  anchorWidth = 0,
+} = {}) {
+  const compactInlineSize = dimension(compactWidth);
+  const expandedInlineSize = dimension(anchorWidth);
+  const canExpand = compactInlineSize > 0 && expandedInlineSize > 0;
+  return {
+    expanded: Boolean(open && contentEndInSafeZone && canExpand),
+    compactInlineSize: compactInlineSize || null,
+    inlineSize: canExpand && open && contentEndInSafeZone ? expandedInlineSize : compactInlineSize || null,
   };
 }
