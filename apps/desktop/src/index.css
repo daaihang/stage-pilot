@@ -507,13 +507,6 @@
   width: 100%;
 }
 
-/* t-resize's default curve is intentionally an entering ease-out.  The dock
-   supplies the mathematical reverse for its return trip without changing
-   shared resize behavior used by detail surfaces. */
-.app-floating-action-size[data-expanded="false"] {
-  transition-timing-function: cubic-bezier(0.64, 0, 0.78, 0);
-}
-
 .app-floating-action-motion {
   transform: translateY(0) scale(1);
   /* Layout owns the right edge; visual motion always grows from the control's center. */
