@@ -40,3 +40,5 @@
 - `GET/POST /v1/attachments/{attachmentId}/versions`、`GET /v1/attachments/{attachmentId}/download?version_id=...`、`DELETE /v1/attachments/{attachmentId}` 作用于持久化关联而非客户端声明的父对象。
 
 公开 Campaign/Entry 文件字段、预览、全文搜索、病毒扫描工作流和可配置 ACL 不在本期；公开上传不能复用这些成员 API。
+
+其他纵向领域的附件父对象、类型化关联、权限和接入验收契约见[文件与附件模块接入契约](file-attachment-integration.md)。
