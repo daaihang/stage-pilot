@@ -269,7 +269,7 @@ func (app *application) updateWorkspace(w http.ResponseWriter, r *http.Request) 
 func (app *application) listWorkspaceMembers(w http.ResponseWriter, r *http.Request) {
 	access := currentWorkspaceAccess(r)
 	rows, err := app.db.Query(r.Context(), `SELECT m.id,m.workspace_id,m.user_id,m.role,m.status,
-			u.display_name,COALESCE((SELECT i.provider_subject FROM user_identities i WHERE i.user_id=u.id AND i.provider='email' LIMIT 1),''),u.avatar_url,m.created_at,m.updated_at,m.revoked_at
+			u.display_name,COALESCE((SELECT i.provider_subject FROM user_identities i WHERE i.user_id=u.id AND i.provider='email' LIMIT 1),''),u.avatar_url,u.avatar_object_key,u.avatar_revision,m.created_at,m.updated_at,m.revoked_at
 		FROM workspace_memberships m
 		JOIN users u ON u.id = m.user_id
 		WHERE m.workspace_id=$1
@@ -282,11 +282,13 @@ func (app *application) listWorkspaceMembers(w http.ResponseWriter, r *http.Requ
 	members := []workspaceMember{}
 	for rows.Next() {
 		var member workspaceMember
+		var legacyAvatar, avatarKey, avatarRevision string
 		if err := rows.Scan(&member.ID, &member.WorkspaceID, &member.UserID, &member.Role, &member.Status,
-			&member.DisplayName, &member.Email, &member.AvatarURL, &member.CreatedAt, &member.UpdatedAt, &member.RevokedAt); err != nil {
+			&member.DisplayName, &member.Email, &legacyAvatar, &avatarKey, &avatarRevision, &member.CreatedAt, &member.UpdatedAt, &member.RevokedAt); err != nil {
 			serverError(w, err)
 			return
 		}
+		member.AvatarURL = managedAvatarURL(member.UserID, avatarKey, avatarRevision, legacyAvatar)
 		members = append(members, member)
 	}
 	if err := rows.Err(); err != nil {

@@ -124,6 +124,9 @@ func (app *application) routes() http.Handler {
 	mux.HandleFunc("POST /auth/password/reset", app.resetPassword)
 	mux.Handle("GET /me", app.auth(http.HandlerFunc(app.me)))
 	mux.Handle("PATCH /me", app.auth(http.HandlerFunc(app.updateMe)))
+	mux.Handle("PUT /v1/me/avatar", app.auth(http.HandlerFunc(app.updateMyAvatar)))
+	mux.Handle("DELETE /v1/me/avatar", app.auth(http.HandlerFunc(app.deleteMyAvatar)))
+	mux.Handle("GET /v1/users/{userId}/avatar", app.auth(http.HandlerFunc(app.getUserAvatar)))
 	mux.Handle("PATCH /me/password", app.auth(http.HandlerFunc(app.changePassword)))
 	mux.Handle("GET /me/preferences", app.auth(http.HandlerFunc(app.preferences)))
 	mux.Handle("PATCH /me/preferences", app.auth(http.HandlerFunc(app.updatePreferences)))
@@ -534,7 +537,11 @@ func (app *application) updateMe(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	_, err := app.db.Exec(r.Context(), "UPDATE users SET display_name=COALESCE($1,display_name),username=COALESCE($2,username),avatar_url=COALESCE($3,avatar_url),updated_at=NOW() WHERE id=$4", in.DisplayName, in.Username, in.AvatarURL, claims(r).Subject)
+	if in.AvatarURL != nil {
+		errorJSON(w, http.StatusBadRequest, "avatar_managed", "头像请通过头像上传或移除接口修改")
+		return
+	}
+	_, err := app.db.Exec(r.Context(), "UPDATE users SET display_name=COALESCE($1,display_name),username=COALESCE($2,username),updated_at=NOW() WHERE id=$3", in.DisplayName, in.Username, claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -734,7 +741,9 @@ func (app *application) auth(next http.Handler) http.Handler {
 func claims(r *http.Request) authClaims { return r.Context().Value(claimsKey).(authClaims) }
 func (app *application) findUser(ctx context.Context, id string) (user, error) {
 	var u user
-	err := app.db.QueryRow(ctx, "SELECT u.id,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),EXISTS(SELECT 1 FROM email_verifications v WHERE v.user_id=u.id AND v.used_at IS NOT NULL),u.display_name,u.username,u.avatar_url,u.status,u.created_at FROM users u WHERE u.id=$1", id).Scan(&u.ID, &u.Email, &u.EmailVerified, &u.DisplayName, &u.Username, &u.AvatarURL, &u.Status, &u.CreatedAt)
+	var legacyAvatar, avatarKey, avatarRevision string
+	err := app.db.QueryRow(ctx, "SELECT u.id,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),EXISTS(SELECT 1 FROM email_verifications v WHERE v.user_id=u.id AND v.used_at IS NOT NULL),u.display_name,u.username,u.avatar_url,u.avatar_object_key,u.avatar_revision,u.status,u.created_at FROM users u WHERE u.id=$1", id).Scan(&u.ID, &u.Email, &u.EmailVerified, &u.DisplayName, &u.Username, &legacyAvatar, &avatarKey, &avatarRevision, &u.Status, &u.CreatedAt)
+	u.AvatarURL = managedAvatarURL(id, avatarKey, avatarRevision, legacyAvatar)
 	return u, err
 }
 func (app *application) createTokenRow(ctx context.Context, exec interface {

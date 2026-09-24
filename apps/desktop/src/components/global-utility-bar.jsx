@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { UserAvatar } from "@/components/user-avatar";
 import { Button } from "@/components/ui/button";
 import { FileText, Search, Sparkles } from "@/components/ui/icons";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
@@ -68,10 +68,7 @@ function BottomAccount({ user, subscription, onOpenAccountCenter, onLogout }) {
       className="min-w-0 max-w-[min(20rem,45vw)] justify-start aria-expanded:bg-muted max-[36rem]:size-8 max-[36rem]:px-0"
       aria-label={`账户：${displayName}`}
     >
-      <Avatar className="size-7 shrink-0">
-        <AvatarImage src={user.avatar_url || user.avatar} alt={displayName} />
-        <AvatarFallback>{displayName.slice(0, 2) || "U"}</AvatarFallback>
-      </Avatar>
+      <UserAvatar className="size-7 shrink-0" avatarUrl={user.avatar_url || user.avatar} name={displayName} />
       <span className="grid min-w-0 text-left leading-tight max-[36rem]:hidden">
         <span className="truncate text-xs font-medium">{displayName}</span>
         <span className="truncate text-[11px] text-muted-foreground">{username}</span>

@@ -1,14 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { UserAvatar } from "@/components/user-avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { notify } from "@/components/ui/sonner";
-import { updateMe, updatePassword } from "@/lib/auth";
+import { deleteMyAvatar, updateMe, updateMyAvatar, updatePassword } from "@/lib/auth";
 import { DeveloperTools } from "@/components/developer-tools";
-import { CreditCard, LockKeyhole, ShieldCheck } from "@/components/ui/icons";
+import { CreditCard, LockKeyhole, RiDeleteBinLine, RiUpload2Line, ShieldCheck } from "@/components/ui/icons";
 import { useUserPreferences } from "@/components/user-preferences-provider";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { AppBackLink } from "@/components/app-back-link";
@@ -17,6 +17,8 @@ import { PageHeader } from "@/components/page-header";
 function AccountProfile({ user, onUserUpdate }) {
   const [displayName, setDisplayName] = useState(user?.display_name || user?.name || "");
   const [saving, setSaving] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInput = useRef(null);
   useEffect(() => setDisplayName(user?.display_name || user?.name || ""), [user]);
   const save = async () => {
     const value = displayName.trim();
@@ -26,8 +28,49 @@ function AccountProfile({ user, onUserUpdate }) {
     catch (error) { notify.error("资料保存失败", { id: toastId, description: error instanceof Error ? error.message : String(error) }); }
     finally { setSaving(false); }
   };
+  const uploadAvatar = async (file) => {
+    if (file.size > 5 * 1024 * 1024) return notify.error("头像上传失败", { description: "图片不能超过 5 MiB。" });
+    setAvatarBusy(true);
+    const toastId = notify.loading("正在更新头像…");
+    try {
+      const updated = await updateMyAvatar(file);
+      onUserUpdate?.(updated);
+      notify.success("头像已更新", { id: toastId });
+    } catch (error) {
+      notify.error("头像更新失败", { id: toastId, description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+  const removeAvatar = async () => {
+    setAvatarBusy(true);
+    const toastId = notify.loading("正在移除头像…");
+    try {
+      const updated = await deleteMyAvatar();
+      onUserUpdate?.(updated);
+      notify.success("头像已移除", { id: toastId });
+    } catch (error) {
+      notify.error("移除头像失败", { id: toastId, description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
   const name = user?.display_name || user?.name || "User";
-  return <Card><CardHeader><CardDescription>这些资料属于你的账户，不随 Workspace 改变。</CardDescription></CardHeader><CardContent className="space-y-5"><div className="flex items-center gap-4"><Avatar className="size-16"><AvatarImage src={user?.avatar_url || user?.avatar} alt={name} /><AvatarFallback>{name.slice(0, 2) || "U"}</AvatarFallback></Avatar><div><p className="text-base font-medium">{name}</p><p className="text-sm text-muted-foreground">{user?.username || "未设置用户名"}</p><p className="text-xs text-muted-foreground">{user?.email || "未设置邮箱"}</p></div></div><div className="space-y-2"><label className="text-sm font-medium" htmlFor="account-display-name">显示名称</label><input id="account-display-name" className="flex h-9 w-full border bg-transparent px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" value={displayName} onChange={(event) => setDisplayName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save(); }} /><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存资料"}</Button></div><div className="border p-3 text-sm"><p className="text-xs text-muted-foreground">邮箱验证状态</p><p className="mt-1 font-medium">{user?.email_verified ? "已验证" : "待验证（后端接入后可操作）"}</p></div></CardContent></Card>;
+  const avatarUrl = user?.avatar_url || user?.avatar;
+  return <Card><CardHeader><CardDescription>这些资料属于你的账户，不随 Workspace 改变。</CardDescription></CardHeader><CardContent className="space-y-5">
+    <div className="flex flex-wrap items-center gap-4">
+      <UserAvatar className="size-16" avatarUrl={avatarUrl} name={name} />
+      <div className="min-w-0"><p className="text-base font-medium">{name}</p><p className="text-sm text-muted-foreground">{user?.username || "未设置用户名"}</p><p className="text-xs text-muted-foreground">{user?.email || "未设置邮箱"}</p></div>
+      <div className="flex flex-wrap gap-2">
+        <input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" className="sr-only" aria-label="选择头像图片" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) uploadAvatar(file); }} />
+        <Button type="button" variant="outline" disabled={avatarBusy} onClick={() => avatarInput.current?.click()}><RiUpload2Line aria-hidden="true" focusable="false" />{avatarUrl ? "更换头像" : "上传头像"}</Button>
+        {avatarUrl && <Button type="button" variant="ghost" disabled={avatarBusy} onClick={removeAvatar}><RiDeleteBinLine aria-hidden="true" focusable="false" />移除头像</Button>}
+      </div>
+      <p className="basis-full text-xs text-muted-foreground">支持静态 JPEG、PNG、WebP，最大 5 MiB；图片会安全处理并以圆形方式显示。</p>
+    </div>
+    <div className="space-y-2"><label className="text-sm font-medium" htmlFor="account-display-name">显示名称</label><input id="account-display-name" className="flex h-9 w-full border bg-transparent px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" value={displayName} onChange={(event) => setDisplayName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") save(); }} /><Button onClick={save} disabled={saving}>{saving ? "保存中…" : "保存资料"}</Button></div>
+    <div className="border p-3 text-sm"><p className="text-xs text-muted-foreground">邮箱验证状态</p><p className="mt-1 font-medium">{user?.email_verified ? "已验证" : "待验证（后端接入后可操作）"}</p></div>
+  </CardContent></Card>;
 }
 
 function SettingRow({ title, description, value }) { return <div className="flex items-center justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{description}</p></div><div className="shrink-0">{value}</div></div>; }

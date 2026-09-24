@@ -35,7 +35,8 @@ function requestError(response, body) {
 async function rawRequest(path, options = {}) {
   const startedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   const method = (options.method || "GET").toUpperCase();
-  const headers = { ...(options.body ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) };
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const headers = { ...(options.body && !isFormData ? { "Content-Type": "application/json" } : {}), ...(options.headers || {}) };
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   let response;
   try {
@@ -116,6 +117,28 @@ async function request(path, options = {}) {
   }
 }
 
+async function rawBlobRequest(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw requestError(response, body);
+  }
+  return response.blob();
+}
+
+async function requestBlob(path, options = {}) {
+  try {
+    return await rawBlobRequest(path, options);
+  } catch (error) {
+    const canRecover = error?.status === 401 && accessToken && !path.startsWith("/auth/");
+    if (!canRecover) throw error;
+    await refreshSession();
+    return rawBlobRequest(path, options);
+  }
+}
+
 export async function login(email, password) {
   const result = await rawRequest("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
   accessToken = result.access_token;
@@ -158,6 +181,12 @@ export async function logout() {
 
 export async function getMe() { return request("/me"); }
 export async function updateMe(patch) { return request("/me", { method: "PATCH", body: JSON.stringify(patch) }); }
+export async function updateMyAvatar(file) {
+  const form = new FormData();
+  form.append("avatar", file);
+  return request("/v1/me/avatar", { method: "PUT", body: form });
+}
+export async function deleteMyAvatar() { return request("/v1/me/avatar", { method: "DELETE" }); }
 export async function updatePassword(currentPassword, newPassword) {
   return request("/me/password", { method: "PATCH", body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }) });
 }
@@ -166,4 +195,4 @@ export async function updatePreferences(patch) { return request("/me/preferences
 export async function verifyEmail(token) { return rawRequest("/auth/email/verify", { method: "POST", body: JSON.stringify({ token }) }); }
 export async function forgotPassword(email) { return rawRequest("/auth/password/forgot", { method: "POST", body: JSON.stringify({ email }) }); }
 export async function resetPassword(token, password) { return rawRequest("/auth/password/reset", { method: "POST", body: JSON.stringify({ token, password }) }); }
-export { API_BASE, request };
+export { API_BASE, request, requestBlob };

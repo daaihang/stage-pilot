@@ -573,7 +573,7 @@ func (app *application) canManageProductionMembers(r *http.Request) bool {
 func (app *application) listProductionMembers(w http.ResponseWriter, r *http.Request) {
 	access := currentProductionAccess(r)
 	now := time.Now().UTC()
-	rows, err := app.db.Query(r.Context(), `SELECT u.id,u.display_name,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),u.avatar_url,
+	rows, err := app.db.Query(r.Context(), `SELECT u.id,u.display_name,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),u.avatar_url,u.avatar_object_key,u.avatar_revision,
 		wm.role, pm.id,pm.role_key,pm.status,pm.starts_at,pm.expires_at,pm.created_at
 		FROM workspace_memberships wm JOIN users u ON u.id=wm.user_id
 		LEFT JOIN LATERAL (SELECT id,role_key,status,starts_at,expires_at,created_at FROM production_memberships WHERE production_id=$1 AND user_id=wm.user_id AND status <> 'revoked' ORDER BY created_at DESC LIMIT 1) pm ON TRUE
@@ -585,11 +585,11 @@ func (app *application) listProductionMembers(w http.ResponseWriter, r *http.Req
 	defer rows.Close()
 	inherited := []map[string]any{}
 	for rows.Next() {
-		var uid, name, email, avatar, role string
+		var uid, name, email, legacyAvatar, avatarKey, avatarRevision, role string
 		var id, directRole, status *string
 		var starts, expires *time.Time
 		var created *time.Time
-		if err := rows.Scan(&uid, &name, &email, &avatar, &role, &id, &directRole, &status, &starts, &expires, &created); err != nil {
+		if err := rows.Scan(&uid, &name, &email, &legacyAvatar, &avatarKey, &avatarRevision, &role, &id, &directRole, &status, &starts, &expires, &created); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -597,9 +597,9 @@ func (app *application) listProductionMembers(w http.ResponseWriter, r *http.Req
 		if status != nil {
 			effective = effectiveProductionMembershipStatus(*status, starts, expires, now)
 		}
-		inherited = append(inherited, map[string]any{"user_id": uid, "display_name": name, "email": email, "avatar_url": avatar, "workspace_role": role, "membership_id": id, "direct_role": directRole, "status": status, "effective_status": effective, "starts_at": starts, "expires_at": expires, "created_at": created, "access_source": "workspace_membership"})
+		inherited = append(inherited, map[string]any{"user_id": uid, "display_name": name, "email": email, "avatar_url": managedAvatarURL(uid, avatarKey, avatarRevision, legacyAvatar), "workspace_role": role, "membership_id": id, "direct_role": directRole, "status": status, "effective_status": effective, "starts_at": starts, "expires_at": expires, "created_at": created, "access_source": "workspace_membership"})
 	}
-	directRows, err := app.db.Query(r.Context(), `SELECT pm.id,pm.user_id,u.display_name,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),u.avatar_url,pm.role_key,pm.status,pm.starts_at,pm.expires_at,pm.created_at
+	directRows, err := app.db.Query(r.Context(), `SELECT pm.id,pm.user_id,u.display_name,COALESCE((SELECT provider_subject FROM user_identities WHERE user_id=u.id AND provider='email' LIMIT 1),''),u.avatar_url,u.avatar_object_key,u.avatar_revision,pm.role_key,pm.status,pm.starts_at,pm.expires_at,pm.created_at
 		FROM production_memberships pm JOIN users u ON u.id=pm.user_id WHERE pm.production_id=$1 AND pm.status <> 'revoked'
 		ORDER BY pm.created_at DESC`, access.ProductionID)
 	if err != nil {
@@ -609,14 +609,14 @@ func (app *application) listProductionMembers(w http.ResponseWriter, r *http.Req
 	defer directRows.Close()
 	direct := []map[string]any{}
 	for directRows.Next() {
-		var id, uid, name, email, avatar, role, status string
+		var id, uid, name, email, legacyAvatar, avatarKey, avatarRevision, role, status string
 		var starts, expires *time.Time
 		var created time.Time
-		if err := directRows.Scan(&id, &uid, &name, &email, &avatar, &role, &status, &starts, &expires, &created); err != nil {
+		if err := directRows.Scan(&id, &uid, &name, &email, &legacyAvatar, &avatarKey, &avatarRevision, &role, &status, &starts, &expires, &created); err != nil {
 			serverError(w, err)
 			return
 		}
-		direct = append(direct, map[string]any{"id": id, "user_id": uid, "display_name": name, "email": email, "avatar_url": avatar, "role_key": role, "status": status, "effective_status": effectiveProductionMembershipStatus(status, starts, expires, now), "starts_at": starts, "expires_at": expires, "created_at": created, "access_source": "production_membership"})
+		direct = append(direct, map[string]any{"id": id, "user_id": uid, "display_name": name, "email": email, "avatar_url": managedAvatarURL(uid, avatarKey, avatarRevision, legacyAvatar), "role_key": role, "status": status, "effective_status": effectiveProductionMembershipStatus(status, starts, expires, now), "starts_at": starts, "expires_at": expires, "created_at": created, "access_source": "production_membership"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"inherited": inherited, "direct": direct, "can_manage": app.canManageProductionMembers(r)})
 }

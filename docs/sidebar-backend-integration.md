@@ -8,7 +8,7 @@
 
 | 路由 | 页面 |
 | --- | --- |
-| `/account/profile` | 个人资料，使用 `PATCH /me` 更新显示名称 |
+| `/account/profile` | 个人资料，使用 `PATCH /me` 更新显示名称，并上传、更换或移除账户头像 |
 | `/account/preferences` | 偏好与通知；主题、页面宽度、标题栏、侧栏热区、分类导航、Dock、详情方式、时区和通知开关同步到账户云端；窗口尺寸与开发者工具状态仍保存在本机 |
 | `/account/security` | 登录与安全；密码修改使用 `PATCH /me/password`，邮箱验证、会话和注销暂为占位 |
 | `/account/billing` | 方案与账单；当前套餐为本地状态，支付、发票和升级暂为占位 |
@@ -17,6 +17,8 @@
 从 Workspace 或 Production 进入账户中心时，使用 `?from=<编码后的内部路径>` 保存来源。前端只接受已知的内部路由，并拒绝外部 URL、`/account/*` 或非法路径；无效来源回退到当前 Workspace 首页。账户侧栏顶部的返回按钮因此可以回到进入前的具体页面。
 
 账户导航顺序由 `src/lib/navigation.js` 的前端配置控制，不依赖后端返回菜单数组。后端只提供用户资料、权限和实体数据；新增账户页面时需同步更新路由元数据、账户侧栏配置、页面标题和开发构建条件。
+
+账户头像通过 `PUT /v1/me/avatar`（multipart 字段 `avatar`）上传，`DELETE /v1/me/avatar` 移除；仅接受不超过 5 MiB 的静态 JPEG、PNG、WebP，服务端重新编码并限制输出尺寸。头像存入独立的用户对象路径，不进入 Workspace 文件库或附件。用户资料和成员响应仍以 `avatar_url` 返回显示地址；托管头像使用 `GET /v1/users/:userId/avatar`，桌面端携带登录态读取。本人及能在共同 Workspace 成员列表或有权限查看的 Production 成员列表中看到该用户的协作者可读，其他请求返回 404；旧的外部 `avatar_url` 继续作为兼容回退值，但 `PATCH /me` 不接受直接改写。
 
 ## 领域层级（Production Foundation 后）
 
