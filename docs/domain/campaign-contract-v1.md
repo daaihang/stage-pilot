@@ -119,32 +119,23 @@ Campaign 的配置版本。草稿可编辑；发布后的 Revision 不可原地�
     "per_actor_limit": 1,
     "capacity": 20,
     "target": 10,
-    "waitlist_limit": 30,
-    "close_behavior": "close_to_new_entries"
+    "waitlist_limit": 30
   },
   "review_recipe_version_id": "rrv_…",
   "review_workflow": {
     "schema_version": 1,
-    "mode": "MULTI_STAGE_REVIEW",
+    "mode": "MANUAL_DECISION",
     "rounds": [
       {
-        "key": "qualification",
-        "name": "资格筛选",
+        "key": "review",
+        "name": "单轮审核",
         "execution": "parallel",
         "reviewer_policy": { "source": "production_roles", "role_keys": ["producer"] },
-        "completion": { "mode": "all" },
-        "feedback": { "kind": "binary" }
-      },
-      {
-        "key": "final",
-        "name": "最终审核",
-        "execution": "parallel",
-        "reviewer_policy": { "source": "production_roles", "role_keys": ["producer"] },
-        "completion": { "mode": "all" },
+        "completion": { "mode": "at_least_n", "n": 1 },
         "feedback": { "kind": "binary" }
       }
     ],
-    "request_changes": { "enabled": true, "target": "same_round" },
+    "request_changes": { "enabled": false, "target": "same_round" },
     "final_decision": "manual"
   },
   "materialization_plan": {
@@ -166,10 +157,10 @@ Revision 编辑 API 使用完整 `FormVersion` 快照。读取、保存、校验
 
 - `visibility`：`public`、`workspace`、`invite_only`。
 - `submission_limit` 是最多接收的 Entry 数；`capacity` 是最终录取/确认数量；`target` 只是运营目标；`waitlist_limit` 是候补数量上限，四者不能混用。
-- `close_behavior`：`close_to_new_entries` 或 `accept_to_waitlist`。
 - `review_recipe_version_id` 记录创建时所用的已发布 `ReviewRecipeVersion`；`review_workflow` 是复制到 Revision 的完整审核快照，也是运行时权威配置。方案后续升级不得改变历史 Revision。
-- 新版本的 `review_workflow` 必须符合 [`review-recipe-contract-v1.md`](./review-recipe-contract-v1.md) 的 V1 结构。`AUTO_ACCEPT` 不需要审核轮次；其他模式必须在发布前解析出当前 Production 的成员或角色。旧 Revision 可以保留没有方案 ID 的 `legacy` 快照，但只能读取，不能直接发布。
-- 轮次按顺序执行、轮次内部审核人并行；完成条件（`all`、`any`、`at_least_n`）与通过/拒绝决定分离。请求补件只能回到原轮次并产生新的 EntryRevision。
+- Campaign 当前只允许发布单轮 `MANUAL_DECISION`：恰好一个并行轮次、必填文字反馈、人工最终决定、关闭补件。AUTO_ACCEPT、多轮与评分方案可保留在方案库，但不能用于当前可收件 Revision。
+- 审核人和完成门槛必须在发布时可解析；`all` 表示全部已分配任务完成，`any` 运行时等价于 N=1，`at_least_n` 的 N 必须大于零且不高于审核人数。成员提交时失效会进入“待补足审核人”，不得降低门槛。
+- Entry 的 Campaign Revision 和答案版本在提交时固定。审核意见是追加历史，与最终 Decision 分开；达到门槛后待最终决定，但其他任务仍可反馈，最终决定提交时才关闭未完成任务。
 - `materialization_plan` 只能选择系统支持的目标和重复处理策略，不能提交任意表名、SQL 或脚本。
 
 #### FormVersion
@@ -233,7 +224,7 @@ Form Runtime V1.1 进一步冻结答案语义：`number` 必须是 JSON number�
 
 `presentation.public_title` 是填写者看到的标题，创建 Campaign 时默认复制内部名称，之后可独立编辑。
 `welcome.enabled` 控制单一欢迎页；开启时可继承公开标题或使用自定义标题，并支持说明和开始按钮文案。
-`ending.mode` 为 `default`、`custom` 或 `redirect`；默认文案会根据 Campaign 类型和审核策略区分“已提交”与“等待审核”，重定向只允许 HTTPS。展示配置随 Revision 冻结，公开页和管理端预览使用同一解析逻辑。
+`ending.mode` 为 `default`、`custom` 或 `redirect`；默认文案保持中性，只确认已收到提交，不泄漏内部审核策略，重定向只允许 HTTPS。展示配置随 Revision 冻结，公开页和管理端预览使用同一解析逻辑。
 
 Builder、管理端 Preview、公开 Renderer 和公开提交校验必须遵循同一份 Runtime 契约。
 客户端校验只用于即时反馈，服务端始终重新校验并保存规范化后的答案；历史
@@ -250,7 +241,7 @@ Builder、管理端 Preview、公开 Renderer 和公开提交校验必须遵循�
   "production_id": "prod_…",
   "campaign_id": "cmp_…",
   "campaign_revision_id": "crev_…",
-  "status": "submitted",
+  "status": "in_review",
   "respondent_user_id": null,
   "contact_email": "applicant@example.com",
   "submitted_at": "…",
@@ -263,7 +254,7 @@ Builder、管理端 Preview、公开 Renderer 和公开提交校验必须遵循�
 
 答案放在追加式 `entry_revisions` 存储中，至少记录 `revision_no`、`answers`、`schema_version`、`created_at` 和提交来源。公开填写者不需要先注册 StagePilot。Campaign Intake Execution V1 的草稿只保存在浏览器本地；现有 Entry access token 字段保留给后续服务器草稿恢复功能，本阶段不会生成恢复 Token。
 
-`status`：`draft`、`submitted`、`in_review`、`needs_changes`、`accepted`、`waitlisted`、`rejected`、`withdrawn`、`converted`、`conversion_failed`。状态是当前投影，审核意见和决定历史不可覆盖。
+`status`：`draft`、`submitted`、`in_review`、`needs_changes`、`accepted`、`waitlisted`、`rejected`、`withdrawn`、`converted`、`conversion_failed`。新公开提交原子创建 ReviewRun 后进入 `in_review`；状态是当前投影，审核意见和决定历史不可覆盖。
 
 #### Decision
 
@@ -283,7 +274,7 @@ Builder、管理端 Preview、公开 Renderer 和公开提交校验必须遵循�
 }
 ```
 
-`type`：`accept`、`waitlist`、`reject`、`request_changes`、`withdraw`、`cancel`。`Decision` 不直接创建人员、节目或成员权限；它只触发允许的 Materialization 计划。
+当前最终决定类型为 `accept`、`waitlist`、`reject`。拒绝必须填写原因；决定要求 ReviewRun 达到门槛，只有存量不兼容运行可显式带原因覆盖。Decision 不直接创建人员、节目或成员权限；P1 暂不执行 Materialization。
 
 #### EntryMaterialization
 
@@ -335,9 +326,9 @@ COLLECTION    → FormResponse
 
 ### 3.2 Entry 和决定
 
-1. 只有 `published` CampaignRevision 接受新的 submitted Entry；草稿 Entry 可以继续保存，但 Revision 失效时必须返回“表单版本已更新”，不能静默改变问题含义。
-2. `Entry`、审核反馈和 `Decision` 都必须可追溯到 Campaign、Production、Workspace 和 Revision。
-3. `request_changes` 后允许提交新的 EntryRevision；不能删除旧答案。
+1. 只有当前 `published` CampaignRevision 接受公开提交；请求必须携带 `expected_revision_id`，版本冲突不得创建 Entry 或幂等成功记录。
+2. 新公开提交与 EntryRevision、ReviewRun 和任务分配在单一事务内创建；Entry 固定 CampaignRevision，审核反馈固定 EntryRevision。
+3. Entry、审核任务、追加式反馈和 Decision 都必须可追溯到 Campaign、Production、Workspace 和对应 Revision；意见修订不能删除旧反馈。
 4. `accept`、`waitlist`、`reject` 等决定不会自动等价于转化成功；转化状态由 EntryMaterialization 单独记录。
 
 ### 3.3 租户、隐私和附件
@@ -380,12 +371,14 @@ GET    /v1/campaigns/{campaignId}/entries
 GET    /v1/entries/{entryId}
 GET    /v1/entries/{entryId}/revisions
 PATCH  /v1/entries/{entryId}/inbox-state
+GET    /v1/me/review-tasks?status=pending|completed|all
+GET    /v1/review-tasks/{taskId}
+POST   /v1/review-tasks/{taskId}/feedback
+POST   /v1/entries/{entryId}/review-tasks
 POST   /v1/entries/{entryId}/decisions
-GET    /v1/entries/{entryId}/materializations
-POST   /v1/entries/{entryId}/materializations
 ```
 
-`POST` 创建 Campaign、Revision、Decision 和 Materialization 时支持 `Idempotency-Key`；批量决定/转化在 V1 仍复用单条语义并由服务端逐项返回结果。
+公开提交必须携带 `expected_revision_id`，幂等回放先于当前版本冲突检查。审核反馈支持通过 `supersedes_feedback_id` 修订当前意见；补充/改派审核任务必须填写原因。普通最终决定要求 ReviewRun 达到门槛；不兼容存量记录必须显式进行带原因的遗留覆盖。P1 暂不开放 Materialization API。
 
 ### 4.2 公开填写 API
 
@@ -396,13 +389,13 @@ POST   /v1/public/campaign-shares/{token}/entries
 POST   /v1/public/campaign-shares/short/{shortCode}/entries
 ```
 
-管理端通过 `GET/POST /v1/campaigns/{campaignId}/share-links` 创建和查看稳定长链接/短链接，通过 `POST /v1/campaign-share-links/{linkId}/rotate|revoke` 管理凭证。公开 token 只在创建或轮换时返回；服务端保存哈希并加密保存管理员可复制的凭证，公开响应禁止缓存。公开接口必须在服务端重新读取当前已发布 Revision 并执行所有校验，不能信任客户端携带的 `workspace_id`、`production_id`、`campaign_revision_id` 或结果目标。V1 的草稿只在浏览器本地保存，不提供服务器 Entry 恢复接口；提交只创建 `submitted` Entry，不自动产生 Decision 或 Materialization。
+管理端通过 `GET/POST /v1/campaigns/{campaignId}/share-links` 创建和查看稳定长链接/短链接，通过 `POST /v1/campaign-share-links/{linkId}/rotate|revoke` 管理凭证。公开 token 只在创建或轮换时返回；服务端保存哈希并加密保存管理员可复制的凭证，公开响应禁止缓存。公开接口必须在服务端重新读取当前已发布 Revision 并执行所有校验，不能信任客户端携带的 `workspace_id`、`production_id`、`campaign_revision_id` 或结果目标。V1 的草稿只在浏览器本地保存，不提供服务器 Entry 恢复接口；成功提交原子创建 `in_review` Entry、EntryRevision、ReviewRun 与审核任务，不自动产生 Decision 或 Materialization。
 
 公开响应中的 `form.presentation` 与管理端预览共用同一解析结果。它包含 `public_title`、单一 `welcome` 和始终存在的 `ending`；`ending.mode=redirect` 只接受 HTTPS。旧 `end_screen` 仍作为兼容投影返回，但新客户端不得把它作为展示设置的写入来源。
 
 ## 5. 数据库落地边界
 
-七个合约对象建议落地为以下聚合表；带“内部存储”的表不是额外的产品聚合 API：
+合约对象与运行时内部表包括：
 
 ```text
 campaign_templates
@@ -414,6 +407,10 @@ entries
 entry_revisions                  内部答案版本存储
 decisions
 entry_materializations
+entry_review_runs                内部单轮审核运行
+entry_review_tasks               内部成员待办
+entry_review_task_assignments    不可变分配/改派历史
+entry_review_feedback            不可变意见及修订历史
 production_programs
 production_people
 production_registrations

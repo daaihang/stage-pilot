@@ -641,6 +641,9 @@ func validatePublicSubmissionCompatibility(policyRaw, fieldsRaw, workflowRaw jso
 	if isAutoAcceptWorkflow(workflowRaw) {
 		return &formValidationError{"auto_accept_unavailable", "自动确认执行尚未开放，请改用人工决定后再发布"}
 	}
+	if err := validateSingleRoundReviewWorkflow(workflowRaw); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -663,6 +666,9 @@ func publicSubmissionUnavailableReason(policyRaw, formRaw, workflowRaw json.RawM
 	}
 	if isAutoAcceptWorkflow(workflowRaw) {
 		return "auto_accept_unavailable"
+	}
+	if validateSingleRoundReviewWorkflow(workflowRaw) != nil {
+		return "review_workflow_unsupported"
 	}
 	return ""
 }

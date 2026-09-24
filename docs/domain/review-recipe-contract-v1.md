@@ -1,7 +1,7 @@
 # ReviewRecipe 审核方案库契约 V1
 
-状态：已冻结（2026-09-09）
-范围：审核方案定义、版本快照、Campaign/Revision 的来源引用和发布前置校验。本文件不定义运行时审核任务或工作流引擎。
+状态：方案定义已冻结（2026-09-09）；单轮人工审核运行时按 P1 契约实施（2026-09-24）
+范围：审核方案定义、版本快照、单轮人工审核运行时及其 Entry/Revision 关联。本文件不定义多轮、评分或补件执行引擎。
 
 ## 1. 设计目标
 
@@ -81,6 +81,30 @@ created_by, created_at, published_at?
 - `request_changes.target` V1 只能为 `same_round`。补件通过新的 EntryRevision 返回原轮次，不覆盖旧审核意见。
 - 不允许脚本、任意条件图、BPMN 节点、跨 Campaign 跳转或用户自定义执行器。
 
+### P1 当前可运行范围
+
+方案库可以继续保存未来模式，便于维护来源模板；但 Campaign Revision 只有满足下列全部条件时才能发布并公开收件：`MANUAL_DECISION`、恰好一个 `parallel` 轮次、`request_changes.enabled=false`、`feedback.kind=binary`、人工最终决定。审核人必须能解析，完成门槛必须大于零且不能高于可用审核人数。`any` 在运行时按 N=1 处理。
+
+审核意见固定为 `recommend`、`do_not_recommend`、`no_opinion` 三选一，加必填 1–5000 字意见。反馈只表示审核建议，不改变 Entry 状态或 Decision。每次修订追加一条记录并通过 `supersedes_feedback_id` 指向当前意见；反馈绑定提交时固定的 `campaign_revision_id` 和 `entry_revision_id`。
+
+公开提交事务同时创建一个 ReviewRun、每位有效审核人的任务和当前分配快照。Entry 绑定的 Campaign Revision、FormVersion 与 Entry 答案版本不能被后续发布或成员变化改写。`all` 的所需人数按已分配任务数计算；补充新任务会增加全员门槛。`at_least_n` 达标后，其他任务仍可提交反馈，直到最终决定关闭未完成任务。反馈和最终决定先锁 ReviewRun，因此竞态结果按事务取得锁的顺序确定。
+
+如果成员在任务完成前失效，任务和已有意见保留；管理员须填写原因并手动改派。提交时可解析人数少于门槛时仍接受 Entry，ReviewRun 进入 `awaiting_assignment`，绝不自动降低门槛。`campaign.manage` 可补充任务或改派未完成任务；已提交反馈的任务不能改派。
+
+### P1 API 与权限
+
+```text
+GET  /v1/me/review-tasks?status=pending|completed|all
+GET  /v1/review-tasks/{taskId}
+POST /v1/review-tasks/{taskId}/feedback
+POST /v1/entries/{entryId}/review-tasks
+POST /v1/entries/{entryId}/decisions
+```
+
+`campaign.view` 保持现有 Entry Inbox 的可见范围；`campaign.review` 允许有效 Production 成员处理当前分配给自己的任务；`campaign.manage` 与 `campaign.decide` 分别保护分配维护和最终决定，二者映射到 Workspace Owner/Admin、Producer、Editor。一个人可以同时承担审核与决定。`campaign.materialize` 独立保留且默认不授予；P1 没有转化 API。
+
+最终决定要求运行达到门槛。唯一例外是无兼容运行的存量 Entry：必须显式使用遗留覆盖并填写原因，Decision 保存审计标记。迁移只为未决且兼容的记录回填带 `migration` 来源标记的任务；这类分配表示迁移时按当前配置解析，不是历史分配事实。不兼容记录进入 `blocked_unsupported`。
+
 ## 4. 内置方案
 
 系统提供以下只读模板及 v1 版本：
@@ -134,4 +158,4 @@ POST /v1/review-recipes/{recipeId}/versions/{versionId}/publish
 
 返回统一 `{items, next_cursor, total}`。系统方案全局可见；Workspace 方案和其版本遵守现有 Workspace 成员校验。模板/方案创建、复制、创建版本支持 `Idempotency-Key`；草稿更新和发布使用 `If-Match`，冲突返回 `412`。归档后不能用于新的 Campaign 或 Revision。
 
-本阶段不实现公开 Entry 提交、ReviewRun/Assignment/Feedback、评分执行、补件执行、Decision/Materialization API 或异步 Worker。
+仍不实现评分执行、多轮审核、补件执行、申请人通知、Materialization API 或异步 Worker。

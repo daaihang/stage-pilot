@@ -300,6 +300,76 @@ function mapMaterialization(value) {
   };
 }
 
+function mapReviewFeedback(value) {
+  if (!value) return null;
+  return {
+    id: value.id,
+    taskId: value.task_id,
+    reviewerId: value.reviewer_id,
+    reviewerName: value.reviewer_name || "",
+    recommendation: value.recommendation,
+    comment: value.comment || "",
+    supersedesFeedbackId: value.supersedes_feedback_id,
+    isCurrent: Boolean(value.is_current),
+    campaignRevisionId: value.campaign_revision_id,
+    entryRevisionId: value.entry_revision_id,
+    createdAt: value.created_at,
+  };
+}
+
+function mapReviewRun(value) {
+  if (!value) return null;
+  return {
+    id: value.id,
+    status: value.status,
+    completionMode: value.completion_mode,
+    requiredCount: value.required_count,
+    completedCount: value.completed_count,
+    taskCount: value.task_count,
+    assignedCount: value.assigned_count,
+    campaignRevisionId: value.campaign_revision_id,
+    entryRevisionId: value.entry_revision_id,
+    source: value.source,
+    tasks: (value.tasks || []).map((task) => ({
+      id: task.id,
+      status: task.status,
+      createdAt: task.created_at,
+      assignments: (task.assignments || []).map((assignment) => ({
+        id: assignment.id,
+        reviewerId: assignment.reviewer_id,
+        name: assignment.name || "",
+        reason: assignment.reason || "",
+        source: assignment.source,
+        assignedBy: assignment.assigned_by,
+        assignedAt: assignment.assigned_at,
+        endedAt: assignment.ended_at,
+        current: Boolean(assignment.current),
+        active: Boolean(assignment.active),
+      })),
+      feedback: (task.feedback || []).map(mapReviewFeedback),
+    })),
+  };
+}
+
+function mapReviewTask(value) {
+  if (!value) return null;
+  return {
+    id: value.id,
+    entryId: value.entry_id,
+    campaignId: value.campaign_id,
+    campaignName: value.campaign_name || "",
+    productionId: value.production_id,
+    productionName: value.production_name || "",
+    entryStatus: value.entry_status,
+    taskStatus: value.task_status,
+    runStatus: value.run_status,
+    completedCount: value.completed_count || 0,
+    requiredCount: value.required_count || 0,
+    campaignRevisionId: value.campaign_revision_id,
+    assignedAt: value.assigned_at,
+  };
+}
+
 function mapEntryDetail(value) {
   if (!value) return null;
   return {
@@ -311,7 +381,8 @@ function mapEntryDetail(value) {
     materializations: Array.isArray(value.materializations) ? value.materializations.map(mapMaterialization) : [],
     inboxState: mapInboxState(value.inbox_state),
     canDecide: Boolean(value.can_decide),
-    review: value.review || null,
+    canManageReview: Boolean(value.can_manage_review),
+    review: mapReviewRun(value.review),
   };
 }
 
@@ -610,9 +681,47 @@ export async function getEntry(entryId) {
 export async function createEntryDecision(entryId, payload) {
   const result = await request(`/v1/entries/${encodeURIComponent(entryId)}/decisions`, {
     method: "POST",
-    body: JSON.stringify({ type: payload?.type, reason: payload?.reason || "" }),
+    body: JSON.stringify({ type: payload?.type, reason: payload?.reason || "", ...(payload?.legacyOverride ? { legacy_override: true } : {}) }),
   });
   return { entry: mapEntry(result.entry), decision: mapDecision(result.decision) };
+}
+
+export async function listMyReviewTasks({ status = "pending" } = {}) {
+  const result = await request(`/v1/me/review-tasks${queryString({ status })}`);
+  const list = normalizeList(result);
+  return { ...list, items: list.items.map(mapReviewTask) };
+}
+
+export async function getReviewTask(taskId) {
+  const value = await request(`/v1/review-tasks/${encodeURIComponent(taskId)}`);
+  return {
+    task: mapReviewTask(value.task),
+    formVersion: mapFormVersion(value.form_version),
+    entryRevision: mapEntryRevision(value.entry_revision),
+    feedbackHistory: (value.feedback_history || []).map(mapReviewFeedback),
+    currentFeedback: mapReviewFeedback(value.current_feedback),
+    canSubmit: Boolean(value.can_submit),
+  };
+}
+
+export async function submitReviewFeedback(taskId, payload) {
+  const value = await request(`/v1/review-tasks/${encodeURIComponent(taskId)}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({
+      recommendation: payload?.recommendation,
+      comment: payload?.comment || "",
+      ...(payload?.supersedesFeedbackId ? { supersedes_feedback_id: payload.supersedesFeedbackId } : {}),
+    }),
+  });
+  return mapReviewFeedback(value);
+}
+
+export async function assignEntryReviewTask(entryId, payload) {
+  const value = await request(`/v1/entries/${encodeURIComponent(entryId)}/review-tasks`, {
+    method: "POST",
+    body: JSON.stringify({ task_id: payload?.taskId || "", reviewer_id: payload?.reviewerId, reason: payload?.reason || "" }),
+  });
+  return mapReviewRun(value.review);
 }
 
 export async function listEntryRevisions(entryId) {

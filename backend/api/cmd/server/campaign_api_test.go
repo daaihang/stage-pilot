@@ -238,7 +238,7 @@ func TestEntryManualDecisionAPI(t *testing.T) {
 		t.Fatalf("missing rejection reason = %d: %s", missingReason.Code, missingReason.Body.String())
 	}
 
-	accepted := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "accept", "reason": "符合条件"})
+	accepted := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "accept", "reason": "存量测试覆盖", "legacy_override": true})
 	if accepted.Code != http.StatusOK {
 		t.Fatalf("accept entry = %d: %s", accepted.Code, accepted.Body.String())
 	}
@@ -251,7 +251,7 @@ func TestEntryManualDecisionAPI(t *testing.T) {
 		t.Fatalf("accept response = %#v", acceptedBody)
 	}
 
-	waitlisted := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "waitlist"})
+	waitlisted := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "waitlist", "reason": "存量测试覆盖", "legacy_override": true})
 	if waitlisted.Code != http.StatusOK {
 		t.Fatalf("waitlist entry = %d: %s", waitlisted.Code, waitlisted.Body.String())
 	}
@@ -281,7 +281,7 @@ func TestEntryManualDecisionAPI(t *testing.T) {
 		t.Fatalf("decision mutation state pointer=%q status=%q supersedes=%q current=%d materializations=%d", currentDecisionID, entryStatus, supersedesID, currentCount, materializationCount)
 	}
 
-	rejected := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "reject", "reason": "名额已满"})
+	rejected := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "reject", "reason": "存量测试：名额已满", "legacy_override": true})
 	if rejected.Code != http.StatusOK || !containsJSONValue(t, rejected.Body.Bytes(), "status", "rejected") {
 		t.Fatalf("reject entry = %d: %s", rejected.Code, rejected.Body.String())
 	}
@@ -348,7 +348,7 @@ func findJSONValue(value any, key, expected string) bool {
 
 func TestEntryDecisionCapacityAndWaitlistLimits(t *testing.T) {
 	app := newIntegrationApp(t)
-	fixture := createPublicCampaignFixture(t, app, `{"waitlist_enabled":true,"capacity":1,"waitlist_limit":1}`, `{"mode":"MANUAL_DECISION"}`)
+	fixture := createPublicCampaignFixture(t, app, `{"waitlist_enabled":true,"capacity":1,"waitlist_limit":1}`, integrationManualReviewWorkflow)
 	entryIDs := []string{newID(), newID(), newID()}
 	for _, entryID := range entryIDs {
 		if _, err := app.db.Exec(t.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'submitted')`, entryID, fixture.workspaceID, fixture.productionID, fixture.campaignID, fixture.revisionID); err != nil {
@@ -356,7 +356,7 @@ func TestEntryDecisionCapacityAndWaitlistLimits(t *testing.T) {
 		}
 	}
 	decide := func(entryID, decisionType string) *httptest.ResponseRecorder {
-		return authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": decisionType, "reason": "test"})
+		return authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": decisionType, "reason": "存量容量测试", "legacy_override": true})
 	}
 	if response := decide(entryIDs[0], "accept"); response.Code != http.StatusOK {
 		t.Fatalf("first accept = %d: %s", response.Code, response.Body.String())
@@ -407,7 +407,7 @@ func TestEntryDecisionCapacityAndWaitlistLimits(t *testing.T) {
 
 func TestConcurrentEntryAcceptsRespectCampaignCapacity(t *testing.T) {
 	app := newIntegrationApp(t)
-	fixture := createPublicCampaignFixture(t, app, `{"capacity":1}`, `{"mode":"MANUAL_DECISION"}`)
+	fixture := createPublicCampaignFixture(t, app, `{"capacity":1}`, integrationManualReviewWorkflow)
 	const candidates = 6
 	entryIDs := make([]string, candidates)
 	for i := range entryIDs {
@@ -424,7 +424,7 @@ func TestConcurrentEntryAcceptsRespectCampaignCapacity(t *testing.T) {
 		go func(id string) {
 			defer wait.Done()
 			<-start
-			body := strings.NewReader(`{"type":"accept"}`)
+			body := strings.NewReader(`{"type":"accept","reason":"存量并发容量测试","legacy_override":true}`)
 			req := httptest.NewRequest(http.MethodPost, "/v1/entries/"+id+"/decisions", body)
 			req.Header.Set("Authorization", "Bearer "+fixture.ownerToken)
 			req.Header.Set("Content-Type", "application/json")

@@ -334,6 +334,8 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 		issues = append(issues, issueFromValidationError(recipeErr, "/review_workflow"))
 	} else if err := validateReviewRecipeReferences(r.Context(), app.db, parsed, access.WorkspaceID, access.ProductionID, true); err != nil {
 		issues = append(issues, issueFromValidationError(err, "/review_workflow"))
+	} else if err := validateP1ReviewerThreshold(r.Context(), app.db, access.WorkspaceID, access.ProductionID, parsed); err != nil {
+		issues = append(issues, issueFromValidationError(err, "/review_workflow"))
 	}
 	warnings := 0
 	if revision.FormVersion != nil {

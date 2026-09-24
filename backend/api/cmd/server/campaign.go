@@ -1163,6 +1163,12 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
+	if err := validateP1ReviewerThreshold(r.Context(), tx, access.WorkspaceID, access.ProductionID, parsedReview); err != nil {
+		if !writeReviewRecipeValidationError(w, err) {
+			serverError(w, err)
+		}
+		return
+	}
 	if err := validateAvailabilityPolicyValue(availability); err != nil {
 		if !writeFormValidationError(w, err) {
 			serverError(w, err)

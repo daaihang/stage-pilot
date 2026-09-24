@@ -9,9 +9,11 @@ import { Field, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Eye, RefreshCw, Search, Star } from "@/components/ui/icons";
 import { notify } from "@/components/ui/sonner";
-import { createEntryDecision, getEntry, listCampaignEntries, listEntryRevisions, updateEntryInboxState } from "@/lib/campaign-api";
+import { assignEntryReviewTask, createEntryDecision, getEntry, listCampaignEntries, listEntryRevisions, updateEntryInboxState } from "@/lib/campaign-api";
+import { listProductionMembers } from "@/lib/production-api";
 
 const STATUS_LABELS = {
   draft: "草稿", submitted: "已提交", in_review: "审核中", needs_changes: "待补件",
@@ -25,33 +27,35 @@ const DECISION_ACTIONS = {
   reject: { label: "拒绝", loading: "正在拒绝提交…", success: "已拒绝提交", variant: "destructive" },
 };
 
-const DECIDABLE_STATUSES = new Set(["submitted", "in_review", "accepted", "waitlisted", "rejected"]);
+const DECIDABLE_STATUSES = new Set(["submitted", "in_review", "needs_changes", "accepted", "waitlisted", "rejected"]);
 
 function formatDate(value) {
   if (!value) return "未设置";
   try { return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); } catch { return value; }
 }
 
-function DecisionDialog({ actionType, busy, onOpenChange, onSubmit }) {
+function DecisionDialog({ actionType, busy, legacyRequired, onOpenChange, onSubmit }) {
   const [reason, setReason] = useState("");
   const [attempted, setAttempted] = useState(false);
+  const [legacyOverride, setLegacyOverride] = useState(false);
   const action = actionType ? DECISION_ACTIONS[actionType] : null;
-  const requiresReason = actionType === "reject";
+  const requiresReason = actionType === "reject" || legacyRequired;
   const missingReason = requiresReason && attempted && !reason.trim();
 
   useEffect(() => {
     if (actionType) {
       setReason("");
       setAttempted(false);
+      setLegacyOverride(false);
     }
   }, [actionType]);
 
   const submit = async (event) => {
     event.preventDefault();
     setAttempted(true);
-    if (!action || (requiresReason && !reason.trim())) return;
+    if (!action || (requiresReason && !reason.trim()) || (legacyRequired && !legacyOverride)) return;
     try {
-      await onSubmit({ type: actionType, reason: reason.trim() });
+      await onSubmit({ type: actionType, reason: reason.trim(), legacyOverride });
       onOpenChange(false);
     } catch {
       // notify.promise in the owning mutation already presents the failure.
@@ -65,16 +69,17 @@ function DecisionDialog({ actionType, busy, onOpenChange, onSubmit }) {
         <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
           <DialogHeader>
             <DialogTitle>确认{action.label}提交</DialogTitle>
-            <DialogDescription>{requiresReason ? "拒绝原因将作为当前决定的一部分保存，并向可查看该 Entry 的成员展示。" : "此操作会追加一条决定记录，并将 Entry 状态更新为当前决定结果。"}</DialogDescription>
+            <DialogDescription>{legacyRequired ? "当前 Entry 属于未兼容的存量审核流程。覆盖操作会留存处理原因与审计标记。" : requiresReason ? "拒绝原因将作为当前决定的一部分保存，并向可查看该 Entry 的成员展示。" : "此操作会追加一条决定记录，并将 Entry 状态更新为当前决定结果。"}</DialogDescription>
           </DialogHeader>
+          {legacyRequired ? <label className="flex items-start gap-2 text-xs"><Checkbox checked={legacyOverride} onCheckedChange={(checked) => setLegacyOverride(checked === true)} /><span>我确认按存量流程覆盖此审核结果</span></label> : null}
           <Field data-invalid={missingReason || undefined}>
-            <FieldLabel htmlFor="entry-decision-reason">决定备注{requiresReason ? "（必填）" : "（可选）"}</FieldLabel>
+            <FieldLabel htmlFor="entry-decision-reason">{legacyRequired ? "遗留流程处理原因" : "决定备注"}{requiresReason ? "（必填）" : "（可选）"}</FieldLabel>
             <Textarea id="entry-decision-reason" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} aria-invalid={missingReason || undefined} aria-describedby={missingReason ? "entry-decision-reason-error" : undefined} autoFocus />
             {missingReason ? <FieldError id="entry-decision-reason-error">请填写拒绝原因。</FieldError> : null}
           </Field>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button>
-            <Button type="submit" variant={action.variant} disabled={busy}>{busy ? "正在保存…" : "确认" + action.label}</Button>
+            <Button type="submit" variant={action.variant} disabled={busy || (legacyRequired && !legacyOverride)}>{busy ? "正在保存…" : "确认" + action.label}</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -82,12 +87,61 @@ function DecisionDialog({ actionType, busy, onOpenChange, onSubmit }) {
   );
 }
 
-function InboxDetail({ detail, revisions, onStateChanged, onDecision, decisionBusy }) {
+function ReviewRunCard({ detail, members, onAssign, assignmentBusy }) {
+  const [taskId, setTaskId] = useState("");
+  const [reviewerId, setReviewerId] = useState("");
+  const [reason, setReason] = useState("");
+  const run = detail?.review;
+  const activeReviewers = members || [];
+  useEffect(() => { setTaskId(""); setReviewerId(""); setReason(""); }, [run?.id]);
+  if (!run) return <Card><CardHeader><CardTitle className="text-sm">审核状态</CardTitle></CardHeader><CardContent className="space-y-3 text-sm text-muted-foreground"><p>该存量提交没有可运行的审核任务。管理员可使用带原因的遗留流程覆盖作出决定。</p></CardContent></Card>;
+  const runLabels = { awaiting_assignment: "待补足审核人", collecting_feedback: "收集审核意见中", ready_for_decision: "已达到决定门槛", decided: "已完成决定", blocked_unsupported: "存量审核配置不兼容", legacy_override_decided: "已通过遗留流程覆盖" };
+  const pendingTasks = run.tasks.filter((task) => task.status === "pending");
+  const currentTask = run.tasks.find((task) => task.id === taskId);
+  const submitAssignment = async (event) => {
+    event.preventDefault();
+    if (!reviewerId || !reason.trim()) return;
+    try {
+      await onAssign(detail.entry.id, { taskId, reviewerId, reason: reason.trim() });
+      setTaskId(""); setReviewerId(""); setReason("");
+    } catch {
+      // The owning mutation presents the failure toast and keeps the draft intact.
+    }
+  };
+  return <Card>
+    <CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle className="text-sm">单轮审核</CardTitle><Badge variant={run.status === "ready_for_decision" ? "default" : "secondary"}>{runLabels[run.status] || run.status}</Badge></div><CardDescription>门槛进度 {run.completedCount}/{run.requiredCount} · 已分配 {run.assignedCount}/{run.taskCount} · {run.completionMode === "all" ? "要求全员完成" : "至少 N 人完成"}</CardDescription></CardHeader>
+    <CardContent className="space-y-4">
+      {run.tasks.map((task, index) => {
+        const assignment = task.assignments.find((item) => item.current);
+        return <div key={task.id} className="space-y-2 rounded-md border p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs"><span className="font-medium">审核任务 {index + 1}</span><Badge variant="outline">{task.status === "pending" ? "待反馈" : task.status === "submitted" ? "已反馈" : "决定后关闭"}</Badge></div>
+          <p className="text-xs text-muted-foreground">当前审核人：{assignment?.name || "待分配"}{assignment ? ` · ${assignment.reviewerId}${assignment.current && !assignment.active ? " · 成员已失效，需改派" : ""}` : ""}</p>
+          {task.assignments.length > 1 ? <div className="space-y-1 border-l pl-3 text-[11px] text-muted-foreground">{task.assignments.map((item) => <p key={item.id}>{item.name || item.reviewerId} · {item.source === "manual" ? `改派：${item.reason}` : item.source === "migration_backfill" ? item.reason : "提交时分配"}</p>)}</div> : null}
+          {task.feedback.map((item) => <div key={item.id} className="rounded bg-muted/50 p-2 text-xs"><p className="font-medium">{item.reviewerName} · {item.recommendation === "recommend" ? "建议接受" : item.recommendation === "do_not_recommend" ? "不建议接受" : "无明确意见"}{item.isCurrent ? " · 当前" : " · 已修订"}</p><p className="mt-1 whitespace-pre-wrap">{item.comment}</p><p className="mt-1 text-muted-foreground">{formatDate(item.createdAt)}</p></div>)}
+        </div>;
+      })}
+      {detail.canManageReview && run.status !== "blocked_unsupported" && run.status !== "decided" && run.status !== "legacy_override_decided" ? <form className="grid gap-2 rounded-md border border-dashed p-3 sm:grid-cols-2" onSubmit={(event) => void submitAssignment(event)}>
+        <p className="text-xs font-medium sm:col-span-2">补充或改派审核人</p>
+        <Select value={taskId || "__new__"} onValueChange={(value) => setTaskId(value === "__new__" ? "" : value)}><SelectTrigger aria-label="选择待改派任务"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__new__">新增审核任务</SelectItem>{pendingTasks.map((task, index) => <SelectItem key={task.id} value={task.id}>改派待反馈任务 {index + 1}</SelectItem>)}</SelectContent></Select>
+        <Select value={reviewerId} onValueChange={setReviewerId}><SelectTrigger aria-label="选择有效审核人"><SelectValue placeholder="选择有效审核人" /></SelectTrigger><SelectContent>{activeReviewers.map((member) => <SelectItem key={member.userId} value={member.userId}>{member.name}</SelectItem>)}</SelectContent></Select>
+        <Textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} className="sm:col-span-2" placeholder={currentTask ? "必填：说明改派原因" : "必填：说明补充分配原因"} />
+        <Button type="submit" size="sm" className="sm:col-span-2 sm:justify-self-end" disabled={assignmentBusy || !reviewerId || !reason.trim()}>{assignmentBusy ? "正在保存…" : taskId ? "确认改派" : "补充审核人"}</Button>
+      </form> : null}
+      {run.status === "awaiting_assignment" ? <p className="text-xs text-amber-700">当前有效审核人不足以满足原门槛；提交仍已保存，门槛不会自动降低。</p> : null}
+      {run.status === "blocked_unsupported" ? <p className="text-xs text-amber-700">此运行保留为存量异常记录，不能补派或提交新反馈；最终决定需要走带原因的遗留流程覆盖。</p> : null}
+    </CardContent>
+  </Card>;
+}
+
+function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, onAssign, decisionBusy, assignmentBusy }) {
   const [raw, setRaw] = useState(false);
   const [decisionType, setDecisionType] = useState(null);
   const entry = detail?.entry;
   const state = detail?.inboxState || {};
-  const canDecide = Boolean(detail?.canDecide && DECIDABLE_STATUSES.has(entry?.status));
+  const runReady = detail?.review?.status === "ready_for_decision" || detail?.review?.status === "decided" || detail?.review?.status === "legacy_override_decided";
+  const hasPriorDecision = Boolean(detail?.decision);
+  const canDecide = Boolean(detail?.canDecide && DECIDABLE_STATUSES.has(entry?.status) && (runReady || hasPriorDecision || detail?.review?.status === "blocked_unsupported" || !detail?.review));
+  const legacyRequired = detail?.review?.status === "blocked_unsupported" || !detail?.review;
 
   const toggle = async (key, value) => {
     try {
@@ -135,6 +189,7 @@ function InboxDetail({ detail, revisions, onStateChanged, onDecision, decisionBu
           <CardContent>{raw ? <pre className="max-h-[32rem] overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify(detail.currentRevision.answers || {}, null, 2)}</pre> : <CampaignFormRenderer form={detail.formVersion} title="提交答案" mode="readonly" initialAnswers={detail.currentRevision.answers || {}} readOnly />}</CardContent>
         </Card>
       ) : <Card><CardContent className="py-8 text-center text-sm text-muted-foreground">暂无答案内容。</CardContent></Card>}
+      <ReviewRunCard detail={detail} members={members} onAssign={onAssign} assignmentBusy={assignmentBusy} />
       <Card>
         <CardHeader><CardTitle className="text-sm">版本历史</CardTitle></CardHeader>
         <CardContent className="space-y-1">
@@ -145,6 +200,7 @@ function InboxDetail({ detail, revisions, onStateChanged, onDecision, decisionBu
         <Card>
           <CardHeader className="gap-3">
             <CardTitle className="text-sm">决定</CardTitle>
+            {detail.canDecide && DECIDABLE_STATUSES.has(entry.status) && !runReady && !hasPriorDecision && detail.review?.status !== "blocked_unsupported" && detail.review ? <p className="text-xs text-muted-foreground">审核门槛尚未达到，当前不可作最终决定。</p> : null}
             {canDecide ? <div className="flex flex-wrap gap-2">{Object.entries(DECISION_ACTIONS).map(([type, action]) => <Button key={type} type="button" size="sm" variant={action.variant} onClick={() => setDecisionType(type)} disabled={decisionBusy}>{action.label}</Button>)}</div> : null}
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
@@ -154,7 +210,7 @@ function InboxDetail({ detail, revisions, onStateChanged, onDecision, decisionBu
         </Card>
         <Card><CardHeader><CardTitle className="text-sm">转化</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{detail.materializations?.length ? detail.materializations.length + " 条转化记录" : "当前没有 Materialization。"}</CardContent></Card>
       </div>
-      <DecisionDialog actionType={decisionType} busy={decisionBusy} onOpenChange={(open) => !open && setDecisionType(null)} onSubmit={(payload) => onDecision(entry.id, payload)} />
+      <DecisionDialog actionType={decisionType} busy={decisionBusy} legacyRequired={legacyRequired} onOpenChange={(open) => !open && setDecisionType(null)} onSubmit={(payload) => onDecision(entry.id, payload)} />
     </div>
   );
 }
@@ -174,9 +230,11 @@ export function CampaignEntryInbox({ campaignId }) {
   const [isStarred, setIsStarred] = useState("all");
   const [selectedId, setSelectedId] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [reviewMembers, setReviewMembers] = useState([]);
   const [revisions, setRevisions] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [decisionBusy, setDecisionBusy] = useState(false);
+  const [assignmentBusy, setAssignmentBusy] = useState(false);
   const listRequestSeqRef = useRef(0);
   const detailRequestSeqRef = useRef(0);
   const nextCursorRef = useRef(null);
@@ -233,6 +291,7 @@ export function CampaignEntryInbox({ campaignId }) {
     setSelectedId(item.id);
     setDetailLoading(true);
     setDetail(null);
+    setReviewMembers([]);
     setRevisions([]);
     setDetailOpen(true);
     try {
@@ -240,6 +299,19 @@ export function CampaignEntryInbox({ campaignId }) {
       if (requestId !== detailRequestSeqRef.current) return;
       setDetail(nextDetail);
       setRevisions(history.items || []);
+      if (nextDetail.canManageReview && nextDetail.entry?.productionId) {
+        try {
+          const result = await listProductionMembers(nextDetail.entry.productionId);
+          if (requestId !== detailRequestSeqRef.current) return;
+          const candidates = [
+            ...(result.inherited || []).map((member) => ({ userId: member.user_id, name: member.display_name || member.email || member.user_id, active: true })),
+            ...(result.direct || []).filter((member) => member.effective_status === "active").map((member) => ({ userId: member.user_id, name: member.display_name || member.email || member.user_id, active: true })),
+          ];
+          setReviewMembers([...new Map(candidates.filter((member) => member.userId).map((member) => [member.userId, member])).values()]);
+        } catch {
+          // The detail remains readable; the backend still validates every assignment.
+        }
+      }
       setItems((current) => current.map((row) => row.id === item.id ? { ...row, inboxState: { ...row.inboxState, isRead: true } } : row));
     } catch (nextError) {
       if (requestId !== detailRequestSeqRef.current) return;
@@ -281,7 +353,27 @@ export function CampaignEntryInbox({ campaignId }) {
     }
   }, [decisionBusy, load, selectedId]);
 
-  const getDetail = useCallback(() => detailLoading ? <div className="p-5 text-sm text-muted-foreground">正在加载提交详情…</div> : <InboxDetail detail={detail} revisions={revisions} onStateChanged={onStateChanged} onDecision={onDecision} decisionBusy={decisionBusy} />, [decisionBusy, detail, detailLoading, onDecision, onStateChanged, revisions]);
+  const onAssign = useCallback(async (entryId, payload) => {
+    if (assignmentBusy) return;
+    setAssignmentBusy(true);
+    try {
+      await notify.promise(assignEntryReviewTask(entryId, payload), {
+        loading: payload.taskId ? "正在改派审核任务…" : "正在补充分配审核人…",
+        success: payload.taskId ? "审核任务已改派" : "已补充审核人",
+        error: (nextError) => `更新审核分配失败：${nextError?.message || String(nextError)}`,
+      });
+      const nextDetail = await getEntry(entryId);
+      if (entryId === selectedId) setDetail(nextDetail);
+      await load();
+    } catch (error) {
+      // notify.promise presents the operation failure.
+      throw error;
+    } finally {
+      setAssignmentBusy(false);
+    }
+  }, [assignmentBusy, load, selectedId]);
+
+  const getDetail = useCallback(() => detailLoading ? <div className="p-5 text-sm text-muted-foreground">正在加载提交详情…</div> : <InboxDetail detail={detail} revisions={revisions} members={reviewMembers} onStateChanged={onStateChanged} onDecision={onDecision} onAssign={onAssign} decisionBusy={decisionBusy} assignmentBusy={assignmentBusy} />, [assignmentBusy, decisionBusy, detail, detailLoading, onAssign, onDecision, onStateChanged, reviewMembers, revisions]);
 
   useWindowDetailRegistration({
     key: `campaign-entry:${campaignId}`,

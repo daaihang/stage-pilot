@@ -88,14 +88,19 @@ const (
 	productionMembersManage = "production.members.manage"
 	productionPublish       = "production.publish"
 	productionShare         = "production.share"
+	campaignView            = "campaign.view"
+	campaignReview          = "campaign.review"
+	campaignManage          = "campaign.manage"
+	campaignDecide          = "campaign.decide"
+	campaignMaterialize     = "campaign.materialize"
 )
 
 var productionRolePermissions = map[string][]string{
-	"producer":      {productionView, productionEdit, productionArchive, productionMembersView, productionMembersManage, productionPublish, productionShare},
-	"editor":        {productionView, productionEdit, productionMembersView},
-	"stage_manager": {productionView, productionMembersView},
-	"contributor":   {productionView},
-	"viewer":        {productionView},
+	"producer":      {productionView, productionEdit, productionArchive, productionMembersView, productionMembersManage, productionPublish, productionShare, campaignView, campaignReview, campaignManage, campaignDecide},
+	"editor":        {productionView, productionEdit, productionMembersView, campaignView, campaignReview, campaignManage, campaignDecide},
+	"stage_manager": {productionView, productionMembersView, campaignView, campaignReview},
+	"contributor":   {productionView, campaignView, campaignReview},
+	"viewer":        {productionView, campaignView, campaignReview},
 }
 
 func validProductionRole(role string) bool { _, ok := productionRolePermissions[role]; return ok }
@@ -183,6 +188,8 @@ func (app *application) productionAccessFor(ctx context.Context, userID, product
 	if err == nil {
 		access.WorkspaceRole, access.WorkspaceNavigable = workspaceRole, true
 		access.Permissions[productionView] = true
+		access.Permissions[campaignView] = true
+		access.Permissions[campaignReview] = true
 		if workspaceRole == workspaceRoleOwner || workspaceRole == workspaceRoleAdmin {
 			for _, permission := range productionRolePermissions["producer"] {
 				access.Permissions[permission] = true

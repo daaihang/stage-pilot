@@ -479,6 +479,8 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 			message = "该表单的每邮箱次数限制缺少必填联系邮箱字段，请联系管理员修正"
 		case "close_behavior_unsupported":
 			message = "该表单使用了暂不支持的截止后转候补策略，请联系管理员修正并重新发布"
+		case "review_workflow_unsupported":
+			message = "该表单审核配置暂不支持公开收件，请联系管理员改为单轮人工审核并重新发布"
 		}
 		errorJSON(w, http.StatusConflict, unavailable, message)
 		return
@@ -522,11 +524,15 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	entryID, entryRevisionID := newID(), newID()
-	if _, err = tx.Exec(r.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status,contact_email,submitted_at,last_activity_at) VALUES($1,$2,$3,$4,$5,'submitted',$6,NOW(),NOW())`, entryID, workspaceID, productionID, campaignID, revisionID, contact); err != nil {
+	if _, err = tx.Exec(r.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status,contact_email,submitted_at,last_activity_at) VALUES($1,$2,$3,$4,$5,'in_review',$6,NOW(),NOW())`, entryID, workspaceID, productionID, campaignID, revisionID, contact); err != nil {
 		serverError(w, err)
 		return
 	}
 	if _, err = tx.Exec(r.Context(), `INSERT INTO entry_revisions(id,workspace_id,entry_id,revision_no,schema_version,answers,source) VALUES($1,$2,$3,1,$4,$5,'public')`, entryRevisionID, workspaceID, entryID, schemaVersion, answerBytes); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err = createEntryReviewRun(r.Context(), tx, workspaceID, productionID, revisionID, entryID, entryRevisionID, reviewWorkflow); err != nil {
 		serverError(w, err)
 		return
 	}

@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30-44 时运行；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30-45 时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -38,8 +38,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
 	versionNumber, parseErr := strconv.Atoi(version)
-	if parseErr != nil || versionNumber < 30 || versionNumber > 44 {
-		t.Skipf("campaign migration schema is %s, want 30-44", version)
+	if parseErr != nil || versionNumber < 30 || versionNumber > 45 {
+		t.Skipf("campaign migration schema is %s, want 30-45", version)
 	}
 	tables := []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
@@ -51,6 +51,9 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	}
 	if versionNumber >= 34 {
 		tables = append(tables, "entry_inbox_user_states")
+	}
+	if versionNumber >= 45 {
+		tables = append(tables, "entry_review_runs", "entry_review_tasks", "entry_review_task_assignments", "entry_review_feedback")
 	}
 	for _, table := range tables {
 		var registered *string
@@ -79,8 +82,8 @@ func TestCampaignFormBlocksV2TemplateInvariant(t *testing.T) {
 		t.Skipf("campaign form blocks v2 schema unavailable: %v", err)
 	}
 	versionNumber, parseErr := strconv.Atoi(version)
-	if parseErr != nil || versionNumber < 32 || versionNumber > 44 {
-		t.Skipf("campaign form blocks v2 requires schema 32-44 (got %s)", version)
+	if parseErr != nil || versionNumber < 32 || versionNumber > 45 {
+		t.Skipf("campaign form blocks v2 requires schema 32-45 (got %s)", version)
 	}
 	rows, err := app.db.Query(t.Context(), `
 		SELECT ctv.definition->'form'->'fields', ctv.definition->'form'->'blocks', ctv.review_recipe_version_id
@@ -305,8 +308,8 @@ func TestCampaignPublicIntakeSchema(t *testing.T) {
 		t.Skipf("campaign public intake schema unavailable: %v", err)
 	}
 	versionNumber, parseErr := strconv.Atoi(version)
-	if parseErr != nil || versionNumber < 33 || versionNumber > 44 {
-		t.Skipf("campaign public intake requires schema 33-44 (got %s)", version)
+	if parseErr != nil || versionNumber < 33 || versionNumber > 45 {
+		t.Skipf("campaign public intake requires schema 33-45 (got %s)", version)
 	}
 	for _, table := range []string{"campaign_share_links", "campaign_public_submission_idempotency"} {
 		var registered *string
@@ -323,8 +326,8 @@ func TestEntryInboxUserStateSchema(t *testing.T) {
 		t.Skipf("entry inbox schema unavailable: %v", err)
 	}
 	versionNumber, parseErr := strconv.Atoi(version)
-	if parseErr != nil || versionNumber < 34 || versionNumber > 44 {
-		t.Skipf("entry inbox schema requires schema 34-44 (got %s)", version)
+	if parseErr != nil || versionNumber < 34 || versionNumber > 45 {
+		t.Skipf("entry inbox schema requires schema 34-45 (got %s)", version)
 	}
 	var uniqueCount int
 	if err := app.db.QueryRow(t.Context(), `SELECT count(*) FROM pg_indexes WHERE tablename='entry_inbox_user_states' AND indexdef LIKE '%workspace_id, entry_id, user_id%'`).Scan(&uniqueCount); err != nil {
@@ -342,8 +345,8 @@ func TestTemplateRecipeManagementSchema(t *testing.T) {
 		t.Skipf("template management schema unavailable: %v", err)
 	}
 	versionNumber, parseErr := strconv.Atoi(version)
-	if parseErr != nil || versionNumber < 37 || versionNumber > 44 {
-		t.Skipf("template management schema requires version 37-44 (got %s)", version)
+	if parseErr != nil || versionNumber < 37 || versionNumber > 45 {
+		t.Skipf("template management schema requires version 37-45 (got %s)", version)
 	}
 	for _, column := range []struct{ table, name string }{
 		{"campaign_templates", "published_version"}, {"campaign_templates", "source_campaign_id"},

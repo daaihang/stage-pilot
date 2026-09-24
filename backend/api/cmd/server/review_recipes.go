@@ -283,7 +283,10 @@ func validateReviewRecipeReferences(ctx context.Context, queryer reviewRecipeQue
 						  AND (pm.starts_at IS NULL OR pm.starts_at<=NOW())
 						  AND (pm.expires_at IS NULL OR pm.expires_at>NOW())
 						  AND pm.role_key=$2
-					)`, productionID, roleKey).Scan(&exists); err != nil {
+						UNION ALL
+						SELECT 1 FROM workspace_memberships wm
+						WHERE wm.workspace_id=$3 AND wm.status='active' AND wm.role IN ('owner','admin') AND $2='producer'
+					)`, productionID, roleKey, workspaceID).Scan(&exists); err != nil {
 						return err
 					}
 					if !exists {
@@ -302,12 +305,22 @@ func validateReviewRecipeReferences(ctx context.Context, queryer reviewRecipeQue
 		for _, memberID := range round.ReviewerPolicy.MemberIDs {
 			var exists bool
 			err := queryer.QueryRow(ctx, `SELECT EXISTS(
-				SELECT 1 FROM production_memberships pm
-				WHERE pm.production_id=$1 AND pm.status='active'
-				  AND (pm.starts_at IS NULL OR pm.starts_at<=NOW())
-				  AND (pm.expires_at IS NULL OR pm.expires_at>NOW())
-				  AND (pm.id=$2 OR pm.user_id=$2)
-			)`, productionID, memberID).Scan(&exists)
+				UNION ALL
+				SELECT 1 FROM workspace_memberships wm
+				WHERE wm.workspace_id=$3 AND wm.user_id=$2 AND wm.status='active'
+				UNION ALL
+				SELECT 1 FROM production_memberships selected
+				JOIN LATERAL (
+					SELECT current_member.status,current_member.starts_at,current_member.expires_at,current_member.id
+					FROM production_memberships current_member
+					WHERE current_member.production_id=selected.production_id AND current_member.user_id=selected.user_id
+					ORDER BY current_member.created_at DESC,current_member.id DESC LIMIT 1
+				) effective ON TRUE
+				WHERE selected.production_id=$1 AND (selected.id=$2 OR selected.user_id=$2)
+				  AND effective.status='active'
+				  AND (effective.starts_at IS NULL OR effective.starts_at<=NOW())
+				  AND (effective.expires_at IS NULL OR effective.expires_at>NOW())
+			)`, productionID, memberID, workspaceID).Scan(&exists)
 			if err != nil {
 				return err
 			}

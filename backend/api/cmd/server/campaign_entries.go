@@ -200,6 +200,7 @@ type entryDetailResponse struct {
 	Materializations []entryMaterializationResponse `json:"materializations"`
 	InboxState       inboxState                     `json:"inbox_state"`
 	CanDecide        bool                           `json:"can_decide"`
+	CanManageReview  bool                           `json:"can_manage_review"`
 	Review           any                            `json:"review"`
 }
 
@@ -231,7 +232,7 @@ func parseOptionalBool(raw string) (*bool, error) {
 
 func (app *application) listCampaignEntries(w http.ResponseWriter, r *http.Request) {
 	campaignID := r.PathValue("campaignId")
-	access, err := app.campaignAccessForID(r.Context(), claims(r).Subject, campaignID, productionView)
+	access, err := app.campaignAccessForID(r.Context(), claims(r).Subject, campaignID, campaignView)
 	if err != nil {
 		if errors.Is(err, errCampaignPermissionDenied) {
 			errorJSON(w, http.StatusForbidden, "forbidden", "没有查看提交记录的权限")
@@ -445,7 +446,7 @@ func (app *application) listCampaignEntries(w http.ResponseWriter, r *http.Reque
 
 func (app *application) getEntry(w http.ResponseWriter, r *http.Request) {
 	entryID := r.PathValue("entryId")
-	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, productionView)
+	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, campaignView)
 	if err != nil {
 		if errors.Is(err, errCampaignPermissionDenied) {
 			errorJSON(w, http.StatusForbidden, "forbidden", "没有查看提交记录的权限")
@@ -475,7 +476,8 @@ func (app *application) getEntry(w http.ResponseWriter, r *http.Request) {
 
 func (app *application) loadEntryResponseByID(ctx context.Context, access entryAccess, entryID, userID string) (entryDetailResponse, error) {
 	var response entryDetailResponse
-	response.CanDecide = access.Access.Permissions[productionEdit]
+	response.CanDecide = access.Access.Permissions[campaignDecide]
+	response.CanManageReview = access.Access.Permissions[campaignManage]
 	var entry entryResponse
 	var deletedAt *time.Time
 	err := app.db.QueryRow(ctx, `SELECT e.id,e.workspace_id,e.production_id,e.campaign_id,e.campaign_revision_id,e.status,e.contact_email,e.submitted_at,e.last_activity_at,e.anonymized_at,e.created_at,e.updated_at,COALESCE(latest.revision_no,0),e.deleted_at FROM entries e LEFT JOIN LATERAL (SELECT er.revision_no FROM entry_revisions er WHERE er.workspace_id=e.workspace_id AND er.entry_id=e.id ORDER BY er.revision_no DESC LIMIT 1) latest ON TRUE WHERE e.id=$1 AND e.workspace_id=$2`, entryID, access.WorkspaceID).Scan(&entry.ID, &entry.WorkspaceID, &entry.ProductionID, &entry.CampaignID, &entry.CampaignRevisionID, &entry.Status, &entry.ContactEmail, &entry.SubmittedAt, &entry.LastActivityAt, &entry.AnonymizedAt, &entry.CreatedAt, &entry.UpdatedAt, &entry.CurrentRevisionNo, &deletedAt)
@@ -545,13 +547,16 @@ func (app *application) loadEntryResponseByID(ctx context.Context, access entryA
 		}
 		response.Materializations = append(response.Materializations, item)
 	}
-	response.Review = nil
+	response.Review, err = loadReviewRunAdminResponse(ctx, app.db, access.WorkspaceID, entryID)
+	if err != nil {
+		return response, err
+	}
 	return response, rows.Err()
 }
 
 func (app *application) listEntryRevisions(w http.ResponseWriter, r *http.Request) {
 	entryID := r.PathValue("entryId")
-	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, productionView)
+	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, campaignView)
 	if err != nil {
 		errorJSON(w, http.StatusNotFound, "entry_not_found", "提交记录不存在或无权访问")
 		return
@@ -587,13 +592,14 @@ func (app *application) listEntryRevisions(w http.ResponseWriter, r *http.Reques
 }
 
 type createEntryDecisionInput struct {
-	Type   string `json:"type"`
-	Reason string `json:"reason"`
+	Type           string `json:"type"`
+	Reason         string `json:"reason"`
+	LegacyOverride bool   `json:"legacy_override"`
 }
 
 func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Request) {
 	entryID := r.PathValue("entryId")
-	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, productionEdit)
+	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, campaignDecide)
 	if err != nil {
 		if errors.Is(err, errCampaignPermissionDenied) {
 			errorJSON(w, http.StatusForbidden, "forbidden", "没有决定提交结果的权限")
@@ -613,6 +619,10 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 	}
 	if errors.Is(err, errEntryDecisionReasonRequired) {
 		errorJSON(w, http.StatusUnprocessableEntity, "decision_reason_required", "拒绝提交时必须填写原因")
+		return
+	}
+	if input.LegacyOverride && reason == "" {
+		errorJSON(w, http.StatusUnprocessableEntity, "legacy_decision_reason_required", "遗留流程覆盖必须填写处理原因")
 		return
 	}
 
@@ -638,7 +648,8 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 	}
 	var currentStatus string
 	var deletedAt *time.Time
-	if err := tx.QueryRow(r.Context(), `SELECT status,deleted_at FROM entries WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, entryID, access.WorkspaceID).Scan(&currentStatus, &deletedAt); err != nil {
+	var currentDecisionID *string
+	if err := tx.QueryRow(r.Context(), `SELECT status,deleted_at,current_decision_id FROM entries WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, entryID, access.WorkspaceID).Scan(&currentStatus, &deletedAt, &currentDecisionID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			errorJSON(w, http.StatusNotFound, "entry_not_found", "提交记录不存在")
 		} else {
@@ -646,9 +657,46 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
-	if deletedAt != nil || !canChangeEntryDecision(currentStatus) {
+	if deletedAt != nil || (!canChangeEntryDecision(currentStatus) && !(currentStatus == "needs_changes" && input.LegacyOverride)) {
 		errorJSON(w, http.StatusConflict, "entry_decision_not_allowed", "当前提交状态不能作出或修正决定")
 		return
+	}
+	var runID, runStatus string
+	runErr := tx.QueryRow(r.Context(), `SELECT id,status FROM entry_review_runs WHERE workspace_id=$1 AND entry_id=$2 FOR UPDATE`, access.WorkspaceID, entryID).Scan(&runID, &runStatus)
+	legacyOverride := false
+	if errors.Is(runErr, pgx.ErrNoRows) {
+		if !input.LegacyOverride {
+			errorJSON(w, http.StatusConflict, "review_run_required", "该提交没有可完成的审核运行；如需处理存量流程，请使用遗留流程覆盖并填写原因")
+			return
+		}
+		legacyOverride = true
+	} else if runErr != nil {
+		serverError(w, runErr)
+		return
+	} else {
+		switch runStatus {
+		case "blocked_unsupported":
+			if !input.LegacyOverride {
+				errorJSON(w, http.StatusConflict, "legacy_override_required", "此存量审核配置不兼容；需使用遗留流程覆盖并填写原因")
+				return
+			}
+			legacyOverride = true
+		case "ready_for_decision", "decided", "legacy_override_decided":
+			if input.LegacyOverride {
+				errorJSON(w, http.StatusConflict, "legacy_override_not_applicable", "此审核运行不需要遗留流程覆盖")
+				return
+			}
+			// A later Decision may supersede a prior one without rerunning review.
+		default:
+			if input.LegacyOverride {
+				errorJSON(w, http.StatusConflict, "legacy_override_not_applicable", "当前审核配置可正常运行，不能使用遗留流程覆盖")
+				return
+			}
+			if currentDecisionID == nil {
+				errorJSON(w, http.StatusConflict, "review_quorum_not_met", "审核任务尚未达到最终决定门槛")
+				return
+			}
+		}
 	}
 	if decisionType == "accept" {
 		if limit := policyLimit(availability, "capacity"); limit > 0 {
@@ -697,13 +745,31 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 	}
 
 	decision := entryDecisionResponse{ID: newID(), Type: decisionType, Reason: reason, DecidedBy: claims(r).Subject}
-	if err = tx.QueryRow(r.Context(), `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,reason,supersedes_id,decided_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING decided_at,metadata`, decision.ID, access.WorkspaceID, entryID, access.CampaignID, decision.Type, decision.Reason, previousDecisionID, decision.DecidedBy).Scan(&decision.DecidedAt, &decision.Metadata); err != nil {
+	metadata := json.RawMessage(`{}`)
+	if legacyOverride {
+		metadata = json.RawMessage(`{"legacy_override":true}`)
+	}
+	if err = tx.QueryRow(r.Context(), `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,reason,supersedes_id,decided_by,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING decided_at,metadata`, decision.ID, access.WorkspaceID, entryID, access.CampaignID, decision.Type, decision.Reason, previousDecisionID, decision.DecidedBy, metadata).Scan(&decision.DecidedAt, &decision.Metadata); err != nil {
 		serverError(w, err)
 		return
 	}
 	if _, err = tx.Exec(r.Context(), `UPDATE entries SET status=$1,current_decision_id=$2,last_activity_at=NOW(),updated_at=NOW() WHERE id=$3 AND workspace_id=$4 AND deleted_at IS NULL`, status, decision.ID, entryID, access.WorkspaceID); err != nil {
 		serverError(w, err)
 		return
+	}
+	if runID != "" {
+		nextRunStatus := "decided"
+		if legacyOverride {
+			nextRunStatus = "legacy_override_decided"
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE entry_review_runs SET status=$1,decided_at=NOW(),updated_at=NOW() WHERE id=$2`, nextRunStatus, runID); err != nil {
+			serverError(w, err)
+			return
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE entry_review_tasks SET status='closed_by_decision',closed_at=NOW(),updated_at=NOW() WHERE workspace_id=$1 AND run_id=$2 AND status='pending'`, access.WorkspaceID, runID); err != nil {
+			serverError(w, err)
+			return
+		}
 	}
 	if err = tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
@@ -748,7 +814,7 @@ func (app *application) upsertEntryInboxState(ctx context.Context, workspaceID, 
 
 func (app *application) updateEntryInboxState(w http.ResponseWriter, r *http.Request) {
 	entryID := r.PathValue("entryId")
-	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, productionView)
+	access, err := app.entryAccessForID(r.Context(), claims(r).Subject, entryID, campaignView)
 	if err != nil {
 		if errors.Is(err, errCampaignPermissionDenied) {
 			errorJSON(w, http.StatusForbidden, "forbidden", "没有查看提交记录的权限")

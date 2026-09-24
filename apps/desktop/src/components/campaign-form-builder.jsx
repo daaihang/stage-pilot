@@ -22,6 +22,7 @@ import { addContentBlock, addField, clientValidateForm, duplicateBlock, duplicat
 import { evaluateFormState, validateAnswers } from "@/lib/campaign-form-runtime";
 import { useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
 import { CampaignConsentField, CampaignFormField } from "@/components/campaign-form-fields";
+import { CampaignReviewEditor as SingleRoundCampaignReviewEditor } from "@/components/campaign-review-editor";
 
 const FIELD_TYPES = { text: "单行文本", textarea: "长文本", number: "数字", email: "邮箱", phone: "电话", url: "网址", date: "日期", datetime: "日期时间", select: "下拉选择", radio: "单选", checkbox: "复选", multiselect: "多选", file: "文件", hidden: "隐藏字段" };
 const BLOCK_TYPES = { text: "说明文字", section: "分组标题", field: "字段", consent: "同意确认", upload: "上传提示", divider: "分隔线" };
@@ -238,5 +239,5 @@ function MaterializationEditor() {
 
 export function CampaignFormBuilder() { return <FormEditor />; }
 export function CampaignRulesEditor() { return <RulesEditor />; }
-export function CampaignReviewEditor() { return <ReviewEditor />; }
+export function CampaignReviewEditor() { return <SingleRoundCampaignReviewEditor />; }
 export function CampaignResultsEditor() { return <MaterializationEditor />; }
