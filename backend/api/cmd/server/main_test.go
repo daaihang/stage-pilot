@@ -32,7 +32,7 @@ func TestCORSPreflightAllowsDesktopPreview(t *testing.T) {
 	}))
 	request := httptest.NewRequest(http.MethodOptions, "/auth/register", nil)
 	request.Header.Set("Origin", "http://localhost:1420")
-	request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	request.Header.Set("Access-Control-Request-Method", http.MethodPut)
 	request.Header.Set("Access-Control-Request-Headers", "content-type, idempotency-key, if-match")
 	recorder := httptest.NewRecorder()
 
@@ -44,8 +44,8 @@ func TestCORSPreflightAllowsDesktopPreview(t *testing.T) {
 	if got := recorder.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:1420" {
 		t.Fatalf("allow origin = %q", got)
 	}
-	if got := recorder.Header().Get("Access-Control-Allow-Methods"); got == "" {
-		t.Fatal("missing allow methods header")
+	if got := recorder.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(strings.ToUpper(got), http.MethodPut) {
+		t.Fatalf("allow methods = %q, missing %s", got, http.MethodPut)
 	}
 	if got := recorder.Header().Get("Access-Control-Allow-Headers"); got == "" {
 		t.Fatal("missing allow headers header")
