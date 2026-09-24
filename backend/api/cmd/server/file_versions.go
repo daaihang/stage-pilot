@@ -75,8 +75,14 @@ func (app *application) recordCopyAttempt(ctx context.Context, workspaceID strin
 }
 
 func commitCopyAttempt(ctx context.Context, tx pgx.Tx, versionID string) error {
-	_, err := tx.Exec(ctx, `UPDATE file_copy_attempts SET status='committed' WHERE id=$1 AND status='pending'`, versionID)
-	return err
+	tag, err := tx.Exec(ctx, `UPDATE file_copy_attempts SET status='committed' WHERE id=$1 AND status='pending' AND object_purged_at IS NULL`, versionID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("file copy attempt %s is no longer publishable", versionID)
+	}
+	return nil
 }
 
 func (app *application) finalizeLegacyFile(ctx context.Context, s *objectStorage, workspaceID, fileID, userID string, f fileLocation, sourceETag string) (bool, error) {

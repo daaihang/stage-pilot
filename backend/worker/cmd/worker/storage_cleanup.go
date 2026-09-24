@@ -118,16 +118,36 @@ func cleanupCopyAttemptsWithClient(ctx context.Context, logger *slog.Logger, db 
 		return
 	}
 	for _, item := range items {
-		if _, err := db.Exec(ctx, `UPDATE file_copy_attempts SET object_cleanup_attempted_at=NOW() WHERE id=$1 AND status='pending' AND object_purged_at IS NULL`, item.id); err != nil {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			logger.Warn("begin copy cleanup", "error", err)
+			continue
+		}
+		// Keep the row lock until the object removal finishes. A publishing
+		// transaction must not mark this copy committed while cleanup deletes it.
+		tag, err := tx.Exec(ctx, `UPDATE file_copy_attempts SET object_cleanup_attempted_at=NOW()
+			WHERE id=$1 AND status='pending' AND object_purged_at IS NULL`, item.id)
+		if err != nil {
+			_ = tx.Rollback(ctx)
 			logger.Warn("mark copy cleanup attempt", "error", err)
 			continue
 		}
+		if tag.RowsAffected() != 1 {
+			_ = tx.Rollback(ctx)
+			continue
+		}
 		if err := client.RemoveObject(ctx, item.bucket, item.key, minio.RemoveObjectOptions{}); err != nil {
+			_ = tx.Commit(ctx)
 			logger.Warn("remove uncommitted file copy", "copy_id", item.id, "error", err)
 			continue
 		}
-		if _, err := db.Exec(ctx, `UPDATE file_copy_attempts SET object_purged_at=NOW() WHERE id=$1 AND status='pending'`, item.id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE file_copy_attempts SET object_purged_at=NOW() WHERE id=$1`, item.id); err != nil {
+			_ = tx.Rollback(ctx)
 			logger.Warn("mark uncommitted copy purged", "error", err)
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			logger.Warn("commit uncommitted copy cleanup", "error", err)
 		}
 	}
 }
@@ -213,7 +233,11 @@ func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 			_, err = tx.Exec(ctx, `UPDATE files SET bucket=$1,object_key=$2,etag=$3 WHERE id=$4 AND current_version_id=$5`, item.bucket, key, copiedETag, fileID, item.id)
 		}
 		if err == nil {
-			_, err = tx.Exec(ctx, `UPDATE file_copy_attempts SET status='committed' WHERE id=$1`, attemptID)
+			tag, updateErr := tx.Exec(ctx, `UPDATE file_copy_attempts SET status='committed' WHERE id=$1 AND status='pending' AND object_purged_at IS NULL`, attemptID)
+			err = updateErr
+			if err == nil && tag.RowsAffected() != 1 {
+				err = fmt.Errorf("legacy freeze copy %s was already cleaned", attemptID)
+			}
 		}
 		if err == nil {
 			err = tx.Commit(ctx)

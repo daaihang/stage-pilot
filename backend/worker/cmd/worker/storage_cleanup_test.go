@@ -234,7 +234,10 @@ func TestCleanupFilesOnlyAbandonsUnfinishedUploads(t *testing.T) {
 		t.Fatal("cleanup did not finish")
 	}
 
-	for _, session := range []struct{ id, status string; age time.Duration }{{"unfinished", "pending", 48*time.Hour}, {"finished", "completed", 48*time.Hour}, {"recent-completed", "completed", time.Hour}} {
+	for _, session := range []struct {
+		id, status string
+		age        time.Duration
+	}{{"unfinished", "pending", 48 * time.Hour}, {"finished", "completed", 48 * time.Hour}, {"recent-completed", "completed", time.Hour}} {
 		_, err := pool.Exec(t.Context(), `INSERT INTO file_upload_sessions(id,workspace_id,file_id,created_by,staging_bucket,staging_key,expected_size,filename,content_type,status,created_at,expires_at)
 			VALUES($1,$2,$3,$4,'test-file-cleanup-bucket',$5,5,'test.txt','text/plain',$6,$7,$8)`, unique+session.id, workspaceID, oldID, userID, session.id, session.status, time.Now().Add(-session.age), time.Now().Add(-session.age+time.Hour))
 		if err != nil {
@@ -268,5 +271,53 @@ func TestCleanupFilesOnlyAbandonsUnfinishedUploads(t *testing.T) {
 	}
 	if !sessionPurged || !attemptPurged {
 		t.Fatalf("cleanup markers missing: session=%v copy=%v", sessionPurged, attemptPurged)
+	}
+	copyRaceID := unique + "-copy-race"
+	if _, err := pool.Exec(t.Context(), `INSERT INTO file_copy_attempts(id,workspace_id,bucket,object_key,created_at)
+		VALUES($1,$2,'test-file-cleanup-bucket',$3,$4)`, copyRaceID, workspaceID, copyRaceID, time.Now().Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	copyBlocking := &testObjectRemover{calls: map[string]int{}, started: make(chan string), release: make(chan struct{})}
+	copyDone := make(chan struct{})
+	go func() {
+		cleanupCopyAttemptsWithClient(context.Background(), logger, pool, copyBlocking, 24*time.Hour)
+		close(copyDone)
+	}()
+	select {
+	case key := <-copyBlocking.started:
+		if key != copyRaceID {
+			t.Fatalf("unexpected copy cleanup target: %s", key)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("copy cleanup did not start")
+	}
+	type publishResult struct {
+		affected int64
+		err      error
+	}
+	published := make(chan publishResult, 1)
+	go func() {
+		tag, err := pool.Exec(context.Background(), `UPDATE file_copy_attempts SET status='committed'
+			WHERE id=$1 AND status='pending' AND object_purged_at IS NULL`, copyRaceID)
+		published <- publishResult{tag.RowsAffected(), err}
+	}()
+	select {
+	case result := <-published:
+		t.Fatalf("copy published while cleanup held its lock: %+v", result)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(copyBlocking.release)
+	select {
+	case <-copyDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("copy cleanup did not finish")
+	}
+	select {
+	case result := <-published:
+		if result.err != nil || result.affected != 0 {
+			t.Fatalf("cleaned copy became publishable: %+v", result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("publisher did not resume after copy cleanup")
 	}
 }
