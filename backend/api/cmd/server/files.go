@@ -135,16 +135,30 @@ func (app *application) fileLocation(r *http.Request) (fileLocation, error) {
 }
 
 type storedFile struct {
-	ID           string    `json:"id"`
-	WorkspaceID  string    `json:"workspace_id"`
-	ProductionID *string   `json:"production_id,omitempty"`
-	Filename     string    `json:"filename"`
-	ContentType  string    `json:"content_type"`
-	SizeBytes    int64     `json:"size_bytes"`
-	ETag         string    `json:"etag"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           string          `json:"id"`
+	WorkspaceID  string          `json:"workspace_id"`
+	ProductionID *string         `json:"production_id,omitempty"`
+	Filename     string          `json:"filename"`
+	ContentType  string          `json:"content_type"`
+	SizeBytes    int64           `json:"size_bytes"`
+	ETag         string          `json:"etag"`
+	Status       string          `json:"status"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	Capabilities map[string]bool `json:"capabilities,omitempty"`
+}
+
+func (app *application) libraryFileCapabilities(ctx context.Context, userID, workspaceID string, productionID *string) map[string]bool {
+	canWrite, canDelete := false, false
+	if productionID == nil {
+		role, err := app.workspaceFileRole(ctx, userID, workspaceID)
+		canWrite = err == nil && roleRank[role] >= roleRank[workspaceRoleMember]
+		canDelete = err == nil && roleRank[role] >= roleRank[workspaceRoleAdmin]
+	} else if access, err := app.productionAccessFor(ctx, userID, *productionID); err == nil && access.WorkspaceID == workspaceID {
+		canWrite = access.Permissions[productionEdit]
+		canDelete = canWrite
+	}
+	return map[string]bool{"can_download": true, "can_upload_version": canWrite, "can_delete": canDelete}
 }
 
 func cleanFilename(name string) string {
@@ -302,9 +316,11 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 			serverError(w, err)
 			return
 		}
+		f.Capabilities = app.libraryFileCapabilities(r.Context(), claims(r).Subject, workspaceID, f.ProductionID)
 		items = append(items, f)
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
+	capabilities := app.libraryFileCapabilities(r.Context(), claims(r).Subject, workspaceID, productionID)
+	writeJSON(w, 200, map[string]any{"items": items, "total": len(items), "capabilities": map[string]bool{"can_upload": capabilities["can_upload_version"]}})
 }
 func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
 	f, err := app.fileLocation(r)

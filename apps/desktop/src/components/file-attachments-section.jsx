@@ -105,10 +105,10 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
     } catch (error) { notify.error("解除关联失败", { id: toast, description: error?.message || String(error) }); }
   };
 
-  const copy = async (source) => {
+  const copy = async (source, versionId = source.version_id) => {
     const toast = notify.loading("正在复制固定版本到活动…");
     try {
-      await copyProductionProgramAttachment(production.id, programId, { attachment_id: source.id, version_id: source.version_id });
+      await copyProductionProgramAttachment(production.id, programId, { attachment_id: source.id, version_id: versionId });
       await reload();
       notify.success("已复制到本活动，来源后续版本不会自动同步", { id: toast });
     } catch (error) { notify.error("复制附件失败", { id: toast, description: error?.message || String(error) }); }
@@ -131,7 +131,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
         {item.capabilities?.can_upload_version && <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-primary"><FileUp className="size-3.5" />上传新版<input type="file" className="hidden" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void executeUpload(file, (payload) => startAttachmentVersion(item.id, payload)); }} /></label>}
         {versionItems[item.id]?.map((version) => <div key={version.id} className="mt-2 flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="flex-1 truncate">v{version.version_no} · {version.filename}</span><Button size="sm" variant="ghost" onClick={() => download(item, version.id)}>下载</Button></div>)}
       </div>) : <p className="text-sm text-muted-foreground">暂无附件</p>}
-      {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy}><Copy />复制</Button></div>)}</div>}
+      {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="space-y-1"><div className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="ghost" onClick={() => showVersions(source)}><Clock3 />历史版本</Button><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy}><Copy />复制当前版</Button></div>{versionItems[source.id]?.map((version) => <div key={version.id} className="flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">v{version.version_no} · {version.filename}</span><Button size="sm" variant="outline" onClick={() => copy(source, version.id)} disabled={busy}>复制此版本</Button></div>)}</div>)}</div>}
       {confirmDetach && <div role="alertdialog" aria-label="确认解除附件关联" className="space-y-2 rounded-md border p-3 text-sm"><p>解除“{confirmDetach.filename}”的关联？文件和历史版本仍会保留。</p><div className="flex gap-2"><Button size="sm" variant="destructive" onClick={detach}>确认解除</Button><Button size="sm" variant="outline" onClick={() => setConfirmDetach(null)}>取消</Button></div></div>}
     </CardContent>
   </Card>;

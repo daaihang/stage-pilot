@@ -123,8 +123,10 @@ func (app *application) finalizeLegacyFile(ctx context.Context, s *objectStorage
 	if err != nil {
 		return false, err
 	}
-	_,err=tx.Exec(ctx,`UPDATE file_upload_sessions SET status='completed',resulting_version_id=$1 WHERE file_id=$2 AND status='pending' AND staging_key=$3`,versionID,fileID,f.ObjectKey)
-	if err!=nil { return false,err }
+	_, err = tx.Exec(ctx, `UPDATE file_upload_sessions SET status='completed',resulting_version_id=$1 WHERE file_id=$2 AND status='pending' AND staging_key=$3`, versionID, fileID, f.ObjectKey)
+	if err != nil {
+		return false, err
+	}
 	if err = commitCopyAttempt(ctx, tx, versionID); err != nil {
 		return false, err
 	}
@@ -280,6 +282,10 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 	err = app.db.QueryRow(r.Context(), `SELECT production_id,access_mode,status FROM files WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, fileID, workspaceID).Scan(&productionID, &mode, &fileStatus)
 	if err != nil {
 		errorJSON(w, 404, "upload_not_found", "上传任务不存在")
+		return
+	}
+	if fileStatus != "pending" && fileStatus != "uploaded" {
+		errorJSON(w, 409, "file_unavailable", "文件已失效")
 		return
 	}
 	if mode == "library" {
