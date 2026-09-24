@@ -176,28 +176,30 @@ export function SectionTabsLayout({
           "relative w-full min-w-0 @min-[56rem]/settings-tabs:h-fit",
           shouldPin && "sticky top-0 z-20 self-start bg-background/95 py-1 backdrop-blur-sm",
         )}>
-          <TabsList
-            ref={activeTabsListRef}
-            aria-label={ariaLabel}
-            className={cn(
-              "w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none @min-[56rem]/settings-tabs:h-fit @min-[56rem]/settings-tabs:w-full @min-[56rem]/settings-tabs:flex-col @min-[56rem]/settings-tabs:items-stretch",
-              shouldPin && orientation === "vertical" && "max-h-[calc(100dvh-var(--app-titlebar-height)-2rem)] overflow-y-auto overflow-x-hidden scrollbar-thin",
-              orientation === "vertical" && !shouldPin && "@min-[56rem]/settings-tabs:overflow-visible",
+          <div className="relative w-full min-w-0">
+            <TabsList
+              ref={activeTabsListRef}
+              aria-label={ariaLabel}
+              className={cn(
+                "w-full min-w-0 justify-start overflow-x-auto overflow-y-hidden scrollbar-none @min-[56rem]/settings-tabs:h-fit @min-[56rem]/settings-tabs:w-full @min-[56rem]/settings-tabs:flex-col @min-[56rem]/settings-tabs:items-stretch",
+                shouldPin && orientation === "vertical" && "max-h-[calc(100dvh-var(--app-titlebar-height)-2rem)] overflow-y-auto overflow-x-hidden scrollbar-thin",
+                orientation === "vertical" && !shouldPin && "@min-[56rem]/settings-tabs:overflow-visible",
+              )}
+            >
+              {groups.map(([id, label, Icon]) => (
+                <TabsTrigger key={id} value={id} data-category-tab={id} disabled={disabled} className="min-w-28">
+                  <Icon className="size-4" />
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {orientation === "horizontal" && horizontalScrollState.canScrollLeft && (
+              <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-muted via-muted/80 to-transparent" />
             )}
-          >
-            {groups.map(([id, label, Icon]) => (
-              <TabsTrigger key={id} value={id} data-category-tab={id} disabled={disabled} className="min-w-28">
-                <Icon className="size-4" />
-                {label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-          {orientation === "horizontal" && horizontalScrollState.canScrollLeft && (
-            <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-muted via-muted/80 to-transparent" />
-          )}
-          {orientation === "horizontal" && horizontalScrollState.canScrollRight && (
-            <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-muted via-muted/80 to-transparent" />
-          )}
+            {orientation === "horizontal" && horizontalScrollState.canScrollRight && (
+              <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-muted via-muted/80 to-transparent" />
+            )}
+          </div>
           {orientation === "vertical" && shouldPin && verticalScrollState.canScrollTop && (
             <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-1 z-10 h-5 bg-gradient-to-b from-background via-background/80 to-transparent" />
           )}
