@@ -3,10 +3,11 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30-37 时运行；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30-44 时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -36,8 +37,9 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
-	if version != "30" && version != "31" && version != "32" && version != "33" && version != "34" && version != "35" && version != "36" && version != "37" {
-		t.Skipf("campaign migration schema is %s, want 30-37", version)
+	versionNumber, parseErr := strconv.Atoi(version)
+	if parseErr != nil || versionNumber < 30 || versionNumber > 44 {
+		t.Skipf("campaign migration schema is %s, want 30-44", version)
 	}
 	tables := []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
@@ -47,7 +49,7 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 		"review_recipe_templates", "review_recipe_versions",
 		"campaign_share_links", "campaign_public_submission_idempotency",
 	}
-	if version == "34" || version == "35" || version == "36" || version == "37" {
+	if versionNumber >= 34 {
 		tables = append(tables, "entry_inbox_user_states")
 	}
 	for _, table := range tables {
@@ -59,13 +61,26 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 			t.Fatalf("table %s missing at campaign schema", table)
 		}
 	}
+	if versionNumber >= 44 {
+		var indexExists bool
+		if err := app.db.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='entries_campaign_contact_email_limit_idx')`).Scan(&indexExists); err != nil {
+			t.Fatal(err)
+		}
+		if !indexExists {
+			t.Fatal("per-contact-email submission limit index missing")
+		}
+	}
 }
 
 func TestCampaignFormBlocksV2TemplateInvariant(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "32" && version != "33" && version != "34" && version != "35" && version != "36" && version != "37") {
-		t.Skipf("campaign form blocks v2 requires schema 32-37 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
+		t.Skipf("campaign form blocks v2 schema unavailable: %v", err)
+	}
+	versionNumber, parseErr := strconv.Atoi(version)
+	if parseErr != nil || versionNumber < 32 || versionNumber > 44 {
+		t.Skipf("campaign form blocks v2 requires schema 32-44 (got %s)", version)
 	}
 	rows, err := app.db.Query(t.Context(), `
 		SELECT ctv.definition->'form'->'fields', ctv.definition->'form'->'blocks', ctv.review_recipe_version_id
@@ -286,8 +301,12 @@ func TestCampaignSystemTemplateSeedAndIdempotencyTable(t *testing.T) {
 func TestCampaignPublicIntakeSchema(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "33" && version != "34" && version != "35" && version != "36" && version != "37") {
-		t.Skipf("campaign public intake requires schema 33-37 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
+		t.Skipf("campaign public intake schema unavailable: %v", err)
+	}
+	versionNumber, parseErr := strconv.Atoi(version)
+	if parseErr != nil || versionNumber < 33 || versionNumber > 44 {
+		t.Skipf("campaign public intake requires schema 33-44 (got %s)", version)
 	}
 	for _, table := range []string{"campaign_share_links", "campaign_public_submission_idempotency"} {
 		var registered *string
@@ -300,8 +319,12 @@ func TestCampaignPublicIntakeSchema(t *testing.T) {
 func TestEntryInboxUserStateSchema(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || (version != "34" && version != "35" && version != "36" && version != "37") {
-		t.Skipf("entry inbox schema requires schema 34-37 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
+		t.Skipf("entry inbox schema unavailable: %v", err)
+	}
+	versionNumber, parseErr := strconv.Atoi(version)
+	if parseErr != nil || versionNumber < 34 || versionNumber > 44 {
+		t.Skipf("entry inbox schema requires schema 34-44 (got %s)", version)
 	}
 	var uniqueCount int
 	if err := app.db.QueryRow(t.Context(), `SELECT count(*) FROM pg_indexes WHERE tablename='entry_inbox_user_states' AND indexdef LIKE '%workspace_id, entry_id, user_id%'`).Scan(&uniqueCount); err != nil {
@@ -315,8 +338,12 @@ func TestEntryInboxUserStateSchema(t *testing.T) {
 func TestTemplateRecipeManagementSchema(t *testing.T) {
 	app := newIntegrationApp(t)
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil || version != "37" {
-		t.Skipf("template management schema requires version 37 (got %s)", version)
+	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
+		t.Skipf("template management schema unavailable: %v", err)
+	}
+	versionNumber, parseErr := strconv.Atoi(version)
+	if parseErr != nil || versionNumber < 37 || versionNumber > 44 {
+		t.Skipf("template management schema requires version 37-44 (got %s)", version)
 	}
 	for _, column := range []struct{ table, name string }{
 		{"campaign_templates", "published_version"}, {"campaign_templates", "source_campaign_id"},

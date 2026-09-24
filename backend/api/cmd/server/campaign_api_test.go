@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -214,7 +215,10 @@ func TestEntryManualDecisionAPI(t *testing.T) {
 	if _, err := app.db.Exec(t.Context(), "INSERT INTO campaigns(id,workspace_id,production_id,kind,name,created_by) VALUES($1,$2,$3,'COLLECTION',$4,$5)", campaignID, workspaceID, productionID, "人工决定", owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.db.Exec(t.Context(), "INSERT INTO campaign_revisions(id,workspace_id,campaign_id,revision_no,form_version_id,created_by) VALUES($1,$2,$3,1,$4,$5)", revisionID, workspaceID, campaignID, formVersion, owner); err != nil {
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO campaign_revisions(id,workspace_id,campaign_id,revision_no,status,form_version_id,availability_policy,created_by) VALUES($1,$2,$3,1,'published',$4,'{"waitlist_enabled":true}'::jsonb,$5)`, revisionID, workspaceID, campaignID, formVersion, owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), "UPDATE campaigns SET status='published',published_revision_id=$1 WHERE id=$2", revisionID, campaignID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := app.db.Exec(t.Context(), "INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'submitted')", entryID, workspaceID, productionID, campaignID, revisionID); err != nil {
@@ -340,4 +344,113 @@ func findJSONValue(value any, key, expected string) bool {
 		}
 	}
 	return false
+}
+
+func TestEntryDecisionCapacityAndWaitlistLimits(t *testing.T) {
+	app := newIntegrationApp(t)
+	fixture := createPublicCampaignFixture(t, app, `{"waitlist_enabled":true,"capacity":1,"waitlist_limit":1}`, `{"mode":"MANUAL_DECISION"}`)
+	entryIDs := []string{newID(), newID(), newID()}
+	for _, entryID := range entryIDs {
+		if _, err := app.db.Exec(t.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'submitted')`, entryID, fixture.workspaceID, fixture.productionID, fixture.campaignID, fixture.revisionID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decide := func(entryID, decisionType string) *httptest.ResponseRecorder {
+		return authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": decisionType, "reason": "test"})
+	}
+	if response := decide(entryIDs[0], "accept"); response.Code != http.StatusOK {
+		t.Fatalf("first accept = %d: %s", response.Code, response.Body.String())
+	}
+	if response := decide(entryIDs[1], "reject"); response.Code != http.StatusOK {
+		t.Fatalf("initial rejection = %d: %s", response.Code, response.Body.String())
+	}
+	var originalDecisionID string
+	if err := app.db.QueryRow(t.Context(), `SELECT current_decision_id FROM entries WHERE id=$1`, entryIDs[1]).Scan(&originalDecisionID); err != nil {
+		t.Fatal(err)
+	}
+	if response := decide(entryIDs[1], "accept"); response.Code != http.StatusConflict || publicResponseErrorCode(t, response) != "campaign_capacity_reached" {
+		t.Fatalf("accept over capacity = %d: %s", response.Code, response.Body.String())
+	}
+	var currentDecisionID, currentStatus string
+	if err := app.db.QueryRow(t.Context(), `SELECT current_decision_id,status FROM entries WHERE id=$1`, entryIDs[1]).Scan(&currentDecisionID, &currentStatus); err != nil {
+		t.Fatal(err)
+	}
+	var currentDecisionCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM decisions WHERE entry_id=$1 AND is_current`, entryIDs[1]).Scan(&currentDecisionCount); err != nil {
+		t.Fatal(err)
+	}
+	if currentDecisionID != originalDecisionID || currentStatus != "rejected" || currentDecisionCount != 1 {
+		t.Fatalf("capacity rejection must preserve prior decision: id=%q original=%q status=%q current count=%d", currentDecisionID, originalDecisionID, currentStatus, currentDecisionCount)
+	}
+	if response := decide(entryIDs[1], "waitlist"); response.Code != http.StatusOK {
+		t.Fatalf("explicit waitlist = %d: %s", response.Code, response.Body.String())
+	}
+	if response := decide(entryIDs[2], "waitlist"); response.Code != http.StatusConflict || publicResponseErrorCode(t, response) != "waitlist_limit_reached" {
+		t.Fatalf("waitlist over limit = %d: %s", response.Code, response.Body.String())
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_revisions SET availability_policy='{"waitlist_enabled":false,"capacity":1,"waitlist_limit":1}'::jsonb WHERE id=$1`, fixture.revisionID); err != nil {
+		t.Fatal(err)
+	}
+	if response := decide(entryIDs[2], "waitlist"); response.Code != http.StatusConflict || publicResponseErrorCode(t, response) != "waitlist_disabled" {
+		t.Fatalf("disabled waitlist = %d: %s", response.Code, response.Body.String())
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE entries SET status='converted' WHERE id=$1`, entryIDs[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_revisions SET availability_policy='{"waitlist_enabled":true,"capacity":1,"waitlist_limit":1}'::jsonb WHERE id=$1`, fixture.revisionID); err != nil {
+		t.Fatal(err)
+	}
+	if response := decide(entryIDs[2], "accept"); response.Code != http.StatusConflict || publicResponseErrorCode(t, response) != "campaign_capacity_reached" {
+		t.Fatalf("converted entries should consume capacity = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestConcurrentEntryAcceptsRespectCampaignCapacity(t *testing.T) {
+	app := newIntegrationApp(t)
+	fixture := createPublicCampaignFixture(t, app, `{"capacity":1}`, `{"mode":"MANUAL_DECISION"}`)
+	const candidates = 6
+	entryIDs := make([]string, candidates)
+	for i := range entryIDs {
+		entryIDs[i] = newID()
+		if _, err := app.db.Exec(t.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'submitted')`, entryIDs[i], fixture.workspaceID, fixture.productionID, fixture.campaignID, fixture.revisionID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	start := make(chan struct{})
+	statuses := make(chan int, candidates)
+	var wait sync.WaitGroup
+	for _, entryID := range entryIDs {
+		wait.Add(1)
+		go func(id string) {
+			defer wait.Done()
+			<-start
+			body := strings.NewReader(`{"type":"accept"}`)
+			req := httptest.NewRequest(http.MethodPost, "/v1/entries/"+id+"/decisions", body)
+			req.Header.Set("Authorization", "Bearer "+fixture.ownerToken)
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			app.routes().ServeHTTP(recorder, req)
+			statuses <- recorder.Code
+		}(entryID)
+	}
+	close(start)
+	wait.Wait()
+	close(statuses)
+	succeeded, rejected := 0, 0
+	for status := range statuses {
+		if status == http.StatusOK {
+			succeeded++
+		} else if status == http.StatusConflict {
+			rejected++
+		} else {
+			t.Errorf("unexpected decision status: %d", status)
+		}
+	}
+	var acceptedCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM entries WHERE campaign_id=$1 AND status IN ('accepted','converted')`, fixture.campaignID).Scan(&acceptedCount); err != nil {
+		t.Fatal(err)
+	}
+	if succeeded != 1 || rejected != candidates-1 || acceptedCount != 1 {
+		t.Fatalf("capacity race: succeeded=%d rejected=%d accepted entries=%d", succeeded, rejected, acceptedCount)
+	}
 }

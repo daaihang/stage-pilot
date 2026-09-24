@@ -28,3 +28,58 @@ func TestValidatePublicAnswersLogicRequired(t *testing.T) {
 		t.Fatalf("dynamic required validation failed: %v", err)
 	}
 }
+
+func TestPublicSubmissionRequestHashBindsRevisionAndAnswers(t *testing.T) {
+	first, err := publicSubmissionRequestHash("revision-1", map[string]any{"name": "A", "email": "a@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reordered, err := publicSubmissionRequestHash("revision-1", map[string]any{"email": "a@example.com", "name": "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedRevision, err := publicSubmissionRequestHash("revision-2", map[string]any{"name": "A", "email": "a@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedAnswers, err := publicSubmissionRequestHash("revision-1", map[string]any{"name": "B", "email": "a@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != reordered || first == changedRevision || first == changedAnswers {
+		t.Fatalf("request fingerprints should be map-order stable and bind revision/answers: %q %q %q %q", first, reordered, changedRevision, changedAnswers)
+	}
+}
+
+func TestPublicSubmissionPolicyCompatibility(t *testing.T) {
+	requiredEmail := json.RawMessage(`[{"id":"email","semantic_key":"CONTACT_EMAIL","required":true}]`)
+	optionalEmail := json.RawMessage(`[{"id":"email","semantic_key":"contact_email","required":false}]`)
+	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{"per_actor_limit":1}`), requiredEmail, json.RawMessage(`{"mode":"MANUAL_DECISION"}`)); err != nil {
+		t.Fatalf("required email should satisfy actor limit: %v", err)
+	}
+	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{"per_actor_limit":1}`), optionalEmail, nil); err == nil || err.(*formValidationError).Code != "contact_email_required_for_actor_limit" {
+		t.Fatalf("optional email should fail actor limit compatibility, got %v", err)
+	}
+	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{"per_actor_limit":0}`), optionalEmail, nil); err != nil {
+		t.Fatalf("zero actor limit should be unlimited: %v", err)
+	}
+	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{}`), requiredEmail, json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); err == nil || err.(*formValidationError).Code != "auto_accept_unavailable" {
+		t.Fatalf("auto accept should be blocked, got %v", err)
+	}
+	if reason := publicSubmissionUnavailableReason(json.RawMessage(`{"close_behavior":"accept_to_waitlist"}`), json.RawMessage(`{"fields":[{"id":"email","semantic_key":"CONTACT_EMAIL","required":true}]}`), nil); reason != "close_behavior_unsupported" {
+		t.Fatalf("legacy close behavior reason = %q", reason)
+	}
+	if reason := publicSubmissionUnavailableReason(json.RawMessage(`{"per_actor_limit":1}`), json.RawMessage(`{"fields":[{"id":"email","semantic_key":"contact_email","required":true}]}`), nil); reason != "" {
+		t.Fatalf("public form with required contact email should be available, reason=%q", reason)
+	}
+}
+
+func TestPolicyLimitNullAndZeroMeanUnlimited(t *testing.T) {
+	var policy map[string]any
+	if err := json.Unmarshal([]byte(`{"submission_limit":null,"capacity":0,"waitlist_limit":3}`), &policy); err != nil {
+		t.Fatal(err)
+	}
+	if policyLimit(policy, "submission_limit") != 0 || policyLimit(policy, "capacity") != 0 || policyLimit(policy, "waitlist_limit") != 3 {
+		t.Fatalf("unexpected policy limits: %#v", policy)
+	}
+}

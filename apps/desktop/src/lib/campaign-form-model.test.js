@@ -35,7 +35,8 @@ test("default presentation keeps collection forms one-step and resolves safe end
   const form = emptyFormVersion();
   assert.equal(form.presentation.welcome.enabled, false);
   assert.equal(form.presentation.ending.mode, "default");
-  assert.equal(resolveEndingContent(form, { campaignKind: "RECRUITMENT", reviewWorkflow: { mode: "MANUAL_DECISION" } }).title, "已收到，等待审核");
+  assert.equal(resolveEndingContent(form, { campaignKind: "RECRUITMENT", reviewWorkflow: { mode: "MANUAL_DECISION" } }).title, "提交已收到");
+  assert.equal(resolveEndingContent(form, { campaignKind: "REGISTRATION", reviewWorkflow: { mode: "AUTO_ACCEPT" } }).body, "我们已收到你提交的信息。");
 });
 
 test("normalizes a form and keeps field block references stable", () => {

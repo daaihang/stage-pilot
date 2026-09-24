@@ -622,6 +622,20 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var availabilityRaw json.RawMessage
+	if err := tx.QueryRow(r.Context(), `SELECT COALESCE(cr.availability_policy,'{}'::jsonb) FROM campaigns c LEFT JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id WHERE c.id=$1 AND c.workspace_id=$2 FOR UPDATE OF c`, access.CampaignID, access.WorkspaceID).Scan(&availabilityRaw); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			errorJSON(w, http.StatusNotFound, "campaign_not_found", "活动不存在")
+		} else {
+			serverError(w, err)
+		}
+		return
+	}
+	var availability map[string]any
+	if err := json.Unmarshal(availabilityRaw, &availability); err != nil {
+		serverError(w, err)
+		return
+	}
 	var currentStatus string
 	var deletedAt *time.Time
 	if err := tx.QueryRow(r.Context(), `SELECT status,deleted_at FROM entries WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, entryID, access.WorkspaceID).Scan(&currentStatus, &deletedAt); err != nil {
@@ -635,6 +649,37 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 	if deletedAt != nil || !canChangeEntryDecision(currentStatus) {
 		errorJSON(w, http.StatusConflict, "entry_decision_not_allowed", "当前提交状态不能作出或修正决定")
 		return
+	}
+	if decisionType == "accept" {
+		if limit := policyLimit(availability, "capacity"); limit > 0 {
+			var count int64
+			if err := tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND id<>$3 AND deleted_at IS NULL AND status IN ('accepted','converted')`, access.WorkspaceID, access.CampaignID, entryID).Scan(&count); err != nil {
+				serverError(w, err)
+				return
+			}
+			if count >= limit {
+				errorJSON(w, http.StatusConflict, "campaign_capacity_reached", "最终名额已满；如仍需保留此提交，请明确选择候补")
+				return
+			}
+		}
+	}
+	if decisionType == "waitlist" {
+		waitlistEnabled, _ := availability["waitlist_enabled"].(bool)
+		if !waitlistEnabled {
+			errorJSON(w, http.StatusConflict, "waitlist_disabled", "当前活动未启用候补")
+			return
+		}
+		if limit := policyLimit(availability, "waitlist_limit"); limit > 0 {
+			var count int64
+			if err := tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND id<>$3 AND deleted_at IS NULL AND status='waitlisted'`, access.WorkspaceID, access.CampaignID, entryID).Scan(&count); err != nil {
+				serverError(w, err)
+				return
+			}
+			if count >= limit {
+				errorJSON(w, http.StatusConflict, "waitlist_limit_reached", "候补名额已满")
+				return
+			}
+		}
 	}
 
 	var previousDecisionID *string

@@ -553,8 +553,8 @@ func validateAvailabilityPolicyValue(raw json.RawMessage) error {
 	if visibility := stringValue(policy, "visibility"); visibility != "" && visibility != "public" && visibility != "workspace" && visibility != "invite_only" {
 		return &formValidationError{"invalid_visibility", "表单可见性无效"}
 	}
-	if behavior := stringValue(policy, "close_behavior"); behavior != "" && behavior != "close_to_new_entries" && behavior != "accept_to_waitlist" {
-		return &formValidationError{"invalid_close_behavior", "表单关闭行为无效"}
+	if behavior := stringValue(policy, "close_behavior"); behavior != "" && behavior != "close_to_new_entries" {
+		return &formValidationError{"close_behavior_unsupported", "截止后转入候补暂不支持，请改为截止后停止接收"}
 	}
 	if enabled, ok := policy["waitlist_enabled"]; ok && enabled != nil {
 		if _, ok := enabled.(bool); !ok {
@@ -604,6 +604,75 @@ func validateAvailabilityPolicyValue(raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+func hasRequiredContactEmailField(fieldsRaw json.RawMessage) bool {
+	var fields []map[string]any
+	if len(fieldsRaw) == 0 || json.Unmarshal(fieldsRaw, &fields) != nil {
+		return false
+	}
+	for _, field := range fields {
+		semanticKey, _ := field["semantic_key"].(string)
+		required, _ := field["required"].(bool)
+		if strings.EqualFold(strings.TrimSpace(semanticKey), "CONTACT_EMAIL") && required {
+			return true
+		}
+	}
+	return false
+}
+
+func isAutoAcceptWorkflow(raw json.RawMessage) bool {
+	var workflow reviewRecipeDefinition
+	if len(raw) == 0 || json.Unmarshal(raw, &workflow) != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(workflow.Mode), "AUTO_ACCEPT") ||
+		strings.EqualFold(strings.TrimSpace(workflow.FinalDecision), "auto_accept")
+}
+
+func validatePublicSubmissionCompatibility(policyRaw, fieldsRaw, workflowRaw json.RawMessage) error {
+	var policy map[string]any
+	if err := json.Unmarshal(policyRaw, &policy); err != nil {
+		return &formValidationError{"invalid_availability_policy", "开放规则格式无效"}
+	}
+	if limit, ok := policy["per_actor_limit"].(float64); ok && limit > 0 && !hasRequiredContactEmailField(fieldsRaw) {
+		return &formValidationError{"contact_email_required_for_actor_limit", "启用每邮箱提交次数限制时，表单必须包含必填的联系邮箱字段"}
+	}
+	if isAutoAcceptWorkflow(workflowRaw) {
+		return &formValidationError{"auto_accept_unavailable", "自动确认执行尚未开放，请改用人工决定后再发布"}
+	}
+	return nil
+}
+
+func publicSubmissionUnavailableReason(policyRaw, formRaw, workflowRaw json.RawMessage) string {
+	var policy map[string]any
+	if json.Unmarshal(policyRaw, &policy) != nil {
+		return "invalid_availability_policy"
+	}
+	var form map[string]json.RawMessage
+	if json.Unmarshal(formRaw, &form) != nil {
+		return "invalid_form_definition"
+	}
+	fieldsRaw := form["fields"]
+	behavior := stringValue(policy, "close_behavior")
+	if behavior != "" && behavior != "close_to_new_entries" {
+		return "close_behavior_unsupported"
+	}
+	if limit, ok := policy["per_actor_limit"].(float64); ok && limit > 0 && !hasRequiredContactEmailField(fieldsRaw) {
+		return "contact_email_required_for_actor_limit"
+	}
+	if isAutoAcceptWorkflow(workflowRaw) {
+		return "auto_accept_unavailable"
+	}
+	return ""
+}
+
+func policyLimit(policy map[string]any, key string) int64 {
+	value, ok := policy[key].(float64)
+	if !ok || value <= 0 {
+		return 0
+	}
+	return int64(value)
 }
 
 func validateMaterializationPlanValue(raw json.RawMessage, campaignKind string) error {

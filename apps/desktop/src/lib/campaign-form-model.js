@@ -50,14 +50,11 @@ export function normalizePresentation(value, { legacyEndScreen, legacyBlocks } =
   return presentation;
 }
 
-export function resolveEndingContent(form, { campaignKind, reviewWorkflow } = {}) {
+export function resolveEndingContent(form) {
   const presentation = normalizePresentation(form?.presentation, { legacyEndScreen: form?.endScreen, legacyBlocks: form?.blocks });
   if (presentation.ending.mode === "custom") return { title: presentation.ending.title || "感谢您的提交", body: presentation.ending.body || "我们已收到你的信息。", mode: "custom", redirectUrl: "" };
   if (presentation.ending.mode === "redirect") return { title: "提交成功", body: "正在跳转…", mode: "redirect", redirectUrl: presentation.ending.redirectUrl };
-  const automatic = String(reviewWorkflow?.mode || reviewWorkflow?.final_decision || "").toUpperCase() === "AUTO_ACCEPT" || String(reviewWorkflow?.final_decision || "").toLowerCase() === "auto_accept";
-  if (campaignKind === "REGISTRATION" && automatic) return { title: "报名已提交", body: "你的报名已成功提交。", mode: "default", redirectUrl: "" };
-  if (["SUBMISSION", "RECRUITMENT"].includes(campaignKind) || !automatic) return { title: "已收到，等待审核", body: "我们已收到你的信息，审核完成后会通知你。", mode: "default", redirectUrl: "" };
-  return { title: "信息已收到", body: "我们已收到你提交的信息。", mode: "default", redirectUrl: "" };
+  return { title: "提交已收到", body: "我们已收到你提交的信息。", mode: "default", redirectUrl: "" };
 }
 
 let idSequence = 0;

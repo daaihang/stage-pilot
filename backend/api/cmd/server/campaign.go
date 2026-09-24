@@ -1169,6 +1169,12 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
+	if err := validatePublicSubmissionCompatibility(availability, form.Fields, normalizedReview); err != nil {
+		if !writeFormValidationError(w, err) {
+			serverError(w, err)
+		}
+		return
+	}
 	if err := validateMaterializationPlanValue(materialization, campaignKind); err != nil {
 		if !writeFormValidationError(w, err) {
 			serverError(w, err)

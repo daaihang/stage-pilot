@@ -228,7 +228,20 @@ func (app *application) rotateCampaignShareLink(w http.ResponseWriter, r *http.R
 }
 
 type publicCampaignPayload struct {
-	Answers map[string]any `json:"answers"`
+	ExpectedRevisionID string         `json:"expected_revision_id"`
+	Answers            map[string]any `json:"answers"`
+}
+
+func publicSubmissionRequestHash(revisionID string, answers map[string]any) (string, error) {
+	requestBytes, err := json.Marshal(struct {
+		RevisionID string         `json:"revision_id"`
+		Answers    map[string]any `json:"answers"`
+	}{RevisionID: revisionID, Answers: answers})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(requestBytes)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func validatePublicAnswers(form json.RawMessage, answers map[string]any) (string, error) {
@@ -284,12 +297,10 @@ func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 	if policyMap == nil {
 		policyMap = map[string]any{}
 	}
+	delete(policyMap, "close_behavior")
 	if visibility, _ := policyMap["visibility"].(string); visibility != "" && visibility != "public" {
 		errorJSON(w, 404, "share_unavailable", "该表单不是公开表单")
 		return
-	}
-	if campaignPublishedFormHasFiles(form) {
-		policyMap["public_submission_unavailable"] = "file_upload_unavailable"
 	}
 	now := time.Now().UTC()
 	accepting := campaignStatus == "published"
@@ -309,14 +320,36 @@ func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 			reason = "campaign_closed"
 		}
 	}
-	if _, blocked := policyMap["public_submission_unavailable"]; blocked {
+	if campaignPublishedFormHasFiles(form) {
 		accepting = false
 		reason = "file_upload_unavailable"
 	}
-	_ = app.db.QueryRow(r.Context(), `UPDATE campaign_share_links SET last_accessed_at=NOW() WHERE id=$1`, shareID)
+	if accepting {
+		if policyLimit(policyMap, "submission_limit") > 0 {
+			var count int64
+			if err := app.db.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND deleted_at IS NULL AND status NOT IN ('draft','withdrawn')`, workspaceID, campaignID).Scan(&count); err != nil {
+				serverError(w, err)
+				return
+			}
+			if count >= policyLimit(policyMap, "submission_limit") {
+				accepting = false
+				reason = "submission_limit_reached"
+			}
+		}
+	}
+	if accepting {
+		if unavailable := publicSubmissionUnavailableReason(policy, form, reviewWorkflow); unavailable != "" {
+			accepting = false
+			reason = unavailable
+		}
+	}
+	if _, err := app.db.Exec(r.Context(), `UPDATE campaign_share_links SET last_accessed_at=NOW() WHERE id=$1`, shareID); err != nil {
+		serverError(w, err)
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	writeJSON(w, 200, map[string]any{"campaign": map[string]any{"name": name, "description": description, "kind": kind, "status": campaignStatus}, "production": map[string]any{"name": productionName, "timezone": timezone, "planned_start_at": plannedStart, "planned_end_at": plannedEnd}, "revision": map[string]any{"id": *revisionID, "revision_no": revisionNo}, "form": form, "availability": policyMap, "review_workflow": reviewWorkflow, "accepting": accepting, "accepting_reason": reason})
+	writeJSON(w, 200, map[string]any{"campaign": map[string]any{"name": name, "description": description, "kind": kind, "status": campaignStatus}, "production": map[string]any{"name": productionName, "timezone": timezone, "planned_start_at": plannedStart, "planned_end_at": plannedEnd}, "revision": map[string]any{"id": *revisionID, "revision_no": revisionNo}, "form": form, "availability": policyMap, "accepting": accepting, "accepting_reason": reason})
 }
 
 func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Request) {
@@ -342,9 +375,16 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 	if in.Answers == nil {
 		in.Answers = map[string]any{}
 	}
-	answerBytes, _ := json.Marshal(in.Answers)
-	answerDigest := sha256.Sum256(answerBytes)
-	requestHash := hex.EncodeToString(answerDigest[:])
+	in.ExpectedRevisionID = strings.TrimSpace(in.ExpectedRevisionID)
+	if in.ExpectedRevisionID == "" {
+		errorJSON(w, http.StatusBadRequest, "expected_revision_required", "提交时必须包含当前表单版本")
+		return
+	}
+	requestHash, err := publicSubmissionRequestHash(in.ExpectedRevisionID, in.Answers)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	idem := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idem == "" {
 		idem = newID()
@@ -368,10 +408,10 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 	}
 	var shareID, workspaceID, campaignID, productionID, campaignStatus, timezone string
 	var revisionID, formVersionID string
-	var schemaVersion int
+	var schemaVersion, revisionNo int
 	var form json.RawMessage
-	var policy json.RawMessage
-	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,p.timezone,c.published_revision_id,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.availability_policy FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN productions p ON p.workspace_id=c.workspace_id AND p.id=c.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &timezone, &revisionID, &formVersionID, &schemaVersion, &form, &policy); err != nil {
+	var policy, reviewWorkflow json.RawMessage
+	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,p.timezone,c.published_revision_id,cr.revision_no,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.availability_policy,cr.review_workflow FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN productions p ON p.workspace_id=c.workspace_id AND p.id=c.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE OF sl,c`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &timezone, &revisionID, &revisionNo, &formVersionID, &schemaVersion, &form, &policy, &reviewWorkflow); err != nil {
 		errorJSON(w, 404, "share_unavailable", "公开链接不可用")
 		return
 	}
@@ -395,6 +435,12 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		return
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		serverError(w, err)
+		return
+	}
+	if in.ExpectedRevisionID != revisionID {
+		errorJSONWithFields(w, http.StatusConflict, "form_version_changed", "表单已发布新版本，请确认后切换版本；原版本草稿仍会保留", map[string]any{
+			"current_revision": map[string]any{"id": revisionID, "revision_no": revisionNo},
+		})
 		return
 	}
 	var policyMap map[string]any
@@ -424,6 +470,30 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		errorJSON(w, 422, "file_upload_unavailable", "当前公开表单暂不支持文件字段")
 		return
 	}
+	if unavailable := publicSubmissionUnavailableReason(policy, form, reviewWorkflow); unavailable != "" {
+		message := "当前发布版本的公开收件策略暂不可用，请联系管理员修正并重新发布"
+		switch unavailable {
+		case "auto_accept_unavailable":
+			message = "该表单配置了尚未开放的自动确认流程，请联系管理员改用人工决定并重新发布"
+		case "contact_email_required_for_actor_limit":
+			message = "该表单的每邮箱次数限制缺少必填联系邮箱字段，请联系管理员修正"
+		case "close_behavior_unsupported":
+			message = "该表单使用了暂不支持的截止后转候补策略，请联系管理员修正并重新发布"
+		}
+		errorJSON(w, http.StatusConflict, unavailable, message)
+		return
+	}
+	if limit := policyLimit(policyMap, "submission_limit"); limit > 0 {
+		var count int64
+		if err = tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND deleted_at IS NULL AND status NOT IN ('draft','withdrawn')`, workspaceID, campaignID).Scan(&count); err != nil {
+			serverError(w, err)
+			return
+		}
+		if count >= limit {
+			errorJSON(w, http.StatusConflict, "submission_limit_reached", "表单提交名额已满")
+			return
+		}
+	}
 	runtime, runtimeErr := newPublicFormRuntime(form)
 	if runtimeErr != nil {
 		errorJSON(w, 422, "invalid_form_definition", runtimeErr.Error())
@@ -435,18 +505,18 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	contact := runtimeResult.Contact
-	answerBytes, _ = json.Marshal(runtimeResult.Answers)
-	if raw, ok := policyMap["submission_limit"].(float64); ok && raw > 0 {
-		var count int
-		if err = tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND deleted_at IS NULL AND status<>'withdrawn'`, workspaceID, campaignID).Scan(&count); err != nil {
+	if limit := policyLimit(policyMap, "per_actor_limit"); limit > 0 {
+		var count int64
+		if err = tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND contact_email=$3 AND deleted_at IS NULL AND status NOT IN ('draft','withdrawn')`, workspaceID, campaignID, contact).Scan(&count); err != nil {
 			serverError(w, err)
 			return
 		}
-		if float64(count) >= raw {
-			errorJSON(w, 409, "submission_limit_reached", "表单提交名额已满")
+		if count >= limit {
+			errorJSON(w, http.StatusConflict, "per_actor_limit_reached", "该联系邮箱的提交次数已达上限")
 			return
 		}
 	}
+	answerBytes, _ := json.Marshal(runtimeResult.Answers)
 	if _, err = tx.Exec(r.Context(), `INSERT INTO campaign_public_submission_idempotency(id,workspace_id,campaign_id,share_link_id,idempotency_key_hash,request_hash,status) VALUES($1,$2,$3,$4,$5,$6,'pending')`, newID(), workspaceID, campaignID, shareID, keyHash, requestHash); err != nil {
 		serverError(w, err)
 		return

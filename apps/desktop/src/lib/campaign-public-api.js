@@ -1,5 +1,6 @@
 import { API_BASE, request } from "@/lib/auth";
 import { normalizeFormVersion } from "@/lib/campaign-form-model";
+import { buildPublicCampaignSubmissionPayload } from "@/lib/campaign-public-submission";
 
 function publicPath(token, short = false) {
   return short ? `/v1/public/campaign-shares/short/${encodeURIComponent(token)}` : `/v1/public/campaign-shares/${encodeURIComponent(token)}`;
@@ -23,7 +24,6 @@ function mapPublicPayload(value) {
     production: value?.production || {},
     revision: value?.revision || {},
     form: mapPublicForm(value?.form),
-    reviewWorkflow: value?.review_workflow || value?.reviewWorkflow || {},
     availability: value?.availability || {},
     accepting: Boolean(value?.accepting),
     acceptingReason: value?.accepting_reason || "",
@@ -49,11 +49,11 @@ export async function getPublicCampaignForm(token, { short = false } = {}) {
   return mapPublicPayload(result);
 }
 
-export async function submitPublicCampaignEntry(token, answers, { short = false, idempotencyKey } = {}) {
+export async function submitPublicCampaignEntry(token, expectedRevisionId, answers, { short = false, idempotencyKey } = {}) {
   const key = idempotencyKey || (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
   return request(`${publicPath(token, short)}/entries`, {
     method: "POST",
-    body: JSON.stringify({ answers: answers || {} }),
+    body: JSON.stringify(buildPublicCampaignSubmissionPayload(expectedRevisionId, answers)),
     headers: { "Idempotency-Key": key, "Referrer-Policy": "no-referrer" },
   });
 }

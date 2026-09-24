@@ -313,6 +313,16 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 	if err := validateAvailabilityPolicyValue(revision.AvailabilityPolicy); err != nil {
 		issues = append(issues, issueFromValidationError(err, "/availability_policy"))
 	}
+	if revision.FormVersion != nil {
+		if err := validatePublicSubmissionCompatibility(revision.AvailabilityPolicy, revision.FormVersion.Fields, revision.ReviewWorkflow); err != nil {
+			path := "/review_workflow"
+			var formErr *formValidationError
+			if errors.As(err, &formErr) && formErr.Code == "contact_email_required_for_actor_limit" {
+				path = "/availability_policy/per_actor_limit"
+			}
+			issues = append(issues, issueFromValidationError(err, path))
+		}
+	}
 	var campaignKind string
 	if err := app.db.QueryRow(r.Context(), `SELECT kind FROM campaigns WHERE id=$1 AND workspace_id=$2`, campaignID, access.WorkspaceID).Scan(&campaignKind); err == nil {
 		if err := validateMaterializationPlanValue(revision.MaterializationPlan, campaignKind); err != nil {
