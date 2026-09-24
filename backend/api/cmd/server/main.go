@@ -568,7 +568,7 @@ func (app *application) changePassword(w http.ResponseWriter, r *http.Request) {
 }
 func (app *application) preferences(w http.ResponseWriter, r *http.Request) {
 	var raw []byte
-	err := app.db.QueryRow(r.Context(), "SELECT json_build_object('theme',theme,'language',language,'timezone',timezone,'notifications_enabled',notifications_enabled,'titlebar_title_mode',titlebar_title_mode,'detail_open_mode',detail_open_mode)::text FROM user_preferences WHERE user_id=$1", claims(r).Subject).Scan(&raw)
+	err := app.db.QueryRow(r.Context(), "SELECT json_build_object('theme',theme,'language',language,'timezone',timezone,'notifications_enabled',notifications_enabled,'titlebar_title_mode',titlebar_title_mode,'detail_open_mode',detail_open_mode,'show_titlebar_title',show_titlebar_title,'content_width',content_width,'sidebar_rail_enabled',sidebar_rail_enabled,'category_tabs_pinned',category_tabs_pinned,'floating_action_expand_at_end',floating_action_expand_at_end)::text FROM user_preferences WHERE user_id=$1", claims(r).Subject).Scan(&raw)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -585,6 +585,11 @@ func (app *application) updatePreferences(w http.ResponseWriter, r *http.Request
 		NotificationsEnabled *bool  `json:"notifications_enabled"`
 		TitlebarTitleMode    string `json:"titlebar_title_mode"`
 		DetailOpenMode       string `json:"detail_open_mode"`
+		ShowTitlebarTitle    *bool  `json:"show_titlebar_title"`
+		ContentWidth         string `json:"content_width"`
+		SidebarRailEnabled   *bool  `json:"sidebar_rail_enabled"`
+		CategoryTabsPinned   *bool  `json:"category_tabs_pinned"`
+		FloatingActionExpand *bool  `json:"floating_action_expand_at_end"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
@@ -601,11 +606,15 @@ func (app *application) updatePreferences(w http.ResponseWriter, r *http.Request
 		errorJSON(w, 400, "invalid_input", "详情打开方式无效，需要 inline 或 exclusive")
 		return
 	}
+	if in.ContentWidth != "" && in.ContentWidth != "standard" && in.ContentWidth != "wide" && in.ContentWidth != "full" {
+		errorJSON(w, 400, "invalid_input", "页面内容宽度无效")
+		return
+	}
 	if in.Timezone != "" && !validProductionTimezone(in.Timezone) {
 		errorJSON(w, 400, "invalid_input", "时区无效，需要 IANA 时区名称，例如 Asia/Shanghai")
 		return
 	}
-	_, err := app.db.Exec(r.Context(), "UPDATE user_preferences SET theme=COALESCE(NULLIF($1,''),theme),language=COALESCE(NULLIF($2,''),language),timezone=COALESCE(NULLIF($3,''),timezone),notifications_enabled=COALESCE($4,notifications_enabled),titlebar_title_mode=COALESCE(NULLIF($5,''),titlebar_title_mode),detail_open_mode=COALESCE(NULLIF($6,''),detail_open_mode),updated_at=NOW() WHERE user_id=$7", in.Theme, in.Language, in.Timezone, in.NotificationsEnabled, in.TitlebarTitleMode, in.DetailOpenMode, claims(r).Subject)
+	_, err := app.db.Exec(r.Context(), "UPDATE user_preferences SET theme=COALESCE(NULLIF($1,''),theme),language=COALESCE(NULLIF($2,''),language),timezone=COALESCE(NULLIF($3,''),timezone),notifications_enabled=COALESCE($4,notifications_enabled),titlebar_title_mode=COALESCE(NULLIF($5,''),titlebar_title_mode),detail_open_mode=COALESCE(NULLIF($6,''),detail_open_mode),content_width=COALESCE(NULLIF($7,''),content_width),show_titlebar_title=COALESCE($8,show_titlebar_title),sidebar_rail_enabled=COALESCE($9,sidebar_rail_enabled),category_tabs_pinned=COALESCE($10,category_tabs_pinned),floating_action_expand_at_end=COALESCE($11,floating_action_expand_at_end),updated_at=NOW() WHERE user_id=$12", in.Theme, in.Language, in.Timezone, in.NotificationsEnabled, in.TitlebarTitleMode, in.DetailOpenMode, in.ContentWidth, in.ShowTitlebarTitle, in.SidebarRailEnabled, in.CategoryTabsPinned, in.FloatingActionExpand, claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
 		return

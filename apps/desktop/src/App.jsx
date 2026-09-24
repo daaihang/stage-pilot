@@ -195,10 +195,13 @@ function UnauthenticatedHome({ onOpenAuth }) {
   return <main className="flex min-h-full items-center justify-center p-6"><Card className="w-full max-w-xl"><CardHeader><CardTitle>欢迎来到 StagePilot</CardTitle><CardDescription>登录后即可管理演出活动、制作资源和团队工作空间。</CardDescription></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3"><div className="border p-3">活动与制作流程</div><div className="border p-3">长期资源管理</div><div className="border p-3">团队协作空间</div></div><Button onClick={onOpenAuth}>登录或创建账号</Button></CardContent></Card></main>;
 }
 
-function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, applyTheme, devtools, onDevtoolsChange, onRequireAuth, onOpenDocuments, onLogout, onNativeAction, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange, sidebarRailEnabled, onSidebarRailChange, contentWidth, onContentWidthChange, floatingActionExpandAtEnd, onFloatingActionExpandAtEndChange, isMaximized, onMinimize, onToggleMaximize, onHide }) {
+function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtools, onDevtoolsChange, onRequireAuth, onOpenDocuments, onLogout, onNativeAction, isMaximized, onMinimize, onToggleMaximize, onHide }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { detailOpenMode } = useUserPreferences();
+  const {
+    theme, detailOpenMode, contentWidth, showTitlebarTitle, titlebarTitleMode,
+    sidebarRailEnabled, floatingActionExpandAtEnd, loading: preferencesLoading, updateTheme,
+  } = useUserPreferences();
   const { pageHeaderVisible } = usePageChrome();
   const titlebarRef = useRef(null);
   const titlebarLeftControlsRef = useRef(null);
@@ -594,17 +597,22 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
     listen("native-action", (event) => handleShellNativeAction(event.payload)).then((next) => { cleanup = next; });
     return () => { cleanup?.(); window.removeEventListener("stagepilot-native-action", onWindowAction); };
   }, [handleShellNativeAction]);
+  useEffect(() => {
+    const toggleTheme = () => updateTheme(theme === "dark" ? "light" : "dark").catch(() => {});
+    window.addEventListener("stagepilot-toggle-theme", toggleTheme);
+    return () => window.removeEventListener("stagepilot-toggle-theme", toggleTheme);
+  }, [theme, updateTheme]);
   const pageTitle = titlebarTitleMode === "app" ? "StagePilot" : route?.meta.title ?? "StagePilot";
   const titlebarBreadcrumbItems = buildBreadcrumbItems({ route, workspace, production });
 
   let content;
   if (route?.mode === "public-program-sheet") content = <PublicProgramSheetPage token={route.token} onRequireAuth={onRequireAuth} />;
   else if (route?.mode === "public-campaign") content = <PublicCampaignFormPage token={route.token} short={route.short} />;
-  else if (authStatus === "loading" || (authStatus === "authenticated" && workspaceStatus === "loading")) content = <AppLoading />;
+  else if (authStatus === "loading" || (authStatus === "authenticated" && (workspaceStatus === "loading" || preferencesLoading))) content = <AppLoading />;
   else if (route?.mode === "invite" && authStatus !== "authenticated") content = <InvitationAcceptPage code={route.code} authenticated={false} onRequireAuth={onRequireAuth} />;
   else if (authStatus !== "authenticated") content = <UnauthenticatedHome onOpenAuth={onRequireAuth} />;
   else if (isAccountRoute && route.page === "developer" && import.meta.env.DEV) content = <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} contentWidth={contentWidth} initialAction={new URLSearchParams(location.search).get("action")} />;
-  else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={onDevtoolsChange} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} contentWidth={contentWidth} onContentWidthChange={onContentWidthChange} floatingActionExpandAtEnd={floatingActionExpandAtEnd} onFloatingActionExpandAtEndChange={onFloatingActionExpandAtEndChange} initialAction={new URLSearchParams(location.search).get("action")} backTo={accountReturnPath} backLabel={accountReturnLabel} />;
+  else if (isAccountRoute) content = <AccountCenter page={route.page} user={user} onUserUpdate={onUserUpdate} subscription={subscription} devtools={devtools} onDevtoolsChange={onDevtoolsChange} initialAction={new URLSearchParams(location.search).get("action")} backTo={accountReturnPath} backLabel={accountReturnLabel} />;
   else if (route?.mode === "invite") content = <InvitationAcceptPage code={route.code} />;
   else if (isWorkRoute) content = <UnifiedWorkContextPage initialTab={route.tab} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onEnterWorkspace={enterWorkspace} onJoinInvitation={() => setJoinInvitationOpen(true)} />;
   else if (isWorkspacesRoute) content = <WorkspacesPage onCreateWorkspace={() => setCreateWorkspaceOpen(true)} />;
@@ -721,21 +729,13 @@ function SafeRoutedMainShell(props) {
 }
 
 function MainApp() {
-  const [theme, setTheme] = useState("light");
   const [aboutOpen, setAboutOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
   const [devtools, setDevtools] = useState(true);
-  const [showTitlebarTitle, setShowTitlebarTitle] = useState(true);
-  const [titlebarTitleMode, setTitlebarTitleMode] = useState("page");
-  const [sidebarRailEnabled, setSidebarRailEnabled] = useState(true);
-  const [contentWidth, setContentWidth] = useState("standard");
-  const [floatingActionExpandAtEnd, setFloatingActionExpandAtEnd] = useState(true);
   const [user, setUser] = useState(null);
   const [authStatus, setAuthStatus] = useState("loading");
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [subscription, setSubscription] = useState(subscriptionDefaults);
-  const themeRef = useRef("light");
-  const applyTheme = async (nextTheme, persist = true) => { const useDark = nextTheme === "dark" || (nextTheme === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches); document.documentElement.classList.toggle("dark", useDark); themeRef.current = nextTheme; setTheme(nextTheme); if (persist) await appStore.set("theme", nextTheme); };
   const hideWindow = async () => { try { await getCurrentWindow().hide(); } catch (error) { notify.error("窗口操作失败", { description: String(error) }); } };
   const minimizeWindow = async () => { try { await getCurrentWindow().minimize(); } catch (error) { notify.error("窗口操作失败", { description: String(error) }); } };
   const toggleMaximize = async () => { try { await getCurrentWindow().toggleMaximize(); } catch (error) { notify.error("窗口操作失败", { description: String(error) }); } };
@@ -746,7 +746,7 @@ function MainApp() {
       window.dispatchEvent(new CustomEvent("stagepilot-native-action", { detail: action }));
       return;
     }
-    if (action === "toggle-theme") await applyTheme(themeRef.current === "dark" ? "light" : "dark");
+    if (action === "toggle-theme") window.dispatchEvent(new Event("stagepilot-toggle-theme"));
     if (action === "about") setAboutOpen(true);
     if (action === "toggle-window") await hideWindow();
     if (action === "quit") await invoke("quit_app");
@@ -763,19 +763,13 @@ function MainApp() {
     if (reason === "refresh_failed") notify.error("登录状态已失效", { description: "请重新登录后继续。" });
   }), []);
 
-  useEffect(() => { (async () => { try { await appStore.init(); const [savedTheme, savedDevtools, savedTitlebarVisibility, savedTitlebarMode, savedSidebarRail, savedContentWidth, savedFloatingActionExpandAtEnd, savedSubscription, restoredUser] = await Promise.all([appStore.get("theme"), appStore.get("devtools"), appStore.get("showTitlebarTitle"), appStore.get("titlebarTitleMode"), appStore.get("sidebarRailEnabled"), appStore.get("contentWidth"), appStore.get("floatingActionExpandAtEnd"), appStore.get("subscription"), restoreSession()]); await applyTheme(["light", "dark", "system"].includes(savedTheme) ? savedTheme : "light", false); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (typeof savedTitlebarVisibility === "boolean") setShowTitlebarTitle(savedTitlebarVisibility); if (savedTitlebarMode === "app" || savedTitlebarMode === "page") setTitlebarTitleMode(savedTitlebarMode); if (typeof savedSidebarRail === "boolean") setSidebarRailEnabled(savedSidebarRail); if (["standard", "wide", "full"].includes(savedContentWidth)) setContentWidth(savedContentWidth); if (typeof savedFloatingActionExpandAtEnd === "boolean") setFloatingActionExpandAtEnd(savedFloatingActionExpandAtEnd); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); setUser(restoredUser); setAuthStatus(restoredUser ? "authenticated" : "signed_out"); setAuthDialogOpen(!restoredUser); } catch { setAuthStatus("signed_out"); setAuthDialogOpen(true); } })(); }, []);
+  useEffect(() => { (async () => { try { await appStore.init(); const [savedDevtools, savedSubscription, restoredUser] = await Promise.all([appStore.get("devtools"), appStore.get("subscription"), restoreSession()]); if (typeof savedDevtools === "boolean") setDevtools(savedDevtools); if (savedSubscription && typeof savedSubscription === "object") setSubscription({ ...subscriptionDefaults, ...savedSubscription }); setUser(restoredUser); setAuthStatus(restoredUser ? "authenticated" : "signed_out"); setAuthDialogOpen(!restoredUser); } catch { setAuthStatus("signed_out"); setAuthDialogOpen(true); } })(); }, []);
 
   useEffect(() => { if (!isWindows) return; let unlisten; (async () => { try { const win = getCurrentWindow(); setIsMaximized(await win.isMaximized()); unlisten = await win.onResized(() => win.isMaximized().then(setIsMaximized).catch(() => {})); } catch {} })(); return () => unlisten?.(); }, []);
   useEffect(() => { const suppress = (event) => event.preventDefault(); document.addEventListener("contextmenu", suppress); return () => document.removeEventListener("contextmenu", suppress); }, []);
 
   const handleDevtoolsChange = async (checked) => { setDevtools(checked); await appStore.set("devtools", checked); if (isTauriRuntime && checked) { try { await invoke("set_devtools", { enabled: true }); } catch {} } notify.message(checked ? "开发者工具已开启" : "开发者工具已关闭"); };
-  const updateTitlebarVisibility = async (checked) => { setShowTitlebarTitle(checked); await appStore.set("showTitlebarTitle", checked); notify.success(checked ? "标题栏标题已显示" : "标题栏标题已隐藏"); };
-  const updateTitlebarMode = async (mode) => { setTitlebarTitleMode(mode); await appStore.set("titlebarTitleMode", mode); notify.success("标题栏设置已更新"); };
-  const updateSidebarRail = async (checked) => { setSidebarRailEnabled(checked); try { await appStore.set("sidebarRailEnabled", checked); } catch { notify.error("偏好保存失败"); } notify.success(checked ? "侧栏边缘热区已开启" : "侧栏边缘热区已关闭"); };
-  const updateContentWidth = async (nextWidth) => { if (!["standard", "wide", "full"].includes(nextWidth) || nextWidth === contentWidth) return; setContentWidth(nextWidth); try { await appStore.set("contentWidth", nextWidth); notify.success("页面宽度偏好已更新"); } catch { notify.error("页面宽度偏好保存失败"); } };
-  const updateFloatingActionExpandAtEnd = async (checked) => { if (typeof checked !== "boolean" || checked === floatingActionExpandAtEnd) return; setFloatingActionExpandAtEnd(checked); try { await appStore.set("floatingActionExpandAtEnd", checked); notify.success(checked ? "悬浮主操作将在页面末尾展开为全宽" : "悬浮主操作将在页面末尾保持紧凑"); } catch { notify.error("悬浮主操作偏好保存失败"); } };
-
- return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><UserPreferencesProvider authStatus={authStatus} user={user}><NavigationProvider authStatus={authStatus}><WorkspaceProvider authStatus={authStatus}><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} theme={theme} applyTheme={applyTheme} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={updateTitlebarVisibility} onTitlebarModeChange={updateTitlebarMode} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={updateSidebarRail} contentWidth={contentWidth} onContentWidthChange={updateContentWidth} floatingActionExpandAtEnd={floatingActionExpandAtEnd} onFloatingActionExpandAtEndChange={updateFloatingActionExpandAtEnd} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} /></WorkspaceProvider></NavigationProvider></UserPreferencesProvider></HashRouter><AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} /><Dialog modal={false} open={aboutOpen} onOpenChange={setAboutOpen}><DialogContent><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织筹备与现场执行。</p></DialogContent></Dialog></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
+ return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><UserPreferencesProvider authStatus={authStatus} user={user}><NavigationProvider authStatus={authStatus}><WorkspaceProvider authStatus={authStatus}><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} /></WorkspaceProvider></NavigationProvider></UserPreferencesProvider></HashRouter><AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} /><Dialog modal={false} open={aboutOpen} onOpenChange={setAboutOpen}><DialogContent><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织筹备与现场执行。</p></DialogContent></Dialog></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
 }
 
 function App() { return <MainApp />; }

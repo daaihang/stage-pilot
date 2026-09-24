@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { notify } from "@/components/ui/sonner";
-import { appStore } from "@/lib/app-store";
 import { cn } from "@/lib/utils";
 import { resolveSettingsTabsOrientation } from "@/lib/settings-tabs-layout";
+import { useUserPreferences } from "@/components/user-preferences-provider";
 
-export const CATEGORY_TABS_STICKY_STORE_KEY = "categoryTabsSticky:v1";
 
 function useSettingsTabsOrientation(containerRef) {
   const [orientation, setOrientation] = useState("horizontal");
@@ -129,40 +127,8 @@ function useVerticalScrollIndicators(enabled) {
 }
 
 export function useCategoryTabsPreference() {
-  const [pinned, setPinnedState] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    Promise.resolve(appStore.init?.())
-      .then(() => appStore.get(CATEGORY_TABS_STICKY_STORE_KEY))
-      .then((stored) => {
-        if (active && typeof stored === "boolean") setPinnedState(stored);
-      })
-      .catch((error) => {
-        if (active) notify.error("分类导航偏好加载失败", { description: error?.message || String(error) });
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
-  }, []);
-
-  const setPinned = useCallback(async (nextPinned) => {
-    const next = Boolean(nextPinned);
-    const previous = pinned;
-    setPinnedState(next);
-    try {
-      await appStore.set(CATEGORY_TABS_STICKY_STORE_KEY, next);
-      notify.success(next ? "分类导航已设置为置顶" : "分类导航已取消置顶");
-    } catch (error) {
-      setPinnedState(previous);
-      notify.error("分类导航偏好保存失败", { description: error?.message || String(error) });
-      throw error;
-    }
-  }, [pinned]);
-
-  return { pinned, loading, setPinned };
+  const { categoryTabsPinned: pinned, loading, loadError, savingPreferences, updateCategoryTabsPinned } = useUserPreferences();
+  return { pinned, loading: loading || Boolean(loadError) || Boolean(savingPreferences.categoryTabsPinned), setPinned: updateCategoryTabsPinned };
 }
 
 export function SectionTabsLayout({

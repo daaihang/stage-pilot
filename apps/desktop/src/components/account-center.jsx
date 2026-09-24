@@ -11,7 +11,6 @@ import { DeveloperTools } from "@/components/developer-tools";
 import { CreditCard, LockKeyhole, ShieldCheck } from "@/components/ui/icons";
 import { useUserPreferences } from "@/components/user-preferences-provider";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
-import { useCategoryTabsPreference } from "@/components/settings-tabs";
 import { AppBackLink } from "@/components/app-back-link";
 import { PageHeader } from "@/components/page-header";
 
@@ -33,24 +32,32 @@ function AccountProfile({ user, onUserUpdate }) {
 
 function SettingRow({ title, description, value }) { return <div className="flex items-center justify-between gap-4"><div className="min-w-0"><p className="text-sm font-medium">{title}</p><p className="text-xs text-muted-foreground">{description}</p></div><div className="shrink-0">{value}</div></div>; }
 
-function PreferencesView({ theme, applyTheme, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange, sidebarRailEnabled, onSidebarRailChange, contentWidth, onContentWidthChange, floatingActionExpandAtEnd, onFloatingActionExpandAtEndChange }) {
-  const { timezone, detailOpenMode, loading: preferencesLoading, detailOpenModeSaving, updateTimezone, updateDetailOpenMode } = useUserPreferences();
-  const { pinned: categoryTabsPinned, loading: categoryTabsLoading, setPinned: setCategoryTabsPinned } = useCategoryTabsPreference();
-  const [notifications, setNotifications] = useState(true);
-  const updateNotifications = (checked) => { setNotifications(checked); notify.success(checked ? "桌面通知已开启" : "桌面通知已关闭"); };
+function PreferencesView() {
+  const {
+    theme, updateTheme, contentWidth, updateContentWidth,
+    floatingActionExpandAtEnd, updateFloatingActionExpandAtEnd,
+    detailOpenMode, updateDetailOpenMode,
+    categoryTabsPinned, updateCategoryTabsPinned,
+    showTitlebarTitle, titlebarTitleMode, updateTitlebarDisplay,
+    sidebarRailEnabled, updateSidebarRailEnabled,
+    notificationsEnabled, updateNotificationsEnabled,
+    timezone, updateTimezone, loading: preferencesLoading, loadError, reloadPreferences, savingPreferences,
+  } = useUserPreferences();
   const widths = [["standard", "标准"], ["wide", "宽"], ["full", "全宽"]];
   const titlebarModes = [["none", "无"], ["page", "当前页面名称"], ["app", "应用名称"]];
-  return <Card><CardHeader><CardDescription>外观设置保存在当前客户端，时区和详情打开方式同步到你的账户。</CardDescription></CardHeader><CardContent className="space-y-5">
-    <SettingRow title="主题" description="在浅色、深色和系统外观之间切换" value={<div className="flex gap-1">{[["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]].map(([value, label]) => <Button key={value} size="sm" variant={theme === value ? "secondary" : "outline"} onClick={() => { applyTheme(value); notify.info(`已切换到${label}主题`); }}>{label}</Button>)}</div>} />
-    <SettingRow title="页面内容宽度" description="独占详情时控制内容画布；普通分栏始终填满各自栏位。" value={<div className="flex gap-1">{widths.map(([value, label]) => <Button key={value} size="sm" variant={contentWidth === value ? "secondary" : "outline"} onClick={() => onContentWidthChange(value)}>{label}</Button>)}</div>} />
-    <SettingRow title="底部悬浮主操作展开为全宽" description="滚动到页面末尾时展开为内容区全宽按钮；关闭后保持紧凑宽度。" value={<Switch checked={floatingActionExpandAtEnd} aria-label="滚到页面末尾时将悬浮主操作展开为全宽" onCheckedChange={onFloatingActionExpandAtEndChange} />} />
-    <SettingRow title="宽屏详情打开方式" description="只影响宽屏；窄屏始终覆盖中间工作区，修改后下次打开详情时生效。" value={<div className="flex gap-1" role="radiogroup" aria-label="宽屏详情打开方式">{[["inline", "分栏侧栏"], ["exclusive", "大模态窗"]].map(([value, label]) => <Button key={value} type="button" size="sm" disabled={preferencesLoading || detailOpenModeSaving} variant={detailOpenMode === value ? "secondary" : "outline"} role="radio" aria-checked={detailOpenMode === value} onClick={() => updateDetailOpenMode(value).catch(() => {})}>{label}</Button>)}</div>} />
-    <SettingRow title="分类导航置顶" description="设置页、角色权限和文件类型等分类导航在滚动时保持可见" value={<Switch checked={categoryTabsPinned} disabled={categoryTabsLoading} onCheckedChange={(checked) => setCategoryTabsPinned(checked).catch(() => {})} />} />
-    <SettingRow title="标题栏标题" description="页眉可见时显示完整面包屑；页眉滚出后按偏好显示页面名、应用名或留空；移入标题栏可展开路径" value={<div className="flex gap-1" role="radiogroup" aria-label="标题栏标题">{titlebarModes.map(([value, label]) => <Button key={value} type="button" size="sm" variant={(value === "none" ? !showTitlebarTitle : showTitlebarTitle && titlebarTitleMode === value) ? "secondary" : "outline"} role="radio" aria-checked={value === "none" ? !showTitlebarTitle : showTitlebarTitle && titlebarTitleMode === value} onClick={() => { if (value === "none") onTitlebarVisibilityChange(false); else { if (!showTitlebarTitle) onTitlebarVisibilityChange(true); onTitlebarModeChange(value); } }}>{label}</Button>)}</div>} />
-    <SettingRow title="侧栏边缘热区" description="紧贴侧栏的细条点击可展开或收起侧栏；关闭后仍可用 Ctrl+B 或标题栏按钮切换" value={<Switch checked={sidebarRailEnabled} onCheckedChange={onSidebarRailChange} />} />
-    <SettingRow title="桌面通知" description="接收活动提醒和系统状态通知" value={<Switch checked={notifications} onCheckedChange={updateNotifications} />} />
-    <SettingRow title="语言" description="多语言界面将在偏好服务接入后开放" value={<Badge variant="outline">中文（即将开放）</Badge>} />
-    <SettingRow title="时区" description="用于没有业务专属时区的账户和工作空间时间展示" value={<TimezoneCombobox value={timezone} onValueChange={(value) => updateTimezone(value).catch(() => {})} disabled={preferencesLoading} className="w-64" />} />
+  const cloudBusy = (key) => preferencesLoading || Boolean(loadError) || Boolean(savingPreferences[key]);
+  return <Card><CardHeader><CardDescription>外观、交互和时区偏好同步到你的账户。窗口尺寸、开发者工具状态和页面视图状态仍保存在当前设备。</CardDescription></CardHeader><CardContent className="space-y-5">
+    {loadError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 border border-destructive/30 bg-destructive/5 p-3 text-sm"><span className="text-destructive">无法读取账户偏好，当前设置已禁用，避免误覆盖云端配置。</span><Button type="button" size="sm" variant="outline" onClick={reloadPreferences}>重试</Button></div>}
+    <SettingRow title="主题" description="在浅色、深色和系统外观之间切换" value={<div className="flex gap-1">{[["light", "浅色"], ["dark", "深色"], ["system", "跟随系统"]].map(([value, label]) => <Button key={value} size="sm" disabled={cloudBusy("theme")} variant={theme === value ? "secondary" : "outline"} onClick={() => updateTheme(value).catch(() => {})}>{label}</Button>)}</div>} />
+    <SettingRow title="页面内容宽度" description="独占详情时控制内容画布；普通分栏始终填满各自栏位。" value={<div className="flex gap-1">{widths.map(([value, label]) => <Button key={value} size="sm" disabled={cloudBusy("contentWidth")} variant={contentWidth === value ? "secondary" : "outline"} onClick={() => updateContentWidth(value).catch(() => {})}>{label}</Button>)}</div>} />
+    <SettingRow title="底部悬浮主操作展开为全宽" description="滚动到页面末尾时展开为内容区全宽按钮；关闭后保持紧凑宽度。" value={<Switch checked={floatingActionExpandAtEnd} disabled={cloudBusy("floatingActionExpandAtEnd")} aria-label="滚到页面末尾时将悬浮主操作展开为全宽" onCheckedChange={(checked) => updateFloatingActionExpandAtEnd(checked).catch(() => {})} />} />
+    <SettingRow title="宽屏详情打开方式" description="只影响宽屏；窄屏始终覆盖中间工作区，修改后下次打开详情时生效。" value={<div className="flex gap-1" role="radiogroup" aria-label="宽屏详情打开方式">{[["inline", "分栏侧栏"], ["exclusive", "大模态窗"]].map(([value, label]) => <Button key={value} type="button" size="sm" disabled={cloudBusy("detailOpenMode")} variant={detailOpenMode === value ? "secondary" : "outline"} role="radio" aria-checked={detailOpenMode === value} onClick={() => updateDetailOpenMode(value).catch(() => {})}>{label}</Button>)}</div>} />
+    <SettingRow title="分类导航置顶" description="设置页、角色权限和文件类型等分类导航在滚动时保持可见" value={<Switch checked={categoryTabsPinned} disabled={cloudBusy("categoryTabsPinned")} onCheckedChange={(checked) => updateCategoryTabsPinned(checked).catch(() => {})} />} />
+    <SettingRow title="标题栏标题" description="页眉可见时显示完整面包屑；页眉滚出后按偏好显示页面名、应用名或留空；移入标题栏可展开路径" value={<div className="flex gap-1" role="radiogroup" aria-label="标题栏标题">{titlebarModes.map(([value, label]) => <Button key={value} type="button" size="sm" disabled={cloudBusy("showTitlebarTitle") || cloudBusy("titlebarTitleMode")} variant={(value === "none" ? !showTitlebarTitle : showTitlebarTitle && titlebarTitleMode === value) ? "secondary" : "outline"} role="radio" aria-checked={value === "none" ? !showTitlebarTitle : showTitlebarTitle && titlebarTitleMode === value} onClick={() => updateTitlebarDisplay(value === "none" ? { showTitlebarTitle: false } : { showTitlebarTitle: true, titlebarTitleMode: value }).catch(() => {})}>{label}</Button>)}</div>} />
+    <SettingRow title="侧栏边缘热区" description="紧贴侧栏的细条点击可展开或收起侧栏；关闭后仍可用 Ctrl+B 或标题栏按钮切换" value={<Switch checked={sidebarRailEnabled} disabled={cloudBusy("sidebarRailEnabled")} onCheckedChange={(checked) => updateSidebarRailEnabled(checked).catch(() => {})} />} />
+    <SettingRow title="桌面通知" description="通知能力接入后按此偏好接收提醒；当前仅同步保存开关状态。" value={<Switch checked={notificationsEnabled} disabled={cloudBusy("notificationsEnabled")} onCheckedChange={(checked) => updateNotificationsEnabled(checked).catch(() => {})} />} />
+    <SettingRow title="语言" description="语言选择将在多语言界面开放后启用" value={<Badge variant="outline">中文（即将开放）</Badge>} />
+    <SettingRow title="时区" description="用于没有业务专属时区的账户和工作空间时间展示" value={<TimezoneCombobox value={timezone} onValueChange={(value) => updateTimezone(value).catch(() => {})} disabled={cloudBusy("timezone")} className="w-64" />} />
   </CardContent></Card>;
 }
 
@@ -72,8 +79,8 @@ function BillingView({ subscription }) {
   return <div className="space-y-4"><Card><CardHeader><CardDescription>当前方案来自本地订阅状态，支付服务接入后将自动同步。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center justify-between gap-4 border p-4"><div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><CreditCard className="size-4" /></div><div><p className="font-medium">{isPro ? "Pro 方案" : "免费方案"}</p><p className="text-sm text-muted-foreground">{isPro ? "已启用 Pro 能力" : "适合本地体验和基础功能"}</p></div></div><Badge variant={isPro ? "default" : "secondary"}>{isPro ? "PRO" : "FREE"}</Badge></div><div className="grid gap-3 text-sm @min-[48rem]/account-center:grid-cols-3"><div className="border p-3">工作空间：{isPro ? "不限" : "基础额度"}</div><div className="border p-3">活动与资源：{isPro ? "完整能力" : "本地体验"}</div><div className="border p-3">团队协作：{isPro ? "可用" : "即将开放"}</div></div><Button className="w-full" variant={isPro ? "outline" : "default"} onClick={() => notify.message(isPro ? "订阅管理将在接入支付服务后开放" : "升级功能将在接入支付服务后开放", { description: "当前为前端预览模式。" })}>{isPro ? "管理订阅" : "升级到 Pro"}</Button></CardContent></Card><Card><CardContent className="p-4 text-sm text-muted-foreground">账单、发票和付款方式将在计费服务接入后显示。</CardContent></Card></div>;
 }
 
-export function AccountCenter({ page = "profile", user, workspace, onUserUpdate, subscription, theme, applyTheme, devtools, onDevtoolsChange, showTitlebarTitle, titlebarTitleMode, onTitlebarVisibilityChange, onTitlebarModeChange, sidebarRailEnabled, onSidebarRailChange, contentWidth, onContentWidthChange, floatingActionExpandAtEnd, onFloatingActionExpandAtEndChange, initialAction, backTo, backLabel }) {
+export function AccountCenter({ page = "profile", user, workspace, onUserUpdate, subscription, devtools, onDevtoolsChange, initialAction, backTo, backLabel }) {
   const titles = { profile: ["个人资料", "管理你的个人身份信息和邮箱。"], preferences: ["偏好与通知", "控制 StagePilot 的外观和通知体验。"], security: ["登录与安全", "保护账号、密码和登录安全。"], billing: ["方案与账单", "查看当前方案和可用能力。"], developer: ["开发工具", "验证桌面能力和 UI 组件。"] };
   const [title, description] = titles[page] || titles.profile;
-  return <div className="@container/account-center min-w-0 space-y-5"><PageHeader back={backTo ? <AppBackLink to={backTo} label={backLabel || "返回"} /> : null} title={title} description={description} />{page === "profile" && <AccountProfile user={user} onUserUpdate={onUserUpdate} />}{page === "preferences" && <PreferencesView theme={theme} applyTheme={applyTheme} showTitlebarTitle={showTitlebarTitle} titlebarTitleMode={titlebarTitleMode} onTitlebarVisibilityChange={onTitlebarVisibilityChange} onTitlebarModeChange={onTitlebarModeChange} sidebarRailEnabled={sidebarRailEnabled} onSidebarRailChange={onSidebarRailChange} contentWidth={contentWidth} onContentWidthChange={onContentWidthChange} floatingActionExpandAtEnd={floatingActionExpandAtEnd} onFloatingActionExpandAtEndChange={onFloatingActionExpandAtEndChange} />}{page === "security" && <SecurityView />}{page === "billing" && <BillingView subscription={subscription} />}{page === "developer" && import.meta.env.DEV && <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} initialAction={initialAction} />}</div>;
+  return <div className="@container/account-center min-w-0 space-y-5"><PageHeader back={backTo ? <AppBackLink to={backTo} label={backLabel || "返回"} /> : null} title={title} description={description} />{page === "profile" && <AccountProfile user={user} onUserUpdate={onUserUpdate} />}{page === "preferences" && <PreferencesView />}{page === "security" && <SecurityView />}{page === "billing" && <BillingView subscription={subscription} />}{page === "developer" && import.meta.env.DEV && <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} initialAction={initialAction} />}</div>;
 }

@@ -1,84 +1,141 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { notify } from "@/components/ui/sonner";
-import { getPreferences, updatePreferences } from "@/lib/auth";
-import { DEFAULT_TIMEZONE, isValidTimeZone } from "@/lib/timezone";
-import { DETAIL_OPEN_MODES, normalizeDetailOpenMode } from "@/lib/detail-open-mode";
+import { getPreferences, updatePreferences as patchUserPreferences } from "@/lib/auth";
+import { DEFAULT_USER_PREFERENCES, normalizeUserPreferences, toUserPreferencePatch } from "@/lib/user-preferences";
 
 const UserPreferencesContext = createContext(null);
 
 export function UserPreferencesProvider({ authStatus, user, children }) {
-  const [timezone, setTimezone] = useState(DEFAULT_TIMEZONE);
-  const [detailOpenMode, setDetailOpenMode] = useState("inline");
-  const [loading, setLoading] = useState(false);
-  const [detailOpenModeSaving, setDetailOpenModeSaving] = useState(false);
+  const [preferences, setPreferences] = useState(DEFAULT_USER_PREFERENCES);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+  const [reloadCount, setReloadCount] = useState(0);
+  const [savingPreferences, setSavingPreferences] = useState({});
+  const savingKeysRef = useRef(new Set());
 
   useEffect(() => {
+    if (authStatus === "loading") return undefined;
     if (authStatus !== "authenticated" || !user?.id) {
-      setTimezone(DEFAULT_TIMEZONE);
-      setDetailOpenMode("inline");
+      setPreferences(DEFAULT_USER_PREFERENCES);
       setLoading(false);
-      setDetailOpenModeSaving(false);
+      setLoadError(null);
+      setSavingPreferences({});
+      savingKeysRef.current.clear();
       return undefined;
     }
     let active = true;
     setLoading(true);
-    getPreferences().then((preferences) => {
-      if (!active) return;
-      setTimezone(isValidTimeZone(preferences?.timezone) ? preferences.timezone : DEFAULT_TIMEZONE);
-      setDetailOpenMode(normalizeDetailOpenMode(preferences?.detail_open_mode));
+    setLoadError(null);
+    getPreferences().then((saved) => {
+      if (active) setPreferences(normalizeUserPreferences(saved));
     }).catch((error) => {
-      if (active) notify.error("用户偏好加载失败", { description: error?.message || String(error) });
+      if (active) {
+        setLoadError(error);
+        notify.error("用户偏好加载失败", { description: error?.message || String(error) });
+      }
     }).finally(() => {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [authStatus, user?.id]);
+  }, [authStatus, reloadCount, user?.id]);
 
-  const updateTimezone = useCallback(async (nextTimezone) => {
-    if (!isValidTimeZone(nextTimezone)) {
-      notify.error("时区设置失败", { description: "请选择有效的 IANA 时区。" });
-      return;
-    }
-    const previous = timezone;
-    setTimezone(nextTimezone);
-    const toastId = notify.loading("正在保存时区偏好…");
-    try {
-      const saved = await updatePreferences({ timezone: nextTimezone });
-      const savedTimezone = isValidTimeZone(saved?.timezone) ? saved.timezone : nextTimezone;
-      setTimezone(savedTimezone);
-      notify.success("时区偏好已保存", { id: toastId });
-    } catch (error) {
-      setTimezone(previous);
-      notify.error("时区偏好保存失败", { id: toastId, description: error?.message || String(error) });
+  useEffect(() => {
+    if (authStatus === "loading" || (authStatus === "authenticated" && loading)) return undefined;
+    const media = typeof window === "undefined" ? null : window.matchMedia?.("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const dark = preferences.theme === "dark" || (preferences.theme === "system" && Boolean(media?.matches));
+      document.documentElement.classList.toggle("dark", dark);
+    };
+    applyTheme();
+    if (preferences.theme !== "system" || !media) return undefined;
+    media.addEventListener?.("change", applyTheme);
+    return () => media.removeEventListener?.("change", applyTheme);
+  }, [authStatus, loading, preferences.theme]);
+
+  const savePreferencePatch = useCallback(async (patch, label) => {
+    if (loading || loadError) {
+      const error = new Error("请先成功加载账户偏好，再修改设置。");
+      notify.error(`${label}暂不可用`, { description: error.message });
       throw error;
     }
-  }, [timezone]);
-
-  const updateDetailOpenMode = useCallback(async (nextMode) => {
-    if (!DETAIL_OPEN_MODES.includes(nextMode)) {
-      notify.error("详情打开方式设置失败", { description: "请选择分栏侧栏或大模态窗。" });
+    const apiPatch = toUserPreferencePatch(patch);
+    if (!apiPatch || Object.keys(apiPatch).length === 0) {
+      notify.error(`${label}设置无效`);
       return;
     }
-    const normalized = normalizeDetailOpenMode(nextMode);
-    const previous = detailOpenMode;
-    if (normalized === previous) return;
-    setDetailOpenMode(normalized);
-    setDetailOpenModeSaving(true);
-    const toastId = notify.loading("正在保存详情打开方式…");
+    const keys = Object.keys(patch);
+    if (keys.some((key) => savingKeysRef.current.has(key))) return;
+    const changedKeys = keys.filter((key) => preferences[key] !== patch[key]);
+    if (changedKeys.length === 0) return;
+
+    const previous = Object.fromEntries(changedKeys.map((key) => [key, preferences[key]]));
+    for (const key of changedKeys) savingKeysRef.current.add(key);
+    setSavingPreferences((current) => ({ ...current, ...Object.fromEntries(changedKeys.map((key) => [key, true])) }));
+    setPreferences((current) => ({ ...current, ...Object.fromEntries(changedKeys.map((key) => [key, patch[key]])) }));
+    const toastId = notify.loading(`正在同步${label}…`);
     try {
-      const saved = await updatePreferences({ detail_open_mode: normalized });
-      setDetailOpenMode(normalizeDetailOpenMode(saved?.detail_open_mode || normalized));
-      notify.success("详情打开方式已保存", { id: toastId });
+      const saved = await patchUserPreferences(apiPatch);
+      const normalized = normalizeUserPreferences(saved);
+      setPreferences((current) => ({ ...current, ...Object.fromEntries(changedKeys.map((key) => [key, normalized[key]])) }));
+      notify.success(`${label}已同步到账户`, { id: toastId });
     } catch (error) {
-      setDetailOpenMode(previous);
-      notify.error("详情打开方式保存失败", { id: toastId, description: error?.message || String(error) });
+      setPreferences((current) => ({ ...current, ...previous }));
+      notify.error(`${label}同步失败`, { id: toastId, description: error?.message || String(error) });
       throw error;
     } finally {
-      setDetailOpenModeSaving(false);
+      for (const key of changedKeys) savingKeysRef.current.delete(key);
+      setSavingPreferences((current) => {
+        const next = { ...current };
+        for (const key of changedKeys) delete next[key];
+        return next;
+      });
     }
-  }, [detailOpenMode]);
+  }, [loadError, loading, preferences]);
 
-  const value = useMemo(() => ({ timezone, detailOpenMode, loading, detailOpenModeSaving, updateTimezone, updateDetailOpenMode }), [detailOpenMode, detailOpenModeSaving, loading, updateDetailOpenMode, updateTimezone, timezone]);
+  const updatePreference = useCallback((key, value, label) => savePreferencePatch({ [key]: value }, label), [savePreferencePatch]);
+  const updateTheme = useCallback((value) => updatePreference("theme", value, "主题偏好"), [updatePreference]);
+  const updateContentWidth = useCallback((value) => updatePreference("contentWidth", value, "页面宽度偏好"), [updatePreference]);
+  const updateDetailOpenMode = useCallback((value) => updatePreference("detailOpenMode", value, "详情打开方式"), [updatePreference]);
+  const updateTimezone = useCallback((value) => updatePreference("timezone", value, "时区偏好"), [updatePreference]);
+  const updateNotificationsEnabled = useCallback((value) => updatePreference("notificationsEnabled", value, "桌面通知偏好"), [updatePreference]);
+  const updateCategoryTabsPinned = useCallback((value) => updatePreference("categoryTabsPinned", value, "分类导航偏好"), [updatePreference]);
+  const updateSidebarRailEnabled = useCallback((value) => updatePreference("sidebarRailEnabled", value, "侧栏热区偏好"), [updatePreference]);
+  const updateFloatingActionExpandAtEnd = useCallback((value) => updatePreference("floatingActionExpandAtEnd", value, "悬浮主操作偏好"), [updatePreference]);
+  const updateTitlebarDisplay = useCallback((patch) => savePreferencePatch(patch, "标题栏偏好"), [savePreferencePatch]);
+  const reloadPreferences = useCallback(() => setReloadCount((current) => current + 1), []);
+
+  const value = useMemo(() => ({
+    ...preferences,
+    loading,
+    loadError,
+    reloadPreferences,
+    savingPreferences,
+    detailOpenModeSaving: Boolean(savingPreferences.detailOpenMode),
+    updateTheme,
+    updateContentWidth,
+    updateDetailOpenMode,
+    updateTimezone,
+    updateNotificationsEnabled,
+    updateCategoryTabsPinned,
+    updateSidebarRailEnabled,
+    updateFloatingActionExpandAtEnd,
+    updateTitlebarDisplay,
+  }), [
+    loading,
+    loadError,
+    preferences,
+    reloadPreferences,
+    savingPreferences,
+    updateCategoryTabsPinned,
+    updateContentWidth,
+    updateDetailOpenMode,
+    updateFloatingActionExpandAtEnd,
+    updateNotificationsEnabled,
+    updateSidebarRailEnabled,
+    updateTheme,
+    updateTimezone,
+    updateTitlebarDisplay,
+  ]);
   return <UserPreferencesContext.Provider value={value}>{children}</UserPreferencesContext.Provider>;
 }
 

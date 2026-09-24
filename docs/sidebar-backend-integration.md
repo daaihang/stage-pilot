@@ -9,7 +9,7 @@
 | 路由 | 页面 |
 | --- | --- |
 | `/account/profile` | 个人资料，使用 `PATCH /me` 更新显示名称 |
-| `/account/preferences` | 偏好与通知；主题、标题栏和桌面通知当前保存在本地 |
+| `/account/preferences` | 偏好与通知；主题、页面宽度、标题栏、侧栏热区、分类导航、Dock、详情方式、时区和通知开关同步到账户云端；窗口尺寸与开发者工具状态仍保存在本机 |
 | `/account/security` | 登录与安全；密码修改使用 `PATCH /me/password`，邮箱验证、会话和注销暂为占位 |
 | `/account/billing` | 方案与账单；当前套餐为本地状态，支付、发票和升级暂为占位 |
 | `/account/developer` | 开发工具，仅开发构建显示 |
