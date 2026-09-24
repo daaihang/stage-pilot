@@ -211,6 +211,8 @@ Production 权限包含当前 Workspace 角色继承及有效的活动直接成�
 
 文件 DELETE 只设置 `deleted_at`，隐藏 API 中的文件；正式上传的对象内容继续保留，不进入物理清理。Worker 仅把超过上传链接有效期且至少创建 24 小时的未完成上传标为 `abandoned` 并回收对象；失败可重试，成功记录 `object_purged_at`。文件类型归类、预览和公开表单上传不属于此阶段。
 
+文件版本、节目附件、统一授权动作及活动固定副本见 [文件版本与节目附件基座](file-attachments.md)。附件文件不进入上述独立文件库列表；分类不等于访问授权。
+
 ## Mock 移除检查
 
 - API Repository 已通过鉴权、404/403、空列表场景的租户隔离集成测试（`backend/api/cmd/server/workspace_test.go` 与 `production_test.go`，设置 `DATABASE_URL` 运行；后者覆盖列表隔离、读隔离、父子伪造、角色权限、归档与时间/时区校验）。

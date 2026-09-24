@@ -162,6 +162,36 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	if response := authedRequest(t, app, editorToken, http.MethodPost, base+"/"+productionFileID+"/complete", nil); response.Code != 200 {
 		t.Fatalf("editor complete = %d: %s", response.Code, response.Body.String())
 	}
+	var originalKey, committedKey, firstVersionID string
+	if err := app.db.QueryRow(t.Context(), `SELECT object_key,current_version_id FROM files WHERE id=$1`, productionFileID).Scan(&committedKey, &firstVersionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT object_key FROM file_versions WHERE id=$1 AND file_id=$2 AND version_no=1`, firstVersionID, productionFileID).Scan(&originalKey); err != nil {
+		t.Fatal(err)
+	}
+	if committedKey != originalKey || committedKey == "" {
+		t.Fatalf("legacy completion did not publish v1 immutable object: %q %q", committedKey, originalKey)
+	}
+	signedFilePut(t, upload["url"].(string), "later")
+	versionDownload := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/versions/"+firstVersionID+"/download", nil)
+	if versionDownload.Code != 200 {
+		t.Fatalf("direct viewer v1 download = %d", versionDownload.Code)
+	}
+	if got := signedFileRead(t, attachmentResponse(t, versionDownload.Body.Bytes())["url"].(string)); got != "hello" {
+		t.Fatalf("old signed PUT changed committed library v1: %q", got)
+	}
+	versionStart := authedRequest(t, app, editorToken, http.MethodPost, base+"/"+productionFileID+"/versions", map[string]any{"filename": "production-v2.txt", "content_type": "text/plain", "size_bytes": 6})
+	if versionStart.Code != 201 {
+		t.Fatalf("start library v2 = %d: %s", versionStart.Code, versionStart.Body.String())
+	}
+	versionUpload := attachmentResponse(t, versionStart.Body.Bytes())["upload"].(map[string]any)
+	signedFilePut(t, versionUpload["url"].(string), "second")
+	if response := authedRequest(t, app, editorToken, http.MethodPost, "/v1/file-upload-sessions/"+versionUpload["upload_id"].(string)+"/complete", nil); response.Code != 200 {
+		t.Fatalf("complete library v2 = %d: %s", response.Code, response.Body.String())
+	}
+	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/versions", nil); response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"version_no":2`)) {
+		t.Fatalf("library version history = %d %s", response.Code, response.Body.String())
+	}
 	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/download", nil); response.Code != 200 {
 		t.Fatalf("direct viewer download = %d: %s", response.Code, response.Body.String())
 	}

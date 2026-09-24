@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { FileAttachmentsSection } from "@/components/file-attachments-section";
 import {
   getProductionProgramMissingInfo,
   productionProgramSourceLabels,
@@ -51,6 +52,8 @@ function statusClass(status) {
 
 export function ProductionProgramDetail({
   program,
+  workspace,
+  production,
   programTypes = [],
   canWrite,
   onSave,
@@ -297,6 +300,7 @@ export function ProductionProgramDetail({
           ) : null}
         </CardContent>
       </Card>
+      <FileAttachmentsSection workspace={workspace} production={production} programId={program.id} sourceProgramId={program.sourceProgramId} />
     </div>
   );
 }

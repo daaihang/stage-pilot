@@ -6,12 +6,14 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 type testObjectRemover struct {
@@ -20,6 +22,86 @@ type testObjectRemover struct {
 	failOnce map[string]bool
 	started  chan string
 	release  chan struct{}
+}
+
+func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
+	if os.Getenv("DATABASE_URL") == "" || os.Getenv("S3_ENDPOINT") == "" {
+		t.Skip("database and S3 are required")
+	}
+	pool, err := pgxpool.New(t.Context(), os.Getenv("DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "http://"), "https://")
+	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), ""), Secure: os.Getenv("S3_USE_SSL") == "true", BucketLookup: minio.BucketLookupPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucket := os.Getenv("S3_BUCKET")
+	if bucket == "" {
+		bucket = "stagepilot"
+	}
+	unique := fmt.Sprintf("freeze-%d", time.Now().UnixNano())
+	userID, workspaceID, fileID, versionID := unique+"-user", unique+"-workspace", unique+"-file", unique+"-version"
+	oldKey := "ws/" + workspaceID + "/files/original"
+	if _, err := pool.Exec(t.Context(), `INSERT INTO users(id,display_name) VALUES($1,'Freeze test')`, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `INSERT INTO workspaces(id,name,slug) VALUES($1,'Freeze test',$2)`, workspaceID, unique); err != nil {
+		t.Fatal(err)
+	}
+	info, err := client.PutObject(t.Context(), bucket, oldKey, strings.NewReader("first"), 5, minio.PutObjectOptions{ContentType: "text/plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx := context.Background()
+		var finalKey string
+		_ = pool.QueryRow(ctx, `SELECT object_key FROM file_versions WHERE id=$1`, versionID).Scan(&finalKey)
+		_, _ = pool.Exec(ctx, `UPDATE files SET current_version_id=NULL WHERE id=$1`, fileID)
+		_, _ = pool.Exec(ctx, `DELETE FROM file_versions WHERE file_id=$1`, fileID)
+		_, _ = pool.Exec(ctx, `DELETE FROM files WHERE id=$1`, fileID)
+		_, _ = pool.Exec(ctx, `DELETE FROM file_copy_attempts WHERE workspace_id=$1`, workspaceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM workspaces WHERE id=$1`, workspaceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+		_ = client.RemoveObject(ctx, bucket, oldKey, minio.RemoveObjectOptions{})
+		if finalKey != "" {
+			_ = client.RemoveObject(ctx, bucket, finalKey, minio.RemoveObjectOptions{})
+		}
+	})
+	if _, err := pool.Exec(t.Context(), `INSERT INTO files(id,workspace_id,bucket,object_key,filename,content_type,size_bytes,etag,status,created_by,created_at)
+		VALUES($1,$2,$3,$4,'legacy.txt','text/plain',5,$5,'uploaded',$6,$7)`, fileID, workspaceID, bucket, oldKey, info.ETag, userID, time.Now().Add(-10*365*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `INSERT INTO file_versions(id,workspace_id,file_id,version_no,bucket,object_key,filename,content_type,size_bytes,etag,created_by,created_at)
+		VALUES($1,$2,$3,1,$4,$5,'legacy.txt','text/plain',5,$6,$7,$8)`, versionID, workspaceID, fileID, bucket, oldKey, info.ETag, userID, time.Now().Add(-10*365*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(t.Context(), `UPDATE files SET current_version_id=$1 WHERE id=$2`, versionID, fileID); err != nil {
+		t.Fatal(err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	freezeLegacyFileVersions(t.Context(), logger, pool, client, time.Hour)
+	var finalKey string
+	var frozen bool
+	if err := pool.QueryRow(t.Context(), `SELECT object_key,frozen_at IS NOT NULL FROM file_versions WHERE id=$1`, versionID).Scan(&finalKey, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	if !frozen || finalKey == oldKey {
+		t.Fatalf("legacy version not frozen: %q", finalKey)
+	}
+	for _, key := range []string{oldKey, finalKey} {
+		object, err := client.GetObject(t.Context(), bucket, key, minio.GetObjectOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(object)
+		object.Close()
+		if err != nil || string(data) != "first" {
+			t.Fatalf("object %s changed: %q %v", key, data, err)
+		}
+	}
 }
 
 func (r *testObjectRemover) RemoveObject(_ context.Context, bucket, key string, _ minio.RemoveObjectOptions) error {
@@ -68,6 +150,8 @@ func TestCleanupFilesOnlyAbandonsUnfinishedUploads(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		ctx := context.Background()
+		_, _ = pool.Exec(ctx, `DELETE FROM file_copy_attempts WHERE workspace_id=$1`, workspaceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM file_upload_sessions WHERE workspace_id=$1`, workspaceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM files WHERE workspace_id=$1`, workspaceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM workspaces WHERE id=$1`, workspaceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
@@ -148,5 +232,41 @@ func TestCleanupFilesOnlyAbandonsUnfinishedUploads(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("cleanup did not finish")
+	}
+
+	for _, session := range []struct{ id, status string; age time.Duration }{{"unfinished", "pending", 48*time.Hour}, {"finished", "completed", 48*time.Hour}, {"recent-completed", "completed", time.Hour}} {
+		_, err := pool.Exec(t.Context(), `INSERT INTO file_upload_sessions(id,workspace_id,file_id,created_by,staging_bucket,staging_key,expected_size,filename,content_type,status,created_at,expires_at)
+			VALUES($1,$2,$3,$4,'test-file-cleanup-bucket',$5,5,'test.txt','text/plain',$6,$7,$8)`, unique+session.id, workspaceID, oldID, userID, session.id, session.status, time.Now().Add(-session.age), time.Now().Add(-session.age+time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, attempt := range []struct{ id, status string }{{"orphan", "pending"}, {"committed", "committed"}} {
+		_, err := pool.Exec(t.Context(), `INSERT INTO file_copy_attempts(id,workspace_id,bucket,object_key,status,created_at)
+			VALUES($1,$2,'test-file-cleanup-bucket',$3,$4,$5)`, unique+attempt.id, workspaceID, unique+"-"+attempt.id, attempt.status, time.Now().Add(-48*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	cleaner := &testObjectRemover{calls: map[string]int{}, failOnce: map[string]bool{"unfinished": true}}
+	cleanupUploadSessionsWithClient(t.Context(), logger, pool, cleaner, 24*time.Hour)
+	cleanupCopyAttemptsWithClient(t.Context(), logger, pool, cleaner, 24*time.Hour)
+	if cleaner.callCount("unfinished") != 1 || cleaner.callCount("finished") != 1 || cleaner.callCount("recent-completed") != 0 || cleaner.callCount(unique+"-orphan") != 1 || cleaner.callCount(unique+"-committed") != 0 {
+		t.Fatalf("new cleanup selected wrong objects: %#v", cleaner.calls)
+	}
+	cleanupUploadSessionsWithClient(t.Context(), logger, pool, cleaner, 24*time.Hour)
+	cleanupCopyAttemptsWithClient(t.Context(), logger, pool, cleaner, 24*time.Hour)
+	if cleaner.callCount("unfinished") != 2 || cleaner.callCount("finished") != 1 || cleaner.callCount(unique+"-orphan") != 1 {
+		t.Fatalf("new cleanup retries or idempotence failed: %#v", cleaner.calls)
+	}
+	var sessionPurged, attemptPurged bool
+	if err := pool.QueryRow(t.Context(), `SELECT object_purged_at IS NOT NULL FROM file_upload_sessions WHERE id=$1`, unique+"unfinished").Scan(&sessionPurged); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(t.Context(), `SELECT object_purged_at IS NOT NULL FROM file_copy_attempts WHERE id=$1`, unique+"orphan").Scan(&attemptPurged); err != nil {
+		t.Fatal(err)
+	}
+	if !sessionPurged || !attemptPurged {
+		t.Fatalf("cleanup markers missing: session=%v copy=%v", sessionPurged, attemptPurged)
 	}
 }

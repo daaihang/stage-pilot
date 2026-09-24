@@ -20,6 +20,7 @@ import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { resourcePath, resourceTypePanelPath, workspacePath } from "@/lib/navigation";
 import { DetailFormLayout } from "@/components/detail-form-layout";
 import { FormActionBar } from "@/components/form-action-bar";
+import { FileAttachmentsSection } from "@/components/file-attachments-section";
 
 const configs = {
   programs: { icon: FileMusic, primary: "name", kind: "program_type_id", label: "节目类型", defaults: [], fields: ["name", "program_type_id", "default_duration_seconds", "tags", "description", "technical_notes", "status"] },
@@ -434,6 +435,7 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
         </div>
       </section>
       {["venues", "organizations"].includes(type) && <ResourceRelations workspace={workspace} type={type} resourceId={resourceId} />}
+      {type === "programs" && <FileAttachmentsSection workspace={workspace} programId={resourceId} />}
     </div>
     <ConfirmDeleteDialog
       open={deleteOpen}

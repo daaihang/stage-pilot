@@ -294,6 +294,8 @@ export function ProductionProgramsPage({ route, workspace, production }) {
       ) : selectedProgram ? (
         <ProductionProgramDetail
           program={selectedProgram}
+          workspace={workspace}
+          production={production}
           programTypes={programTypes}
           canWrite={canWrite}
           onSave={async (patch) => {

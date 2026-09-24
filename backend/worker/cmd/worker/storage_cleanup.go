@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -38,6 +39,192 @@ func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool) {
 		staleAfter = uploadTTL + time.Hour
 	}
 	cleanupFilesWithClient(ctx, logger, db, client, staleAfter)
+	cleanupUploadSessionsWithClient(ctx, logger, db, client, staleAfter)
+	cleanupCopyAttemptsWithClient(ctx, logger, db, client, staleAfter)
+	freezeLegacyFileVersions(ctx, logger, db, client, uploadTTL+time.Hour)
+}
+
+func cleanupUploadSessionsWithClient(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover, staleAfter time.Duration) {
+	_, err := db.Exec(ctx, `WITH stale AS (
+		SELECT id FROM file_upload_sessions WHERE status='pending' AND created_at < $1
+		ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED
+	) UPDATE file_upload_sessions s SET status='abandoned' FROM stale WHERE s.id=stale.id`, time.Now().Add(-staleAfter))
+	if err != nil {
+		logger.Warn("claim expired file upload sessions", "error", err)
+		return
+	}
+	rows, err := db.Query(ctx, `SELECT id,staging_bucket,staging_key FROM file_upload_sessions
+		WHERE object_purged_at IS NULL AND (status='abandoned' OR (status='completed' AND created_at < $1 AND expires_at < NOW()-INTERVAL '1 hour'))
+		ORDER BY object_cleanup_attempted_at NULLS FIRST,created_at,id LIMIT 100`, time.Now().Add(-staleAfter))
+	if err != nil {
+		logger.Warn("list expired file upload sessions", "error", err)
+		return
+	}
+	type upload struct{ id, bucket, key string }
+	items := []upload{}
+	for rows.Next() {
+		var item upload
+		if err := rows.Scan(&item.id, &item.bucket, &item.key); err != nil {
+			rows.Close()
+			logger.Warn("scan upload session", "error", err)
+			return
+		}
+		items = append(items, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		logger.Warn("read upload sessions", "error", err)
+		return
+	}
+	for _, item := range items {
+		if _, err := db.Exec(ctx, `UPDATE file_upload_sessions SET object_cleanup_attempted_at=NOW() WHERE id=$1 AND status IN ('abandoned','completed') AND object_purged_at IS NULL`, item.id); err != nil {
+			logger.Warn("mark upload cleanup attempt", "error", err)
+			continue
+		}
+		if err := client.RemoveObject(ctx, item.bucket, item.key, minio.RemoveObjectOptions{}); err != nil {
+			logger.Warn("remove abandoned staging object", "upload_id", item.id, "error", err)
+			continue
+		}
+		if _, err := db.Exec(ctx, `UPDATE file_upload_sessions SET object_purged_at=NOW() WHERE id=$1 AND status IN ('abandoned','completed')`, item.id); err != nil {
+			logger.Warn("mark staging object purged", "error", err)
+		}
+	}
+}
+
+func cleanupCopyAttemptsWithClient(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover, staleAfter time.Duration) {
+	rows, err := db.Query(ctx, `SELECT id,bucket,object_key FROM file_copy_attempts
+		WHERE status='pending' AND object_purged_at IS NULL AND created_at < $1
+		ORDER BY object_cleanup_attempted_at NULLS FIRST,created_at,id LIMIT 100`, time.Now().Add(-staleAfter))
+	if err != nil {
+		logger.Warn("list uncommitted file copies", "error", err)
+		return
+	}
+	type copyAttempt struct{ id, bucket, key string }
+	items := []copyAttempt{}
+	for rows.Next() {
+		var item copyAttempt
+		if err := rows.Scan(&item.id, &item.bucket, &item.key); err != nil {
+			rows.Close()
+			logger.Warn("scan copy attempt", "error", err)
+			return
+		}
+		items = append(items, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		logger.Warn("read copy attempts", "error", err)
+		return
+	}
+	for _, item := range items {
+		if _, err := db.Exec(ctx, `UPDATE file_copy_attempts SET object_cleanup_attempted_at=NOW() WHERE id=$1 AND status='pending' AND object_purged_at IS NULL`, item.id); err != nil {
+			logger.Warn("mark copy cleanup attempt", "error", err)
+			continue
+		}
+		if err := client.RemoveObject(ctx, item.bucket, item.key, minio.RemoveObjectOptions{}); err != nil {
+			logger.Warn("remove uncommitted file copy", "copy_id", item.id, "error", err)
+			continue
+		}
+		if _, err := db.Exec(ctx, `UPDATE file_copy_attempts SET object_purged_at=NOW() WHERE id=$1 AND status='pending'`, item.id); err != nil {
+			logger.Warn("mark uncommitted copy purged", "error", err)
+		}
+	}
+}
+
+func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, minAge time.Duration) {
+	rows, err := db.Query(ctx, `SELECT id,workspace_id,bucket,object_key,etag,size_bytes FROM file_versions
+		WHERE version_no=1 AND frozen_at IS NULL AND created_at < $1 ORDER BY created_at,id LIMIT 30`, time.Now().Add(-minAge))
+	if err != nil {
+		logger.Warn("list legacy file versions", "error", err)
+		return
+	}
+	type legacy struct {
+		id, workspace, bucket, key, etag string
+		size                             int64
+	}
+	items := []legacy{}
+	for rows.Next() {
+		var item legacy
+		if err := rows.Scan(&item.id, &item.workspace, &item.bucket, &item.key, &item.etag, &item.size); err != nil {
+			rows.Close()
+			logger.Warn("scan legacy version", "error", err)
+			return
+		}
+		items = append(items, item)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		logger.Warn("read legacy versions", "error", err)
+		return
+	}
+	for _, item := range items {
+		if ctx.Err() != nil {
+			return
+		}
+		attemptID := fmt.Sprintf("freeze-%d-%s", time.Now().UnixNano(), item.id)
+		key := "ws/" + item.workspace + "/versions/" + attemptID
+		if _, err := db.Exec(ctx, `INSERT INTO file_copy_attempts(id,workspace_id,bucket,object_key) VALUES($1,$2,$3,$4)`, attemptID, item.workspace, item.bucket, key); err != nil {
+			logger.Warn("record legacy freeze attempt", "error", err)
+			continue
+		}
+		stat, err := client.StatObject(ctx, item.bucket, item.key, minio.StatObjectOptions{})
+		if err != nil || stat.Size != item.size {
+			logger.Warn("stat legacy version", "version_id", item.id, "error", err)
+			continue
+		}
+		src := minio.CopySrcOptions{Bucket: item.bucket, Object: item.key, MatchETag: strings.Trim(stat.ETag, `"`)}
+		dst := minio.CopyDestOptions{Bucket: item.bucket, Object: key}
+		if item.size <= 5_000_000_000 {
+			_, err = client.CopyObject(ctx, dst, src)
+		} else {
+			parts := []minio.CopySrcOptions{}
+			for start := int64(0); start < item.size; start += 1 << 30 {
+				end := start + (1 << 30) - 1
+				if end >= item.size {
+					end = item.size - 1
+				}
+				part := src
+				part.MatchRange, part.Start, part.End = true, start, end
+				parts = append(parts, part)
+			}
+			_, err = client.ComposeObject(ctx, dst, parts...)
+		}
+		if err != nil {
+			logger.Warn("copy legacy version", "version_id", item.id, "error", err)
+			continue
+		}
+		copied, e := client.StatObject(ctx, item.bucket, key, minio.StatObjectOptions{})
+		if e != nil || copied.Size != item.size {
+			logger.Warn("verify legacy version copy", "version_id", item.id, "error", e)
+			continue
+		}
+		copiedETag := strings.Trim(copied.ETag, `"`)
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			logger.Warn("begin legacy freeze", "error", err)
+			continue
+		}
+		var fileID string
+		err = tx.QueryRow(ctx, `UPDATE file_versions SET bucket=$1,object_key=$2,etag=$3,frozen_at=NOW()
+			WHERE id=$4 AND frozen_at IS NULL RETURNING file_id`, item.bucket, key, copiedETag, item.id).Scan(&fileID)
+		if err == nil {
+			_, err = tx.Exec(ctx, `UPDATE files SET bucket=$1,object_key=$2,etag=$3 WHERE id=$4 AND current_version_id=$5`, item.bucket, key, copiedETag, fileID, item.id)
+		}
+		if err == nil {
+			_, err = tx.Exec(ctx, `UPDATE file_copy_attempts SET status='committed' WHERE id=$1`, attemptID)
+		}
+		if err == nil {
+			err = tx.Commit(ctx)
+		} else {
+			_ = tx.Rollback(ctx)
+		}
+		if err != nil {
+			logger.Warn("commit legacy freeze", "version_id", item.id, "error", err)
+			_ = client.RemoveObject(ctx, item.bucket, key, minio.RemoveObjectOptions{})
+		}
+	}
 }
 
 func cleanupFilesWithClient(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover, staleAfter time.Duration) {
