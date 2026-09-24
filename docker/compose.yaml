@@ -97,6 +97,7 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:-stagepilot-secret}
       S3_USE_SSL: ${S3_USE_SSL:-false}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
+      S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
     depends_on:
       migrate:
         condition: service_completed_successfully

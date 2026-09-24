@@ -75,11 +75,62 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 }
 
 func registerFileRoutes(app *application, mux *http.ServeMux) {
-	mux.Handle("POST /v1/workspaces/{id}/files", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.createFile))))
-	mux.Handle("GET /v1/workspaces/{id}/files", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listFiles))))
-	mux.Handle("POST /v1/workspaces/{id}/files/{fileId}/complete", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.completeFile))))
-	mux.Handle("GET /v1/workspaces/{id}/files/{fileId}/download", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.downloadFile))))
-	mux.Handle("DELETE /v1/workspaces/{id}/files/{fileId}", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.deleteFile))))
+	mux.Handle("POST /v1/workspaces/{id}/files", app.auth(http.HandlerFunc(app.createFile)))
+	mux.Handle("GET /v1/workspaces/{id}/files", app.auth(http.HandlerFunc(app.listFiles)))
+	mux.Handle("POST /v1/workspaces/{id}/files/{fileId}/complete", app.auth(http.HandlerFunc(app.completeFile)))
+	mux.Handle("GET /v1/workspaces/{id}/files/{fileId}/download", app.auth(http.HandlerFunc(app.downloadFile)))
+	mux.Handle("DELETE /v1/workspaces/{id}/files/{fileId}", app.auth(http.HandlerFunc(app.deleteFile)))
+}
+
+// File URLs retain their Workspace prefix for compatibility. The file's stored
+// scope, rather than the URL or a caller-supplied production_id, determines the
+// authorization boundary for operations on an existing file.
+func (app *application) authorizeFileScope(w http.ResponseWriter, r *http.Request, workspaceID string, productionID *string, operation string) bool {
+	if productionID != nil {
+		access, err := app.productionAccessFor(r.Context(), claims(r).Subject, *productionID)
+		permission := productionView
+		if operation != "read" {
+			permission = productionEdit
+		}
+		if err != nil || access.WorkspaceID != workspaceID || !access.Permissions[permission] {
+			errorJSON(w, http.StatusNotFound, "file_not_found", "文件不存在或无权访问")
+			return false
+		}
+		return true
+	}
+
+	var role string
+	err := app.db.QueryRow(r.Context(), `SELECT m.role FROM workspace_memberships m
+		JOIN workspaces w ON w.id=m.workspace_id
+		WHERE m.workspace_id=$1 AND m.user_id=$2 AND m.status='active' AND w.deleted_at IS NULL`,
+		workspaceID, claims(r).Subject).Scan(&role)
+	minimumRole := workspaceRoleMember
+	if operation == "delete" {
+		minimumRole = workspaceRoleAdmin
+	}
+	if err != nil || roleRank[role] < roleRank[minimumRole] {
+		errorJSON(w, http.StatusForbidden, "workspace_forbidden", "没有访问这个工作空间文件的权限")
+		return false
+	}
+	return true
+}
+
+type fileLocation struct {
+	ProductionID *string
+	Bucket       string
+	ObjectKey    string
+	Filename     string
+	SizeBytes    int64
+	Status       string
+	CreatedBy    string
+}
+
+func (app *application) fileLocation(r *http.Request) (fileLocation, error) {
+	var f fileLocation
+	err := app.db.QueryRow(r.Context(), `SELECT production_id,bucket,object_key,filename,size_bytes,status,created_by
+		FROM files WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`,
+		r.PathValue("fileId"), r.PathValue("id")).Scan(&f.ProductionID, &f.Bucket, &f.ObjectKey, &f.Filename, &f.SizeBytes, &f.Status, &f.CreatedBy)
+	return f, err
 }
 
 type storedFile struct {
@@ -120,11 +171,7 @@ func (app *application) storageRequired(w http.ResponseWriter) *objectStorage {
 }
 
 func (app *application) createFile(w http.ResponseWriter, r *http.Request) {
-	s := app.storageRequired(w)
-	if s == nil {
-		return
-	}
-	access := currentWorkspaceAccess(r)
+	workspaceID := r.PathValue("id")
 	var in struct {
 		Filename     string  `json:"filename"`
 		ContentType  string  `json:"content_type"`
@@ -134,24 +181,24 @@ func (app *application) createFile(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	if !app.authorizeFileScope(w, r, workspaceID, in.ProductionID, "write") {
+		return
+	}
+	s := app.storageRequired(w)
+	if s == nil {
+		return
+	}
 	filename := cleanFilename(in.Filename)
 	if in.SizeBytes <= 0 || in.SizeBytes > s.maxBytes {
 		errorJSON(w, 400, "invalid_size", "文件大小无效或超过限制")
 		return
 	}
-	if in.ProductionID != nil {
-		var ok bool
-		if err := app.db.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM productions WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL)", *in.ProductionID, access.WorkspaceID).Scan(&ok); err != nil || !ok {
-			errorJSON(w, 404, "production_not_found", "活动不存在")
-			return
-		}
-	}
-	id, key := newID(), "ws/"+access.WorkspaceID+"/files/"+newID()+"/"+filename
+	id, key := newID(), "ws/"+workspaceID+"/files/"+newID()+"/"+filename
 	contentType := strings.TrimSpace(in.ContentType)
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	_, err := app.db.Exec(r.Context(), `INSERT INTO files(id,workspace_id,production_id,bucket,object_key,filename,content_type,size_bytes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, access.WorkspaceID, in.ProductionID, s.bucket, key, filename, contentType, in.SizeBytes, access.UserID)
+	_, err := app.db.Exec(r.Context(), `INSERT INTO files(id,workspace_id,production_id,bucket,object_key,filename,content_type,size_bytes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, workspaceID, in.ProductionID, s.bucket, key, filename, contentType, in.SizeBytes, claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -165,43 +212,52 @@ func (app *application) createFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) completeFile(w http.ResponseWriter, r *http.Request) {
+	f, err := app.fileLocation(r)
+	if err != nil {
+		errorJSON(w, 404, "file_not_found", "文件不存在")
+		return
+	}
+	if !app.authorizeFileScope(w, r, r.PathValue("id"), f.ProductionID, "write") {
+		return
+	}
+	if f.CreatedBy != claims(r).Subject {
+		errorJSON(w, http.StatusForbidden, "file_upload_owner_required", "只有原上传者可以完成上传")
+		return
+	}
+	if f.Status != "pending" {
+		errorJSON(w, 409, "file_not_pending", "文件状态不可确认")
+		return
+	}
 	s := app.storageRequired(w)
 	if s == nil {
 		return
 	}
-	a := currentWorkspaceAccess(r)
-	id := r.PathValue("fileId")
-	var key, bucket string
-	var expected int64
-	var status string
-	if err := app.db.QueryRow(r.Context(), "SELECT object_key,bucket,size_bytes,status FROM files WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL", id, a.WorkspaceID).Scan(&key, &bucket, &expected, &status); err != nil {
-		errorJSON(w, 404, "file_not_found", "文件不存在")
-		return
-	}
-	if status != "pending" {
-		errorJSON(w, 409, "file_not_pending", "文件状态不可确认")
-		return
-	}
-	info, err := s.client.StatObject(r.Context(), bucket, key, minio.StatObjectOptions{})
+	info, err := s.client.StatObject(r.Context(), f.Bucket, f.ObjectKey, minio.StatObjectOptions{})
 	if err != nil {
 		errorJSON(w, 400, "upload_missing", "对象尚未上传")
 		return
 	}
-	if info.Size != expected || info.Size > s.maxBytes {
-		_ = s.client.RemoveObject(r.Context(), bucket, key, minio.RemoveObjectOptions{})
+	if info.Size != f.SizeBytes || info.Size > s.maxBytes {
+		_ = s.client.RemoveObject(r.Context(), f.Bucket, f.ObjectKey, minio.RemoveObjectOptions{})
 		errorJSON(w, 400, "size_mismatch", "上传文件大小与声明不一致")
 		return
 	}
-	if _, err = app.db.Exec(r.Context(), "UPDATE files SET status='uploaded',etag=$1,updated_at=NOW() WHERE id=$2 AND workspace_id=$3", strings.Trim(info.ETag, `"`), id, a.WorkspaceID); err != nil {
+	tag, err := app.db.Exec(r.Context(), `UPDATE files SET status='uploaded',etag=$1,updated_at=NOW()
+		WHERE id=$2 AND workspace_id=$3 AND status='pending' AND deleted_at IS NULL AND created_by=$4`,
+		strings.Trim(info.ETag, `"`), r.PathValue("fileId"), r.PathValue("id"), claims(r).Subject)
+	if err != nil {
 		serverError(w, err)
+		return
+	}
+	if tag.RowsAffected() != 1 {
+		errorJSON(w, http.StatusConflict, "file_not_pending", "文件状态已变化，请重新上传")
 		return
 	}
 	app.getFile(w, r)
 }
 func (app *application) getFile(w http.ResponseWriter, r *http.Request) {
-	a := currentWorkspaceAccess(r)
 	var f storedFile
-	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,production_id,filename,content_type,size_bytes,etag,status,created_at,updated_at FROM files WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("fileId"), a.WorkspaceID).Scan(&f.ID, &f.WorkspaceID, &f.ProductionID, &f.Filename, &f.ContentType, &f.SizeBytes, &f.ETag, &f.Status, &f.CreatedAt, &f.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,production_id,filename,content_type,size_bytes,etag,status,created_at,updated_at FROM files WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, r.PathValue("fileId"), r.PathValue("id")).Scan(&f.ID, &f.WorkspaceID, &f.ProductionID, &f.Filename, &f.ContentType, &f.SizeBytes, &f.ETag, &f.Status, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
 		errorJSON(w, 404, "file_not_found", "文件不存在")
 		return
@@ -209,13 +265,20 @@ func (app *application) getFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, f)
 }
 func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
-	a := currentWorkspaceAccess(r)
-	prod := r.URL.Query().Get("production_id")
+	workspaceID := r.PathValue("id")
+	prod := strings.TrimSpace(r.URL.Query().Get("production_id"))
+	var productionID *string
+	if prod != "" && prod != "workspace" {
+		productionID = &prod
+	}
+	if !app.authorizeFileScope(w, r, workspaceID, productionID, "read") {
+		return
+	}
 	q := `SELECT id,workspace_id,production_id,filename,content_type,size_bytes,etag,status,created_at,updated_at FROM files WHERE workspace_id=$1 AND deleted_at IS NULL`
-	args := []any{a.WorkspaceID}
-	if prod == "workspace" {
+	args := []any{workspaceID}
+	if productionID == nil {
 		q += " AND production_id IS NULL"
-	} else if prod != "" {
+	} else {
 		q += " AND production_id=$2"
 		args = append(args, prod)
 	}
@@ -238,17 +301,23 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
 }
 func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
+	f, err := app.fileLocation(r)
+	if err != nil {
+		errorJSON(w, 404, "file_not_found", "文件不存在")
+		return
+	}
+	if !app.authorizeFileScope(w, r, r.PathValue("id"), f.ProductionID, "read") {
+		return
+	}
+	if f.Status != "uploaded" {
+		errorJSON(w, 404, "file_not_found", "文件不存在")
+		return
+	}
 	s := app.storageRequired(w)
 	if s == nil {
 		return
 	}
-	a := currentWorkspaceAccess(r)
-	var key, bucket, filename string
-	if err := app.db.QueryRow(r.Context(), "SELECT object_key,bucket,filename FROM files WHERE id=$1 AND workspace_id=$2 AND status='uploaded' AND deleted_at IS NULL", r.PathValue("fileId"), a.WorkspaceID).Scan(&key, &bucket, &filename); err != nil {
-		errorJSON(w, 404, "file_not_found", "文件不存在")
-		return
-	}
-	u, err := s.presignClient.PresignedGetObject(r.Context(), bucket, key, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""}})
+	u, err := s.presignClient.PresignedGetObject(r.Context(), f.Bucket, f.ObjectKey, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(f.Filename, `"`, "") + "\""}})
 	if err != nil {
 		serverError(w, err)
 		return
@@ -256,8 +325,15 @@ func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"url": u.String(), "expires_in": 300})
 }
 func (app *application) deleteFile(w http.ResponseWriter, r *http.Request) {
-	a := currentWorkspaceAccess(r)
-	tag, err := app.db.Exec(r.Context(), "UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL", r.PathValue("fileId"), a.WorkspaceID)
+	f, err := app.fileLocation(r)
+	if err != nil {
+		errorJSON(w, 404, "file_not_found", "文件不存在")
+		return
+	}
+	if !app.authorizeFileScope(w, r, r.PathValue("id"), f.ProductionID, "delete") {
+		return
+	}
+	tag, err := app.db.Exec(r.Context(), "UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL", r.PathValue("fileId"), r.PathValue("id"))
 	if err != nil {
 		serverError(w, err)
 		return

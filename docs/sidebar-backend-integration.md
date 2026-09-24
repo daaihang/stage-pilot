@@ -198,6 +198,19 @@ NavigationRepository {
 
 Production 生命周期状态到中文标签和颜色的映射位于 `productionStatus`（active 进行中 / completed 已结束 / archived 已归档），与后端 CHECK 约束一致。后端新增状态时，应先更新共享业务约定，再添加前端映射；未知状态临时降级为「进行中」样式，不应导致侧栏崩溃。
 
+## 文件 API 的 Workspace / Production 授权
+
+文件 URL 保持 `/v1/workspaces/{id}/files`，但服务端以文件记录中的 `production_id` 判定归属。创建与列表通过请求中的 `production_id` 选择范围；省略参数或传 `workspace` 只列出 Workspace 文件，不再返回活动文件的混合列表。活动 ID 必须属于 URL 指定的 Workspace。文件 ID 操作重新读取归属并校验权限，不能通过修改参数绕过授权。
+
+| 文件范围 | 列表、下载 | 创建、完成上传 | 软删除 |
+| --- | --- | --- | --- |
+| Workspace | active Member 及以上 | active Member 及以上 | active Admin/Owner |
+| Production | 有效 `production.view` | 有效 `production.edit`，完成上传仅限原上传者 | 有效 `production.edit` |
+
+Production 权限包含当前 Workspace 角色继承及有效的活动直接成员关系；仅加入活动的用户也可使用同一文件 API。活动权限过期、暂停或撤销后，新请求会重新授权。已签发的对象存储下载链接仍按现有五分钟有效期工作。
+
+文件 DELETE 只设置 `deleted_at`，隐藏 API 中的文件；正式上传的对象内容继续保留，不进入物理清理。Worker 仅把超过上传链接有效期且至少创建 24 小时的未完成上传标为 `abandoned` 并回收对象；失败可重试，成功记录 `object_purged_at`。文件类型归类、预览和公开表单上传不属于此阶段。
+
 ## Mock 移除检查
 
 - API Repository 已通过鉴权、404/403、空列表场景的租户隔离集成测试（`backend/api/cmd/server/workspace_test.go` 与 `production_test.go`，设置 `DATABASE_URL` 运行；后者覆盖列表隔离、读隔离、父子伪造、角色权限、归档与时间/时区校验）。

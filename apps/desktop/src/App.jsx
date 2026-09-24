@@ -647,7 +647,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, theme, 
   else if (route.mode === "production" && route.page === "locations") content = <ProductionLocationsRouteRedirect workspace={workspace} production={production} direct={route.direct} />;
   else if (route.mode === "production" && route.page === "members") content = <ProductionMembersPage route={route} workspace={workspace} production={production} key={production.id} />;
   else if (route.mode === "production" && route.page === "roles") content = <ProductionRolesPage workspace={workspace} production={production} key={production.id} />;
-  else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} productionId={route.productionId} title="活动文件" backTo={route.direct ? directProductionPath(production.id, "overview") : productionPath(workspace.id, production.id, "overview")} backLabel="活动概览" key={route.productionId} />;
+  else if (route.mode === "production" && route.page === "files") content = <FilesPage workspace={workspace} production={production} productionId={route.productionId} title="活动文件" backTo={route.direct ? directProductionPath(production.id, "overview") : productionPath(workspace.id, production.id, "overview")} backLabel="活动概览" key={route.productionId} />;
   else content = <PlaceholderPage route={route} workspace={workspace} production={production} />;
 
   const resourceDetailLayout = route?.mode === "workspace" && ["programs", "people", "organizations", "venues", "equipment"].includes(route?.page);
