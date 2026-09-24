@@ -10,16 +10,16 @@ import { appStore } from "@/lib/app-store";
 import { formatProductionDate, productionPath, productionStatus } from "@/lib/navigation";
 import { ProductionGantt } from "@/components/productions/production-gantt";
 import { resourceGridClassName } from "@/components/resource-page";
+import { useUserPreferences } from "@/components/user-preferences-provider";
 
 const views = [["list", "列表", LayoutList], ["grid", "网格", LayoutGrid], ["gantt", "甘特图", GanttChartSquare]];
 const viewStoreKey = (workspaceId) => `productionsView:${workspaceId}`;
 
 function ProductionMeta({ production }) {
-  const status = productionStatus[production.status] ?? productionStatus.draft;
+  const status = productionStatus[production.status] ?? productionStatus.active;
   return <>
     <span className="flex min-w-0 items-center gap-1"><CalendarDays className="size-3 shrink-0" />{formatProductionDate(production)}</span>
     <span className="flex min-w-0 items-center gap-1"><MapPin className="size-3 shrink-0" /><span className="truncate">{production.venue || "地点待定"}</span></span>
-    {production.isLocalDraft && <Badge variant="outline" className="shrink-0">前端草稿</Badge>}
     <Badge className={status.className} variant="secondary">{status.label}</Badge>
   </>;
 }
@@ -50,11 +50,12 @@ function ProductionsSkeleton() {
 }
 
 function EmptyProductions({ onCreate }) {
-  return <Card className="border-dashed"><CardContent className="flex min-h-72 flex-col items-center justify-center gap-3 text-center"><FolderKanban className="size-8 text-muted-foreground" /><div><p className="font-medium">还没有活动</p><p className="mt-1 max-w-sm text-sm text-muted-foreground">创建一个前端草稿，先体验活动工作区的搭建流程。</p></div><Button onClick={onCreate}><Plus />新建活动</Button></CardContent></Card>;
+  return <Card className="border-dashed"><CardContent className="flex min-h-72 flex-col items-center justify-center gap-3 text-center"><FolderKanban className="size-8 text-muted-foreground" /><div><p className="font-medium">还没有活动</p><p className="mt-1 max-w-sm text-sm text-muted-foreground">创建一场活动，开始整理时间、节目与现场计划。</p></div><Button onClick={onCreate}><Plus />新建活动</Button></CardContent></Card>;
 }
 
 export function ProductionsViewSwitcher({ workspace, productions, loading = false, onCreate }) {
   const navigate = useNavigate();
+  const { timezone } = useUserPreferences();
   const [view, setView] = useState("list");
 
   useEffect(() => {
@@ -77,6 +78,6 @@ export function ProductionsViewSwitcher({ workspace, productions, loading = fals
     <Tabs value={view} onValueChange={changeView}><TabsList>{views.map(([id, label, Icon]) => <TabsTrigger key={id} value={id}><Icon className="size-3.5" />{label}</TabsTrigger>)}</TabsList></Tabs>
     {view === "list" && <div className="space-y-2">{productions.map((production) => <ProductionRow key={production.id} workspace={workspace} production={production} />)}</div>}
     {view === "grid" && <div className={resourceGridClassName}>{productions.map((production) => <ProductionCard key={production.id} workspace={workspace} production={production} />)}</div>}
-    {view === "gantt" && <ProductionGantt productions={productions} onOpenProduction={(productionId) => navigate(productionPath(workspace.id, productionId))} />}
+    {view === "gantt" && <ProductionGantt productions={productions} timeZone={timezone} onOpenProduction={(productionId) => navigate(productionPath(workspace.id, productionId))} />}
   </div>;
 }

@@ -39,7 +39,6 @@ const STAGE_LABEL = {
 }
 
 const STATUS_BADGE_VARIANT = {
-  draft: "secondary",
   active: "default",
   completed: "outline",
   archived: "outline",
@@ -84,7 +83,7 @@ export function productionsToGantt(productions, now = new Date()) {
   const groups = new Map()
   const events = []
   for (const production of productions) {
-    const status = production.status in productionStatus ? production.status : "draft"
+    const status = production.status in productionStatus ? production.status : "active"
     if (!groups.has(status)) groups.set(status, [])
     groups.get(status).push(production)
     const stages = buildStages(production, now)
@@ -232,7 +231,7 @@ export function ProductionGantt({ productions, timeZone, onOpenProduction }) {
           if (isGroup) return null
           const production = productions.find((item) => item.id === resource.id)
           if (!production) return null
-          const status = productionStatus[production.status] ?? productionStatus.draft
+          const status = productionStatus[production.status] ?? productionStatus.active
           return (
             <Badge variant={STATUS_BADGE_VARIANT[production.status] ?? "secondary"}>
               {status.label}
