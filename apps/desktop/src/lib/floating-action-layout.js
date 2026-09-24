@@ -21,15 +21,17 @@ export function resolveContentEndInSafeZone({ rootRect, sentinelRect, bottomClea
 export function resolveFloatingActionPresentation({
   open = false,
   contentEndInSafeZone = false,
+  expandAtContentEnd = true,
   compactWidth = 0,
   anchorWidth = 0,
 } = {}) {
   const compactInlineSize = dimension(compactWidth);
   const expandedInlineSize = dimension(anchorWidth);
   const canExpand = compactInlineSize > 0 && expandedInlineSize > 0;
+  const expanded = Boolean(open && expandAtContentEnd && contentEndInSafeZone && canExpand);
   return {
-    expanded: Boolean(open && contentEndInSafeZone && canExpand),
+    expanded,
     compactInlineSize: compactInlineSize || null,
-    inlineSize: canExpand && open && contentEndInSafeZone ? expandedInlineSize : compactInlineSize || null,
+    inlineSize: expanded ? expandedInlineSize : compactInlineSize || null,
   };
 }

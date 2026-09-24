@@ -20,6 +20,20 @@ test("floating action uses only interpolable pixel widths for compact and expand
   });
 });
 
+test("floating action can stay compact at the content end when the preference is disabled", () => {
+  assert.deepEqual(resolveFloatingActionPresentation({
+    open: true,
+    contentEndInSafeZone: true,
+    expandAtContentEnd: false,
+    compactWidth: 112,
+    anchorWidth: 640,
+  }), {
+    expanded: false,
+    compactInlineSize: 112,
+    inlineSize: 112,
+  });
+});
+
 test("floating action keeps a compact presentation until it has a measurable button width", () => {
   assert.deepEqual(resolveFloatingActionPresentation({ open: true, contentEndInSafeZone: true, compactWidth: 0, anchorWidth: 640 }), {
     expanded: false,

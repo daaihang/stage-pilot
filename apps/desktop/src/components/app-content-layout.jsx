@@ -19,6 +19,7 @@ const defaultAppContentLayout = {
   floatingActionHost: null,
   floatingActionAnchor: { inlineStart: 0, inlineSize: 0 },
   contentEndInSafeZone: false,
+  floatingActionExpandAtEnd: true,
   registerFloatingAction: () => () => {},
   setFloatingActionOpen: () => {},
 };
@@ -33,7 +34,7 @@ export function ContentWidthContainer({ children, className }) {
   return <div className={cn("mx-auto min-w-0 w-full", contentWidthClass(contentWidth), className)}>{children}</div>;
 }
 
-export function AppContentLayout({ mode = "document", contentWidth = "standard", children, bottomBar, className }) {
+export function AppContentLayout({ mode = "document", contentWidth = "standard", floatingActionExpandAtEnd = true, children, bottomBar, className }) {
   const scrollRef = useRef(null);
   const layoutRef = useRef(null);
   const contentEndRef = useRef(null);
@@ -146,9 +147,10 @@ export function AppContentLayout({ mode = "document", contentWidth = "standard",
     floatingActionHost,
     floatingActionAnchor,
     contentEndInSafeZone,
+    floatingActionExpandAtEnd,
     registerFloatingAction,
     setFloatingActionOpen,
-  }), [contentWidth, contentEndInSafeZone, floatingActionAnchor, floatingActionHost, registerFloatingAction, scrollRef, setFloatingActionOpen]);
+  }), [contentWidth, contentEndInSafeZone, floatingActionAnchor, floatingActionExpandAtEnd, floatingActionHost, registerFloatingAction, scrollRef, setFloatingActionOpen]);
   const scrollStyle = {
     "--app-overlay-clearance": `calc(env(safe-area-inset-bottom, 0px) + ${overlayLayout.overlayClearance}px)`,
   };

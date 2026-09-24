@@ -17,12 +17,14 @@ export function FloatingActionDock({ children, anchorRef, open = false }) {
     floatingActionAnchor,
     floatingActionHost,
     contentEndInSafeZone,
+    floatingActionExpandAtEnd,
     registerFloatingAction,
     setFloatingActionOpen,
   } = useAppContentLayout();
   const presentation = resolveFloatingActionPresentation({
     open,
     contentEndInSafeZone,
+    expandAtContentEnd: floatingActionExpandAtEnd,
     compactWidth,
     anchorWidth: floatingActionAnchor.inlineSize,
   });

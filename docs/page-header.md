@@ -121,7 +121,7 @@ const { contentWidth, scrollRef } = useAppContentLayout();
 
 悬浮按钮以它所属的页面页眉（编辑器可显式提供编辑器壳）为水平锚点，因此必须匹配标准、宽、全宽和页面自定义最大宽度。`/work` 中必须避开 48px 全局工具栏；Toast 出现时才按实际高度向上避让，不能使用固定 `5rem` 空白。详情打开时仍属于主内容区，不进入详情面板。悬浮按钮必须复用原有点击、禁用、加载和 `notify` 行为。
 
-内容底部 sentinel 进入扣除 Dock、Toast 与工具栏避让后的滚动安全区时，Dock 从右下角的紧凑按钮平滑过渡为锚点全宽的底部主按钮；离开安全区即恢复紧凑。sentinel 必须放在动态底部补偿之前，不能以滚动条最后一个 padding 像素作为触发条件，否则全宽状态会造成自身触发循环。
+内容底部 sentinel 进入扣除 Dock、Toast 与工具栏避让后的滚动安全区时，Dock 默认从右下角的紧凑按钮平滑过渡为锚点全宽的底部主按钮；离开安全区即恢复紧凑。偏好与通知设置中的“底部悬浮主操作展开为全宽”可以关闭此尺寸变化；关闭后按钮保持紧凑，但仍保留 Toast 避让和滚动安全区。sentinel 必须放在动态底部补偿之前，不能以滚动条最后一个 padding 像素作为触发条件，否则全宽状态会造成自身触发循环。
 
 `AppSonner` 会向 `OverlayAvoidanceProvider` 报告当前可见 Toast 的真实高度。`AppContentLayout` 用这份数据计算 Dock 位置，并写入 `--app-overlay-clearance`；主滚动区必须将它同时用于 `padding-block-end` 和 `scroll-padding-block-end`。这保证最后内容、键盘 Tab、表单错误定位和 `scrollIntoView()` 都不会落在 Toast 或 Dock 下方。不要只移动浮层而不补偿滚动区，也不要在业务页面手写固定底部预留。
 
