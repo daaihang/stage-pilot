@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, FieldError, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Eye, RefreshCw, Search, Star } from "@/components/ui/icons";
 import { notify } from "@/components/ui/sonner";
 import { assignEntryReviewTask, createEntryDecision, getEntry, listCampaignEntries, listEntryRevisions, updateEntryInboxState } from "@/lib/campaign-api";
+import { getEntryReviewDecisionState } from "@/lib/campaign-review-ui-state";
 import { listProductionMembers } from "@/lib/production-api";
 
 const STATUS_LABELS = {
@@ -26,8 +27,6 @@ const DECISION_ACTIONS = {
   waitlist: { label: "候补", loading: "正在设为候补…", success: "已设为候补", variant: "secondary" },
   reject: { label: "拒绝", loading: "正在拒绝提交…", success: "已拒绝提交", variant: "destructive" },
 };
-
-const DECIDABLE_STATUSES = new Set(["submitted", "in_review", "needs_changes", "accepted", "waitlisted", "rejected"]);
 
 function formatDate(value) {
   if (!value) return "未设置";
@@ -122,9 +121,21 @@ function ReviewRunCard({ detail, members, onAssign, assignmentBusy }) {
       })}
       {detail.canManageReview && run.status !== "blocked_unsupported" && run.status !== "decided" && run.status !== "legacy_override_decided" ? <form className="grid gap-2 rounded-md border border-dashed p-3 sm:grid-cols-2" onSubmit={(event) => void submitAssignment(event)}>
         <p className="text-xs font-medium sm:col-span-2">补充或改派审核人</p>
-        <Select value={taskId || "__new__"} onValueChange={(value) => setTaskId(value === "__new__" ? "" : value)}><SelectTrigger aria-label="选择待改派任务"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__new__">新增审核任务</SelectItem>{pendingTasks.map((task, index) => <SelectItem key={task.id} value={task.id}>改派待反馈任务 {index + 1}</SelectItem>)}</SelectContent></Select>
-        <Select value={reviewerId} onValueChange={setReviewerId}><SelectTrigger aria-label="选择有效审核人"><SelectValue placeholder="选择有效审核人" /></SelectTrigger><SelectContent>{activeReviewers.map((member) => <SelectItem key={member.userId} value={member.userId}>{member.name}</SelectItem>)}</SelectContent></Select>
-        <Textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} className="sm:col-span-2" placeholder={currentTask ? "必填：说明改派原因" : "必填：说明补充分配原因"} />
+        <Field>
+          <FieldLabel htmlFor="review-assignment-task">任务</FieldLabel>
+          <Select value={taskId || "__new__"} onValueChange={(value) => setTaskId(value === "__new__" ? "" : value)}><SelectTrigger id="review-assignment-task" aria-describedby="review-assignment-task-description"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__new__">新增审核任务</SelectItem>{pendingTasks.map((task, index) => <SelectItem key={task.id} value={task.id}>改派待反馈任务 {index + 1}</SelectItem>)}</SelectContent></Select>
+          <FieldDescription id="review-assignment-task-description">选择一个待反馈任务进行改派，或新增一项审核任务。</FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="review-assignment-reviewer">有效审核人</FieldLabel>
+          <Select value={reviewerId} onValueChange={setReviewerId}><SelectTrigger id="review-assignment-reviewer" aria-describedby="review-assignment-reviewer-description"><SelectValue placeholder="选择有效审核人" /></SelectTrigger><SelectContent>{activeReviewers.map((member) => <SelectItem key={member.userId} value={member.userId}>{member.name}</SelectItem>)}</SelectContent></Select>
+          <FieldDescription id="review-assignment-reviewer-description">只显示当前有效的 Production 成员。</FieldDescription>
+        </Field>
+        <Field className="sm:col-span-2">
+          <FieldLabel htmlFor="review-assignment-reason">原因（必填）</FieldLabel>
+          <Textarea id="review-assignment-reason" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} required aria-describedby="review-assignment-reason-description" />
+          <FieldDescription id="review-assignment-reason-description">请说明补充或改派原因，最多 1000 字。</FieldDescription>
+        </Field>
         <Button type="submit" size="sm" className="sm:col-span-2 sm:justify-self-end" disabled={assignmentBusy || !reviewerId || !reason.trim()}>{assignmentBusy ? "正在保存…" : taskId ? "确认改派" : "补充审核人"}</Button>
       </form> : null}
       {run.status === "awaiting_assignment" ? <p className="text-xs text-amber-700">当前有效审核人不足以满足原门槛；提交仍已保存，门槛不会自动降低。</p> : null}
@@ -138,10 +149,14 @@ function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, o
   const [decisionType, setDecisionType] = useState(null);
   const entry = detail?.entry;
   const state = detail?.inboxState || {};
-  const runReady = detail?.review?.status === "ready_for_decision" || detail?.review?.status === "decided" || detail?.review?.status === "legacy_override_decided";
-  const hasPriorDecision = Boolean(detail?.decision);
-  const canDecide = Boolean(detail?.canDecide && DECIDABLE_STATUSES.has(entry?.status) && (runReady || hasPriorDecision || detail?.review?.status === "blocked_unsupported" || !detail?.review));
-  const legacyRequired = detail?.review?.status === "blocked_unsupported" || !detail?.review;
+  const decisionState = getEntryReviewDecisionState({
+    canDecide: Boolean(detail?.canDecide),
+    entryStatus: entry?.status,
+    reviewStatus: detail?.review?.status,
+    hasDecision: Boolean(detail?.decision),
+  });
+  const { legacyRequired } = decisionState;
+  const canDecide = decisionState.canSubmitDecision;
 
   const toggle = async (key, value) => {
     try {
@@ -200,7 +215,7 @@ function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, o
         <Card>
           <CardHeader className="gap-3">
             <CardTitle className="text-sm">决定</CardTitle>
-            {detail.canDecide && DECIDABLE_STATUSES.has(entry.status) && !runReady && !hasPriorDecision && detail.review?.status !== "blocked_unsupported" && detail.review ? <p className="text-xs text-muted-foreground">审核门槛尚未达到，当前不可作最终决定。</p> : null}
+            {decisionState.quorumPending ? <p className="text-xs text-muted-foreground">审核门槛尚未达到，当前不可作最终决定。</p> : null}
             {canDecide ? <div className="flex flex-wrap gap-2">{Object.entries(DECISION_ACTIONS).map(([type, action]) => <Button key={type} type="button" size="sm" variant={action.variant} onClick={() => setDecisionType(type)} disabled={decisionBusy}>{action.label}</Button>)}</div> : null}
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">

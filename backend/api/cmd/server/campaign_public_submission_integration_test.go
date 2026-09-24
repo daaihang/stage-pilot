@@ -306,6 +306,9 @@ func TestSingleRoundReviewFeedbackQuorumAndDecision(t *testing.T) {
 	if forbidden := authedRequest(t, app, fixture.ownerToken, http.MethodGet, "/v1/review-tasks/"+viewerTaskID, nil); forbidden.Code != http.StatusNotFound {
 		t.Fatalf("non-assignee task read = %d: %s", forbidden.Code, forbidden.Body.String())
 	}
+	if forbidden := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/review-tasks/"+viewerTaskID+"/feedback", map[string]any{"recommendation": "recommend", "comment": "未分配成员的反馈"}); forbidden.Code != http.StatusNotFound {
+		t.Fatalf("non-assignee feedback submit = %d: %s", forbidden.Code, forbidden.Body.String())
+	}
 	viewerTask := authedRequest(t, app, viewerToken, http.MethodGet, "/v1/review-tasks/"+viewerTaskID, nil)
 	if viewerTask.Code != http.StatusOK || !bytes.Contains(viewerTask.Body.Bytes(), []byte(entryRevisionID)) || !bytes.Contains(viewerTask.Body.Bytes(), []byte(fixture.revisionID)) {
 		t.Fatalf("assigned reviewer task must expose fixed versions = %d: %s", viewerTask.Code, viewerTask.Body.String())
