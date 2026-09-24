@@ -118,9 +118,9 @@ export function PageHeaderActions({ primary, secondary, overflow, ariaLabel = "é
   return (
     <div className={cn(
       "grid min-w-0 w-full gap-2 [grid-template-columns:repeat(auto-fit,minmax(min(100%,var(--page-header-action-min-inline-size)),1fr))]",
-      !keepsPrimaryOnItsOwnRow && "@min-[40rem]/page-header:flex @min-[40rem]/page-header:w-auto @min-[40rem]/page-header:flex-row @min-[40rem]/page-header:flex-wrap @min-[40rem]/page-header:justify-end",
+      "@min-[40rem]/page-header:flex @min-[40rem]/page-header:w-auto @min-[40rem]/page-header:flex-row @min-[40rem]/page-header:flex-wrap @min-[40rem]/page-header:justify-end",
       keepsPrimaryOnItsOwnRow && "grid-cols-1 @min-[21rem]/page-header:grid-cols-2",
-      fillAvailableWidth && (keepsPrimaryOnItsOwnRow ? "[&_[data-slot=button]]:w-full" : "[&_[data-slot=button]]:w-full @min-[40rem]/page-header:[&_[data-slot=button]]:w-auto"),
+      fillAvailableWidth && "[&_[data-slot=button]]:w-full @min-[40rem]/page-header:[&_[data-slot=button]]:w-auto",
       layout === "secondary-only" && "justify-items-start",
       className,
     )} data-slot="page-header-actions" data-layout={layout} role="group" aria-label={ariaLabel} style={{ "--page-header-action-min-inline-size": PAGE_HEADER_ACTION_MIN_INLINE_SIZE }}>
