@@ -40,7 +40,7 @@ CREATE TABLE program_sheet_items (
     UNIQUE (sheet_id, sort_order),
     FOREIGN KEY (workspace_id, production_id) REFERENCES productions(workspace_id, id) ON DELETE CASCADE,
     FOREIGN KEY (workspace_id, sheet_id) REFERENCES program_sheets(workspace_id, id) ON DELETE CASCADE,
-    FOREIGN KEY (workspace_id, production_program_id, production_id) REFERENCES production_programs(workspace_id, id, production_id) ON DELETE RESTRICT,
+    FOREIGN KEY (workspace_id, production_program_id, production_id) REFERENCES production_programs(workspace_id, id, production_id) ON DELETE RESTRICT
     -- segment types are currently a workspace-local desktop taxonomy; keep the
     -- optional identifier without a database FK until that taxonomy is cloud-backed.
 );
