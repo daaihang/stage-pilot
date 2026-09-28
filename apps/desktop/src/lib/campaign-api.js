@@ -49,45 +49,6 @@ function mapTemplate(value) {
   };
 }
 
-function mapReviewRecipe(value) {
-  if (!value) return null;
-  return {
-    id: value.id,
-    scope: value.scope,
-    workspaceId: value.workspace_id,
-    key: value.key,
-    name: value.name,
-    description: value.description || "",
-    status: value.status,
-    latestVersion: value.latest_version,
-    publishedVersion: value.published_version,
-    latestVersionId: value.latest_version_id,
-    draftVersionId: value.draft_version_id,
-    publishedVersionId: value.published_version_id,
-    sourceTemplateId: value.source_template_id,
-    createdBy: value.created_by,
-    createdAt: value.created_at,
-    updatedAt: value.updated_at,
-    archivedAt: value.archived_at,
-  };
-}
-
-function mapReviewRecipeVersion(value) {
-  if (!value) return null;
-  return {
-    id: value.id,
-    templateId: value.template_id,
-    workspaceId: value.workspace_id,
-    version: value.version,
-    schemaVersion: value.schema_version,
-    definition: value.definition || {},
-    createdBy: value.created_by,
-    createdAt: value.created_at,
-    publishedAt: value.published_at,
-    etag: value.etag || "",
-  };
-}
-
 function mapCampaignTemplateVersion(value) {
   if (!value) return null;
   return {
@@ -504,22 +465,28 @@ export async function publishCampaignRevision(campaignId, revisionId, options = 
   };
 }
 
-export async function listReviewRecipes(filters = {}) {
-  const result = await request(`/v1/review-recipes${queryString(filters)}`);
-  const list = normalizeList(result);
-  return { ...list, items: list.items.map(mapReviewRecipe) };
+function mapReviewCatalogItem(item) {
+  return {
+    id: item.id,
+    key: item.key,
+    name: item.name,
+    description: item.description || "",
+    scope: item.scope,
+    status: item.status,
+    publishedVersion: item.published_version,
+    publishedVersionId: item.published_version_id,
+    publishedDefinition: item.definition || {},
+  };
 }
 
-export async function listWorkspaceReviewRecipes(workspaceId, filters = {}) {
-  const result = await request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/review-recipes${queryString(filters)}`);
-  const list = normalizeList(result);
-  return { ...list, items: list.items.map(mapReviewRecipe) };
-}
-
-export async function listReviewRecipeVersions(recipeId) {
-  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions`);
-  const list = normalizeList(result);
-  return { ...list, items: list.items.map(mapReviewRecipeVersion) };
+export async function getWorkspaceReviewCatalog(workspaceId) {
+  const result = await request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/review-catalog`);
+  return {
+    enabledKeys: result.enabled_keys || [],
+    defaultKey: result.default_key || "",
+    items: (result.items || []).map(mapReviewCatalogItem),
+    availableItems: (result.available_items || []).map(mapReviewCatalogItem),
+  };
 }
 
 export async function getCampaignTemplate(templateId) {
@@ -587,68 +554,6 @@ export async function publishCampaignTemplateVersion(templateId, versionId, opti
     template: mapTemplate(result.template),
     version: mapCampaignTemplateVersion(result.version),
   };
-}
-
-export async function getReviewRecipe(recipeId) {
-  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}`);
-  return { recipe: mapReviewRecipe(result.recipe), etag: result.etag || "" };
-}
-
-export async function getReviewRecipeVersion(recipeId, versionId) {
-  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}`);
-  return { version: mapReviewRecipeVersion(result.version), etag: result.etag || "" };
-}
-
-export async function createWorkspaceReviewRecipe(workspaceId, payload, options = {}) {
-  const result = await request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/review-recipes`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-    ...mutationOptions(options),
-  });
-  return {
-    recipe: mapReviewRecipe(result.recipe),
-    draftVersion: mapReviewRecipeVersion(result.draft_version),
-  };
-}
-
-export async function updateReviewRecipe(recipeId, payload, options = {}) {
-  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
-  });
-  return { recipe: mapReviewRecipe(result.recipe), etag: result.etag || "" };
-}
-
-export async function createReviewRecipeVersion(recipeId, payload = {}, options = {}) {
-  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-    ...mutationOptions(options),
-  });
-  return { version: mapReviewRecipeVersion(result), etag: result.etag || "" };
-}
-
-export async function updateReviewRecipeVersion(recipeId, versionId, payload, options = {}) {
-  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(payload),
-    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
-  });
-  return { version: mapReviewRecipeVersion(result.version || result), etag: result.etag || "" };
-}
-
-export async function publishReviewRecipeVersion(recipeId, versionId, options = {}) {
-  const result = await request(`/v1/review-recipes/${encodeURIComponent(recipeId)}/versions/${encodeURIComponent(versionId)}/publish`, {
-    method: "POST",
-    body: "{}",
-    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
-  });
-  return { recipe: mapReviewRecipe(result.recipe), version: mapReviewRecipeVersion(result.version) };
-}
-
-export async function archiveReviewRecipe(recipeId, options = {}) {
-  return updateReviewRecipe(recipeId, { status: "archived" }, options);
 }
 
 export async function saveCampaignAsTemplate(campaignId, payload, options = {}) {

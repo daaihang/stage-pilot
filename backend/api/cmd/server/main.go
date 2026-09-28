@@ -221,6 +221,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PATCH /v1/workspaces/{id}/productions/{productionId}", app.auth(app.requireProductionAccess(workspaceRoleAdmin, http.HandlerFunc(app.updateProduction))))
 	mux.Handle("GET /v1/workspaces/{id}/settings", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.getWorkspacePlanningSettings))))
 	mux.Handle("PATCH /v1/workspaces/{id}/settings", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.updateWorkspacePlanningSettings))))
+	mux.Handle("GET /v1/workspaces/{id}/review-catalog", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.getWorkspaceReviewCatalog))))
 	// Canonical Production-scoped API. These routes deliberately do not require a
 	// navigable Workspace: direct collaborators operate only within a Production.
 	mux.Handle("GET /v1/productions", app.auth(http.HandlerFunc(app.listAccessibleProductions)))
@@ -229,15 +230,9 @@ func (app *application) routes() http.Handler {
 	// Campaign intake: templates are authenticated read-only; Campaign and
 	// revision mutations reuse the Production permission boundary.
 	mux.Handle("GET /v1/review-recipes", app.auth(http.HandlerFunc(app.listReviewRecipes)))
-	mux.Handle("GET /v1/workspaces/{id}/review-recipes", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceReviewRecipes))))
 	mux.Handle("GET /v1/review-recipes/{recipeId}", app.auth(http.HandlerFunc(app.getReviewRecipe)))
 	mux.Handle("GET /v1/review-recipes/{recipeId}/versions", app.auth(http.HandlerFunc(app.listReviewRecipeVersions)))
 	mux.Handle("GET /v1/review-recipes/{recipeId}/versions/{versionId}", app.auth(http.HandlerFunc(app.getReviewRecipeVersion)))
-	mux.Handle("POST /v1/workspaces/{id}/review-recipes", app.auth(app.requireWorkspaceRole(workspaceRoleAdmin, http.HandlerFunc(app.createWorkspaceReviewRecipe))))
-	mux.Handle("PATCH /v1/review-recipes/{recipeId}", app.auth(http.HandlerFunc(app.updateReviewRecipe)))
-	mux.Handle("POST /v1/review-recipes/{recipeId}/versions", app.auth(http.HandlerFunc(app.createReviewRecipeVersion)))
-	mux.Handle("PATCH /v1/review-recipes/{recipeId}/versions/{versionId}", app.auth(http.HandlerFunc(app.updateReviewRecipeVersion)))
-	mux.Handle("POST /v1/review-recipes/{recipeId}/versions/{versionId}/publish", app.auth(http.HandlerFunc(app.publishReviewRecipeVersion)))
 	mux.Handle("GET /v1/campaign-templates", app.auth(http.HandlerFunc(app.listCampaignTemplates)))
 	mux.Handle("GET /v1/workspaces/{id}/campaign-templates", app.auth(app.requireWorkspaceRole(workspaceRoleMember, http.HandlerFunc(app.listWorkspaceCampaignTemplates))))
 	mux.Handle("GET /v1/campaign-templates/{templateId}", app.auth(http.HandlerFunc(app.getCampaignTemplate)))

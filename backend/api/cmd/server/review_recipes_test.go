@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -35,6 +36,53 @@ func TestParseReviewRecipeDefinition(t *testing.T) {
 				t.Fatalf("error = %#v, want code %q", err, test.wantCode)
 			}
 		})
+	}
+}
+
+func TestWorkspaceReviewCatalogValidation(t *testing.T) {
+	available := []workspaceReviewCatalogItem{{Key: "single_manual"}, {Key: "another_manual"}}
+	tests := []struct {
+		name       string
+		keys       []string
+		defaultKey string
+		wantKeys   []string
+		wantCode   string
+	}{
+		{name: "normalizes order and whitespace", keys: []string{" another_manual ", "single_manual"}, defaultKey: "single_manual", wantKeys: []string{"another_manual", "single_manual"}},
+		{name: "rejects empty directory", keys: []string{}, defaultKey: "single_manual", wantCode: "review_catalog_empty"},
+		{name: "rejects unavailable method", keys: []string{"AUTO_ACCEPT"}, defaultKey: "AUTO_ACCEPT", wantCode: "review_recipe_unavailable"},
+		{name: "rejects duplicate keys", keys: []string{"single_manual", "single_manual"}, defaultKey: "single_manual", wantCode: "invalid_review_catalog"},
+		{name: "default must be enabled", keys: []string{"single_manual"}, defaultKey: "another_manual", wantCode: "review_default_not_enabled"},
+		{name: "rejects blank key", keys: []string{" "}, defaultKey: "single_manual", wantCode: "invalid_review_catalog"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			keys, defaultKey, err := normalizeWorkspaceReviewKeys(test.keys, test.defaultKey, available)
+			if test.wantCode != "" {
+				validationErr, ok := err.(*reviewRecipeValidationError)
+				if !ok || validationErr.Code != test.wantCode {
+					t.Fatalf("error = %#v, want code %q", err, test.wantCode)
+				}
+				return
+			}
+			if err != nil || defaultKey != test.defaultKey || !reflect.DeepEqual(keys, test.wantKeys) {
+				t.Fatalf("normalize = %#v, %q, %v; want %#v, %q", keys, defaultKey, err, test.wantKeys, test.defaultKey)
+			}
+		})
+	}
+}
+
+func TestWorkspaceReviewCatalogOnlyAcceptsRunnableSystemVersions(t *testing.T) {
+	if !isExecutableSystemReviewRecipe(defaultSingleRoundReviewRecipe()) {
+		t.Fatal("single-round manual default should be executable")
+	}
+	for _, raw := range []string{
+		`{"schema_version":1,"mode":"AUTO_ACCEPT","rounds":[],"final_decision":"auto_accept"}`,
+		`{"schema_version":1,"mode":"MANUAL_DECISION","rounds":[{"key":"one","name":"评分","execution":"parallel","reviewer_policy":{"source":"explicit_members","member_ids":[],"role_keys":[]},"completion":{"mode":"all"},"feedback":{"kind":"score"},"scorecard":{"criteria":[{"key":"quality","label":"质量","scale_min":1,"scale_max":5,"weight":100}]}}],"request_changes":{"enabled":false},"final_decision":"manual"}`,
+	} {
+		if isExecutableSystemReviewRecipe(json.RawMessage(raw)) {
+			t.Errorf("non-runnable recipe was included in catalog: %s", raw)
+		}
 	}
 }
 

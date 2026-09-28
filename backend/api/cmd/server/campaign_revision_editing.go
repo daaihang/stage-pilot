@@ -304,9 +304,10 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 	issues := make([]revisionValidationIssue, 0, 8)
 	if revision.ReviewRecipeVersionID == nil || strings.TrimSpace(*revision.ReviewRecipeVersionID) == "" {
 		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_source_required", Path: "/review_recipe_version_id", Message: "请选择已发布的单轮审核方案来源"})
-	} else if _, err := loadReviewRecipeVersion(r.Context(), app.db, *revision.ReviewRecipeVersionID, access.WorkspaceID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_not_found", Path: "/review_recipe_version_id", Message: "审核方案版本不存在、未发布或无权使用"})
+	} else if err := validateWorkspaceReviewRecipeVersion(r.Context(), app.db, access.WorkspaceID, *revision.ReviewRecipeVersionID); err != nil {
+		var validationErr *reviewRecipeValidationError
+		if errors.As(err, &validationErr) {
+			issues = append(issues, revisionValidationIssue{Severity: "error", Code: validationErr.Code, Path: "/review_recipe_version_id", Message: validationErr.Message})
 		} else {
 			serverError(w, err)
 			return

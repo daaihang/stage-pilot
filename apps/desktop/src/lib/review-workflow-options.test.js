@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isExecutableSingleRoundWorkflow, publishedExecutableRecipes, reviewWorkflowCustomized } from "./review-workflow-options.js";
+import { isExecutableSingleRoundWorkflow, isReviewCatalogDefaultSelectable, publishedExecutableRecipes, reviewWorkflowCustomized, updateReviewCatalogSelection } from "./review-workflow-options.js";
 
 const workflow = {
   schema_version: 1, mode: "MANUAL_DECISION",
@@ -27,4 +27,19 @@ test("activity-level reviewer changes are reported without mutating source defin
   customized.rounds[0].reviewer_policy.member_ids.push("reviewer-1");
   assert.equal(reviewWorkflowCustomized(customized, workflow), true);
   assert.deepEqual(workflow.rounds[0].reviewer_policy.member_ids, []);
+});
+
+test("workspace review catalog always retains an enabled default", () => {
+  assert.deepEqual(updateReviewCatalogSelection(["single_manual"], "single_manual", "single_manual", false), {
+    changed: false,
+    enabledKeys: ["single_manual"],
+    defaultKey: "single_manual",
+  });
+  assert.deepEqual(updateReviewCatalogSelection(["parallel", "single_manual"], "single_manual", "single_manual", false), {
+    changed: true,
+    enabledKeys: ["parallel"],
+    defaultKey: "parallel",
+  });
+  assert.equal(isReviewCatalogDefaultSelectable(["parallel"], "parallel"), true);
+  assert.equal(isReviewCatalogDefaultSelectable(["parallel"], "single_manual"), false);
 });

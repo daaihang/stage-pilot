@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -356,7 +355,15 @@ func defaultSingleRoundReviewRecipe() json.RawMessage {
 
 func resolveReviewRecipeSnapshot(ctx context.Context, queryer reviewRecipeQueryer, versionID, workspaceID string) (*string, json.RawMessage, error) {
 	if strings.TrimSpace(versionID) == "" {
-		versionID = defaultReviewRecipeVersionID
+		err := queryer.QueryRow(ctx, `SELECT rv.id
+			FROM workspace_settings ws
+			JOIN review_recipe_templates rt ON rt.scope='system' AND rt.workspace_id IS NULL AND rt.key=ws.default_review_recipe_key
+			  AND rt.status='published' AND rt.archived_at IS NULL
+			JOIN review_recipe_versions rv ON rv.template_id=rt.id AND rv.version=rt.published_version AND rv.published_at IS NOT NULL
+			WHERE ws.workspace_id=$1`, workspaceID).Scan(&versionID)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	source, err := loadReviewRecipeVersion(ctx, queryer, versionID, workspaceID)
 	if err != nil {
@@ -395,27 +402,6 @@ func (app *application) listReviewRecipes(w http.ResponseWriter, r *http.Request
 	if status != "" && status != "all" {
 		args = append(args, status)
 		where = append(where, "rt.status=$1")
-	}
-	app.writeReviewRecipeList(w, r, strings.Join(where, " AND "), args...)
-}
-
-func (app *application) listWorkspaceReviewRecipes(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status")
-	if !validateReviewRecipeFilter(w, status) {
-		return
-	}
-	where := []string{"rt.scope='workspace'", "rt.workspace_id=$1"}
-	args := []any{r.PathValue("id")}
-	access := currentWorkspaceAccess(r)
-	if roleRank[access.Role] < roleRank[workspaceRoleAdmin] {
-		status = "published"
-	}
-	if status != "archived" && status != "all" {
-		where = append(where, "rt.archived_at IS NULL")
-	}
-	if status != "" && status != "all" {
-		args = append(args, status)
-		where = append(where, "rt.status=$"+strconv.Itoa(len(args)))
 	}
 	app.writeReviewRecipeList(w, r, strings.Join(where, " AND "), args...)
 }

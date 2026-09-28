@@ -418,13 +418,12 @@ func (app *application) createWorkspaceCampaignTemplate(w http.ResponseWriter, r
 	}
 	def = normalizeDefinition(def)
 	if sourceRecipeVersionID == nil {
-		_, snapshot, resolveErr := resolveReviewRecipeSnapshot(r.Context(), tx, "", access.WorkspaceID)
+		defaultRecipeVersionID, snapshot, resolveErr := resolveReviewRecipeSnapshot(r.Context(), tx, "", access.WorkspaceID)
 		if resolveErr != nil {
 			serverError(w, resolveErr)
 			return
 		}
-		defaultID := defaultReviewRecipeVersionID
-		sourceRecipeVersionID = &defaultID
+		sourceRecipeVersionID = defaultRecipeVersionID
 		if len(def.ReviewWorkflow) == 0 || string(def.ReviewWorkflow) == "{}" {
 			def.ReviewWorkflow = snapshot
 		}
@@ -818,7 +817,8 @@ func (app *application) publishCampaignTemplateVersion(w http.ResponseWriter, r 
 	var kind, templateStatus string
 	var publishedAt *time.Time
 	var definition []byte
-	if err := tx.QueryRow(r.Context(), `SELECT v.published_at,v.definition,t.kind,t.status FROM campaign_template_versions v JOIN campaign_templates t ON t.id=v.template_id WHERE v.id=$1 AND v.template_id=$2 AND v.workspace_id=$3 FOR UPDATE`, versionID, templateID, workspaceID).Scan(&publishedAt, &definition, &kind, &templateStatus); err != nil {
+	var recipeVersionID *string
+	if err := tx.QueryRow(r.Context(), `SELECT v.published_at,v.definition,t.kind,t.status,v.review_recipe_version_id FROM campaign_template_versions v JOIN campaign_templates t ON t.id=v.template_id WHERE v.id=$1 AND v.template_id=$2 AND v.workspace_id=$3 FOR UPDATE`, versionID, templateID, workspaceID).Scan(&publishedAt, &definition, &kind, &templateStatus, &recipeVersionID); err != nil {
 		errorJSON(w, 404, "campaign_template_version_not_found", "模板版本不存在或无权访问")
 		return
 	}
@@ -852,6 +852,16 @@ func (app *application) publishCampaignTemplateVersion(w http.ResponseWriter, r 
 	}
 	if err := validateTemplateDefinition(def, kind); err != nil {
 		if !writeFormValidationError(w, err) && !writeReviewRecipeValidationError(w, err) {
+			serverError(w, err)
+		}
+		return
+	}
+	if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
+		errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_source_required", "请为模板选择当前工作空间允许的审核方案来源")
+		return
+	}
+	if err := validateWorkspaceReviewRecipeVersion(r.Context(), tx, workspaceID, *recipeVersionID); err != nil {
+		if !writeWorkspaceReviewCatalogError(w, err) {
 			serverError(w, err)
 		}
 		return

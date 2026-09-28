@@ -7,10 +7,10 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { notify } from "@/components/ui/sonner";
-import { listReviewRecipes, listReviewRecipeVersions } from "@/lib/campaign-api";
+import { getWorkspaceReviewCatalog } from "@/lib/campaign-api";
 import { listProductionMembers } from "@/lib/production-api";
 import { useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
-import { isExecutableSingleRoundWorkflow, publishedExecutableRecipes, reviewWorkflowCustomized } from "@/lib/review-workflow-options";
+import { isExecutableSingleRoundWorkflow, reviewWorkflowCustomized } from "@/lib/review-workflow-options";
 import { resolveSelectItems } from "@/lib/select-options";
 
 const roles = { producer: "Producer", editor: "Editor", stage_manager: "Stage Manager", contributor: "Contributor", viewer: "Viewer" };
@@ -46,6 +46,8 @@ function makeSingleRound(workflow = {}) {
 
 export function CampaignReviewEditor() {
   const draft = useCampaignRevisionDraft();
+  const workspaceId = draft.campaign?.workspaceId;
+  const isTemplate = Boolean(draft.campaign?.isTemplate);
   const [recipes, setRecipes] = useState([]);
   const [recipesLoading, setRecipesLoading] = useState(true);
   const [members, setMembers] = useState([]);
@@ -57,16 +59,19 @@ export function CampaignReviewEditor() {
 
   useEffect(() => {
     let active = true;
+    if (!workspaceId) {
+      setRecipes([]);
+      setRecipesLoading(false);
+      return undefined;
+    }
     setRecipesLoading(true);
-    listReviewRecipes({ status: "published" }).then(async (result) => {
-      const versions = await Promise.all((result.items || []).map((recipe) => listReviewRecipeVersions(recipe.id)));
-      const byId = Object.fromEntries(versions.flatMap((item) => item.items || []).map((version) => [version.id, version]));
-      if (active) setRecipes(publishedExecutableRecipes(result.items || [], byId).map((recipe) => ({ ...recipe, publishedDefinition: byId[recipe.publishedVersionId].definition })));
+    getWorkspaceReviewCatalog(workspaceId).then((catalog) => {
+      if (active) setRecipes(catalog.items || []);
     })
       .catch((error) => notify.error("加载审核方案失败", { description: error?.message || String(error) }))
       .finally(() => { if (active) setRecipesLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [workspaceId]);
 
   useEffect(() => {
     if (!draft.campaign?.productionId) return undefined;
@@ -82,18 +87,30 @@ export function CampaignReviewEditor() {
     return () => { active = false; };
   }, [draft.campaign?.productionId]);
 
-  const reviewerSet = useMemo(() => new Set(round?.reviewer_policy?.source === "explicit_members" ? round.reviewer_policy.member_ids || [] : round?.reviewer_policy?.role_keys || []), [round]);
+  const reviewerSet = useMemo(() => new Set(!isTemplate && round?.reviewer_policy?.source === "explicit_members" ? round.reviewer_policy.member_ids || [] : round?.reviewer_policy?.role_keys || []), [isTemplate, round]);
   const update = (nextRound) => draft.setReview({ workflow: { ...source, schema_version: 1, mode: "MANUAL_DECISION", rounds: [nextRound], request_changes: { enabled: false, target: "same_round" }, final_decision: "manual" } });
-  const updatePolicy = (patch) => update({ ...round, reviewer_policy: { ...(round.reviewer_policy || {}), ...patch } });
+  const updatePolicy = (patch) => update({ ...round, reviewer_policy: { ...(round.reviewer_policy || {}), ...(isTemplate ? { source: "production_roles", member_ids: [] } : {}), ...patch } });
+  const workflowForContext = (workflow) => {
+    const next = makeSingleRound(workflow);
+    if (isTemplate) {
+      const sourcePolicy = workflow?.rounds?.[0]?.reviewer_policy || {};
+      next.rounds[0].reviewer_policy = {
+        source: "production_roles",
+        member_ids: [],
+        role_keys: sourcePolicy.source === "production_roles" ? sourcePolicy.role_keys || [] : [],
+      };
+    }
+    return next;
+  };
   const selectRecipe = (id) => {
     const recipe = recipes.find((item) => item.id === id);
     if (!recipe?.publishedVersionId || !recipe.publishedDefinition) return;
-    draft.setReview({ recipeVersionId: recipe.publishedVersionId, workflow: recipe.publishedDefinition });
+    draft.setReview({ recipeVersionId: recipe.publishedVersionId, workflow: workflowForContext(recipe.publishedDefinition) });
     notify.success("已应用单轮审核方案", { description: "请明确选择审核人并检查完成门槛。" });
   };
 
   if (!supported) {
-    return <Card><CardHeader><CardTitle className="text-sm">审核配置需要切换到单轮模式</CardTitle><CardDescription>当前只能发布单轮并行人工审核。评分、多轮、补件及自动决定暂不可运行。</CardDescription></CardHeader><CardContent className="space-y-3"><Button type="button" disabled={draft.readOnly || !recipes.length} onClick={() => { draft.setReview({ recipeVersionId: recipes[0].publishedVersionId, workflow: makeSingleRound(source) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
+    return <Card><CardHeader><CardTitle className="text-sm">审核配置需要切换到单轮模式</CardTitle><CardDescription>当前只能发布单轮并行人工审核。评分、多轮、补件及自动决定暂不可运行。</CardDescription></CardHeader><CardContent className="space-y-3"><Button type="button" disabled={draft.readOnly || !recipes.length} onClick={() => { draft.setReview({ recipeVersionId: recipes[0].publishedVersionId, workflow: workflowForContext(source) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
   }
 
   const completionValue = round.completion.mode === "all" ? "all" : "at_least_n";
@@ -105,7 +122,7 @@ export function CampaignReviewEditor() {
   const toggleReviewer = (key, selected, values, setter) => setter(selected ? [...values, key] : values.filter((value) => value !== key));
 
   return <Card>
-    <CardHeader><CardTitle className="text-sm">单轮人工审核</CardTitle><CardDescription>提交后按此 Revision 快照创建并行审核任务。反馈必填文字意见，不是最终决定；完成门槛满足后由有决定权限的成员作出结果。</CardDescription></CardHeader>
+    <CardHeader><CardTitle className="text-sm">单轮人工审核</CardTitle><CardDescription>提交后按此版本快照创建并行审核任务。反馈必填文字意见，不是最终决定；完成门槛满足后由有决定权限的成员作出结果。</CardDescription></CardHeader>
     <CardContent className="space-y-4">
       <Field>
         <FieldLabel htmlFor="review-recipe">审核方案来源</FieldLabel>
@@ -113,7 +130,7 @@ export function CampaignReviewEditor() {
           <SelectTrigger id="review-recipe"><SelectValue placeholder="选择已发布方案" /></SelectTrigger>
           <SelectContent>{recipeSelect.missingOption ? <SelectItem value={recipeSelect.missingOption.value} disabled>{recipeSelect.missingOption.label}</SelectItem> : null}{recipes.map((recipe) => <SelectItem key={recipe.id} value={recipe.id}>{recipe.name} · v{recipe.publishedVersion}</SelectItem>)}<SelectItem value="custom" disabled>未关联可用来源</SelectItem></SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">{selectedRecipe ? `来源：${selectedRecipe.name} v${selectedRecipe.publishedVersion}；${customized ? "活动内已定制" : "尚未定制"}。` : "请先选择可运行的系统方案。"}来源版本只记录出处，当前活动 Revision 独立保存完整审核快照。</p>
+        <p className="text-xs text-muted-foreground">{selectedRecipe ? `来源：${selectedRecipe.name} v${selectedRecipe.publishedVersion}；${customized ? (isTemplate ? "模板内已定制" : "活动内已定制") : "尚未定制"}。` : draft.reviewRecipeVersionId ? "当前来源不是目录中的最新版本。所属方案 key 仍启用时，已保存草稿可继续使用该不可变版本；若方案已停用，请改选允许方式后再发布。" : "请先选择工作空间允许的可运行方案。"}来源版本只记录出处，当前活动或模板版本独立保存完整审核快照。</p>
       </Field>
       <div className="flex flex-wrap items-center gap-2"><Badge>MANUAL_DECISION</Badge><Badge variant="outline">并行单轮</Badge><Badge variant="outline">文字反馈</Badge><Badge variant="outline">人工最终决定</Badge></div>
       <div className="grid gap-4 rounded-md border p-3">
@@ -121,13 +138,13 @@ export function CampaignReviewEditor() {
           <Field><FieldLabel htmlFor="review-completion">反馈完成门槛</FieldLabel><Select items={completionOptions} value={completionValue} onValueChange={(mode) => update({ ...round, completion: mode === "all" ? { mode: "all" } : { mode: "at_least_n", n: Math.max(1, Number(round.completion?.n) || 1) } })}><SelectTrigger id="review-completion"><SelectValue /></SelectTrigger><SelectContent>{completionOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></Field>
           {completionValue === "at_least_n" ? <Field><FieldLabel htmlFor="review-completion-count">至少完成数 N</FieldLabel><Input id="review-completion-count" type="number" min="1" step="1" value={round.completion?.mode === "any" ? 1 : round.completion?.n || 1} onChange={(event) => update({ ...round, completion: { mode: "at_least_n", n: Math.max(1, Number(event.target.value) || 1) } })} /></Field> : <p className="self-end pb-2 text-xs text-muted-foreground">全部完成门槛会随任务补充分配而增加。</p>}
         </div>
-        <Field>
+        {!isTemplate ? <Field>
           <FieldLabel htmlFor="reviewer-source">审核人配置</FieldLabel>
           <Select items={reviewerSourceOptions} value={round.reviewer_policy?.source || "explicit_members"} onValueChange={(sourceType) => updatePolicy({ source: sourceType, member_ids: sourceType === "explicit_members" ? round.reviewer_policy?.member_ids || [] : [], role_keys: sourceType === "production_roles" ? round.reviewer_policy?.role_keys || [] : [] })}>
             <SelectTrigger id="reviewer-source"><SelectValue /></SelectTrigger><SelectContent>{reviewerSourceOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
-        </Field>
-        {round.reviewer_policy?.source === "explicit_members" ? <div className="space-y-2"><p className="text-xs font-medium">选择审核成员</p><div className="grid max-h-56 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">{members.map((member) => <label key={member.id} className="flex items-center gap-2 text-sm"><Checkbox checked={reviewerSet.has(member.id)} onCheckedChange={(checked) => toggleReviewer(member.id, checked === true, round.reviewer_policy?.member_ids || [], (member_ids) => updatePolicy({ member_ids }))} />{member.name}</label>)}</div>{members.length === 0 ? <p className="text-xs text-muted-foreground">当前没有可选成员；请先在活动成员管理中添加有效 Production 成员。</p> : null}</div> : <div className="space-y-2"><p className="text-xs font-medium">选择 Production 角色</p><div className="flex flex-wrap gap-x-4 gap-y-2 rounded-md border p-3">{Object.entries(roles).map(([key, label]) => <label key={key} className="flex items-center gap-2 text-sm"><Checkbox checked={reviewerSet.has(key)} onCheckedChange={(checked) => toggleReviewer(key, checked === true, round.reviewer_policy?.role_keys || [], (role_keys) => updatePolicy({ role_keys }))} />{label}</label>)}</div></div>}
+        </Field> : <p className="text-xs text-muted-foreground">模板不绑定某个活动的具体成员；请选择 Production 角色，应用到活动后再按需要指定成员。</p>}
+        {!isTemplate && round.reviewer_policy?.source === "explicit_members" ? <div className="space-y-2"><p className="text-xs font-medium">选择审核成员</p><div className="grid max-h-56 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">{members.map((member) => <label key={member.id} className="flex items-center gap-2 text-sm"><Checkbox checked={reviewerSet.has(member.id)} onCheckedChange={(checked) => toggleReviewer(member.id, checked === true, round.reviewer_policy?.member_ids || [], (member_ids) => updatePolicy({ member_ids }))} />{member.name}</label>)}</div>{members.length === 0 ? <p className="text-xs text-muted-foreground">当前没有可选成员；请先在活动成员管理中添加有效 Production 成员。</p> : null}</div> : <div className="space-y-2"><p className="text-xs font-medium">{isTemplate ? "模板默认 Production 角色" : "选择 Production 角色"}</p><div className="flex flex-wrap gap-x-4 gap-y-2 rounded-md border p-3">{Object.entries(roles).map(([key, label]) => <label key={key} className="flex items-center gap-2 text-sm"><Checkbox checked={reviewerSet.has(key)} onCheckedChange={(checked) => toggleReviewer(key, checked === true, round.reviewer_policy?.role_keys || [], (role_keys) => updatePolicy({ role_keys }))} />{label}</label>)}</div></div>}
         <p className="text-xs text-muted-foreground">发布时会校验审核人和门槛。提交时成员若已失效，系统保留原门槛并将运行标记为“待补足审核人”，不会自动降低要求。</p>
       </div>
     </CardContent>

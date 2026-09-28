@@ -1178,10 +1178,8 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		return
 	}
 	if recipeVersionID != nil && strings.TrimSpace(*recipeVersionID) != "" {
-		if _, err := loadReviewRecipeVersion(r.Context(), tx, *recipeVersionID, access.WorkspaceID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_not_found", "审核方案版本不存在、未发布或无权使用")
-			} else {
+		if err := validateWorkspaceReviewRecipeVersion(r.Context(), tx, access.WorkspaceID, *recipeVersionID); err != nil {
+			if !writeWorkspaceReviewCatalogError(w, err) {
 				serverError(w, err)
 			}
 			return

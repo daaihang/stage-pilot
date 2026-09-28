@@ -15,6 +15,23 @@ export function publishedExecutableRecipes(recipes, versionsById) {
     && recipe.publishedVersionId && isExecutableSingleRoundWorkflow(versionsById[recipe.publishedVersionId]?.definition));
 }
 
+export function updateReviewCatalogSelection(enabledKeys, defaultKey, key, checked) {
+  const next = new Set(enabledKeys || []);
+  if (checked) next.add(key);
+  else next.delete(key);
+  const nextKeys = [...next].sort();
+  if (!nextKeys.length) return { changed: false, enabledKeys: [...(enabledKeys || [])], defaultKey };
+  return {
+    changed: true,
+    enabledKeys: nextKeys,
+    defaultKey: next.has(defaultKey) ? defaultKey : nextKeys[0],
+  };
+}
+
+export function isReviewCatalogDefaultSelectable(enabledKeys, key) {
+  return Array.isArray(enabledKeys) && enabledKeys.includes(key);
+}
+
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === "object") {

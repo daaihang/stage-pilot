@@ -31,7 +31,7 @@
 }
 ```
 
-系统模板、空白 Campaign 和空白表单模板复制该版本，审核人保持空白。活动发布前，操作者必须明确选择有效 Production 成员或角色；全部完成是默认门槛，也可设至少 N 人（原 `any` 等价 N=1），N 不得大于可解析人数。评审反馈由建议 `recommend` / `do_not_recommend` / `no_opinion` 和必填文字意见构成，不自动改变 Entry 结果。审核人失效时任务保留，管理员按原因改派；提交时人数不足不会降低门槛。
+系统模板、空白 Campaign 和空白表单模板复制该版本，审核人保持空白。活动发布前，操作者必须明确选择有效 Production 成员或角色；模板不能绑定具体活动成员，只保存可复用的 Production 角色，应用到活动后可再指定成员。全部完成是默认门槛，也可设至少 N 人（原 `any` 等价 N=1），N 不得大于可解析人数。评审反馈由建议 `recommend` / `do_not_recommend` / `no_opinion` 和必填文字意见构成，不自动改变 Entry 结果。审核人失效时任务保留，管理员按原因改派；提交时人数不足不会降低门槛。
 
 原 v1 内置方案版本保留以满足外键和历史快照，但自动确认、平行、评分和多轮模板在目录中归档；单轮模板的 v1 也不再是当前发布版本。系统版本只读，发布后不可原地修改。四个系统表单模板均在原 v2 基础上追加 v3，并指向单轮方案 v2；节目 Demo 改为必填 URL，招募岗位偏好改为文本。历史版本不修改。
 
@@ -44,11 +44,24 @@ ReviewRecipeVersion（已发布的系统来源）
     → Entry.campaign_revision_id + EntryRevision / ReviewRun
 ```
 
-来源版本 ID 是出处；模板和 Campaign Revision 各自保存**完整独立快照**，实际执行只读 Entry 固定的 Campaign Revision。模板或系统方案后续升级，不重写已发布 Revision、Entry、任务或意见。新建 Campaign 的明确优先级是：请求内完整 `review_workflow`、请求内指定的来源版本、模板自己的工作流快照、系统单轮 v2；在没有显式来源时仍记录系统单轮 v2 为出处。模板快照不得被它链接的来源版本无意覆盖。
+来源版本 ID 是出处；模板和 Campaign Revision 各自保存**完整独立快照**，实际执行只读 Entry 固定的 Campaign Revision。模板或系统方案后续升级，不重写已发布 Revision、Entry、任务或意见。新建 Campaign 的明确优先级是：请求内完整 `review_workflow`、请求内指定的来源版本、模板自己的工作流快照、工作空间默认方案。模板快照不得被它链接的来源版本无意覆盖。
 
 草稿可以没有审核人，但草稿校验和发布必须分别指出缺少已发布来源、有效审核人或不可达门槛。发布和公开提交都拒绝不兼容单轮定义；公开 GET 也报告不可提交。只有一个并行轮次、二元建议、禁用补件和人工最终决定可运行。`campaign.review`、`campaign.manage`、`campaign.decide` 在每个请求上分别授权，`campaign.materialize` 不在第一批授予。
 
-工作空间原有方案数据表与 API 暂留，业务页面暂不提供其创建/复制入口。下一批若加入工作空间“可选/默认”开关，开关只影响未来选择与发布，不能追溯停止已发布表单。工作空间级方案模型是否拆除留到下一批，不向新建工作空间复制系统方案。
+## 工作空间有效目录
+
+工作空间不拥有可编辑的审核方案副本。`workspace_settings.enabled_review_recipe_keys` 保存允许选择的稳定系统方案 key，`default_review_recipe_key` 必须属于该非空目录。当前只有 `single_manual` 可运行，因此它是必选默认项；目录 API 只返回当前已发布且符合单轮执行契约的系统版本，不暴露草稿、归档或未实现方式。
+
+```text
+GET   /v1/workspaces/{id}/review-catalog  工作空间成员可读
+PATCH /v1/workspaces/{id}/settings        Owner/Admin 可更新目录和默认 key
+```
+
+更新会原子校验目录非空、key 全部可运行、默认 key 属于目录。模板编辑器与活动表单编辑器都读取该目录。新选择绑定当前已发布版本；草稿若引用某 key 的旧不可变来源版本，只要该 key 仍在目录中，仍可发布。若 key 被停用，活动或模板的新版本必须切换到允许项。
+
+目录变化仅影响后续选择和发布，不追溯重写或撤销已发布活动 Revision、模板快照、Entry 或审核任务。已发布模板即使来源 key 后续停用，仍可查看和复制；其副本必须在发布前改为当前允许的来源。表单模板继续负责复用完整表单与审核参数；它保存自己的来源版本 ID 和定义快照，不是工作空间级方案库。
+
+工作空间审核方案写入路由和方案库编辑器已移除；历史方案表、记录和外键保留，不做破坏性清理。系统方案仍通过只读目录及只读来源查询使用。
 
 ## 当前单轮运行时
 
@@ -59,6 +72,7 @@ ReviewRecipeVersion（已发布的系统来源）
 ```text
 GET  /v1/review-recipes?status=published
 GET  /v1/review-recipes/{recipeId}/versions
+GET  /v1/workspaces/{id}/review-catalog
 GET  /v1/me/review-tasks
 GET  /v1/review-tasks/{taskId}
 POST /v1/review-tasks/{taskId}/feedback
@@ -66,4 +80,4 @@ POST /v1/entries/{entryId}/review-tasks
 POST /v1/entries/{entryId}/decisions
 ```
 
-工作空间审核方案旧 API 暂保留但不在业务 UI 暴露。审核任务与管理员 Entry 收件箱是两个视角：前者处理“分配给我”的意见，后者管理分配、门槛和最终决定。
+工作空间审核方案写入 API 已退役。审核任务与管理员 Entry 收件箱是两个视角：前者处理“分配给我”的意见，后者管理分配、门槛和最终决定。

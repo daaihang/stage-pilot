@@ -37,6 +37,7 @@ export async function updateWorkspace(workspaceId, patch) {
 
 export const getWorkspacePlanningSettings = (workspaceId) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/settings`);
 export const updateWorkspacePlanningSettings = (workspaceId, patch) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/settings`, { method: "PATCH", body: JSON.stringify(patch) });
+export const updateWorkspaceReviewSettings = (workspaceId, patch) => request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/settings`, { method: "PATCH", body: JSON.stringify(patch) });
 
 export async function listWorkspaceMembers(workspaceId) {
   return request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/members`);

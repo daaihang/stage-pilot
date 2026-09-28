@@ -6,34 +6,39 @@ import (
 )
 
 type planningSettings struct {
-	RequireActualStartBeforeCompletion *bool   `json:"require_actual_start_before_completion"`
-	ScheduleConflictPolicy             *string `json:"schedule_conflict_policy"`
-	DefaultTimezone                    *string `json:"default_timezone"`
+	RequireActualStartBeforeCompletion *bool    `json:"require_actual_start_before_completion"`
+	ScheduleConflictPolicy             *string  `json:"schedule_conflict_policy"`
+	DefaultTimezone                    *string  `json:"default_timezone"`
+	EnabledReviewRecipeKeys            []string `json:"enabled_review_recipe_keys"`
+	DefaultReviewRecipeKey             string   `json:"default_review_recipe_key"`
 }
 
 func (app *application) getWorkspacePlanningSettings(w http.ResponseWriter, r *http.Request) {
 	a := currentWorkspaceAccess(r)
 	var required bool
-	var policy, defaultTimezone string
-	err := app.db.QueryRow(r.Context(), `SELECT COALESCE(require_actual_start_before_completion,TRUE),COALESCE(schedule_conflict_policy,'block'),COALESCE(default_timezone,'Asia/Shanghai') FROM workspace_settings WHERE workspace_id=$1`, a.WorkspaceID).Scan(&required, &policy, &defaultTimezone)
+	var policy, defaultTimezone, defaultReviewRecipeKey string
+	var enabledReviewRecipeKeys []string
+	err := app.db.QueryRow(r.Context(), `SELECT COALESCE(require_actual_start_before_completion,TRUE),COALESCE(schedule_conflict_policy,'block'),COALESCE(default_timezone,'Asia/Shanghai'),enabled_review_recipe_keys,default_review_recipe_key FROM workspace_settings WHERE workspace_id=$1`, a.WorkspaceID).Scan(&required, &policy, &defaultTimezone, &enabledReviewRecipeKeys, &defaultReviewRecipeKey)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy, DefaultTimezone: &defaultTimezone})
+	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy, DefaultTimezone: &defaultTimezone, EnabledReviewRecipeKeys: enabledReviewRecipeKeys, DefaultReviewRecipeKey: defaultReviewRecipeKey})
 }
 
 func (app *application) updateWorkspacePlanningSettings(w http.ResponseWriter, r *http.Request) {
 	a := currentWorkspaceAccess(r)
 	var in struct {
-		Require         *bool   `json:"require_actual_start_before_completion"`
-		Policy          *string `json:"schedule_conflict_policy"`
-		DefaultTimezone *string `json:"default_timezone"`
+		Require                 *bool     `json:"require_actual_start_before_completion"`
+		Policy                  *string   `json:"schedule_conflict_policy"`
+		DefaultTimezone         *string   `json:"default_timezone"`
+		EnabledReviewRecipeKeys *[]string `json:"enabled_review_recipe_keys"`
+		DefaultReviewRecipeKey  *string   `json:"default_review_recipe_key"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	if in.Require == nil && in.Policy == nil && in.DefaultTimezone == nil {
+	if in.Require == nil && in.Policy == nil && in.DefaultTimezone == nil && in.EnabledReviewRecipeKeys == nil && in.DefaultReviewRecipeKey == nil {
 		errorJSON(w, 400, "invalid_input", "缺少配置值")
 		return
 	}
@@ -49,14 +54,68 @@ func (app *application) updateWorkspacePlanningSettings(w http.ResponseWriter, r
 		}
 		in.DefaultTimezone = &value
 	}
-	var required bool
-	var policy, defaultTimezone string
-	err := app.db.QueryRow(r.Context(), `INSERT INTO workspace_settings(workspace_id,require_actual_start_before_completion,schedule_conflict_policy,default_timezone,updated_at) VALUES($1,COALESCE($2,TRUE),COALESCE($3,'block'),COALESCE($4,'Asia/Shanghai'),NOW()) ON CONFLICT(workspace_id) DO UPDATE SET require_actual_start_before_completion=COALESCE($2,workspace_settings.require_actual_start_before_completion),schedule_conflict_policy=COALESCE($3,workspace_settings.schedule_conflict_policy),default_timezone=COALESCE($4,workspace_settings.default_timezone),updated_at=NOW() RETURNING require_actual_start_before_completion,schedule_conflict_policy,default_timezone`, a.WorkspaceID, in.Require, in.Policy, in.DefaultTimezone).Scan(&required, &policy, &defaultTimezone)
+	tx, err := app.db.Begin(r.Context())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy, DefaultTimezone: &defaultTimezone})
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), `INSERT INTO workspace_settings(workspace_id) VALUES($1) ON CONFLICT(workspace_id) DO NOTHING`, a.WorkspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	var required bool
+	var policy, defaultTimezone, defaultReviewRecipeKey string
+	var enabledReviewRecipeKeys []string
+	if err := tx.QueryRow(r.Context(), `SELECT require_actual_start_before_completion,schedule_conflict_policy,default_timezone,enabled_review_recipe_keys,default_review_recipe_key FROM workspace_settings WHERE workspace_id=$1 FOR UPDATE`, a.WorkspaceID).
+		Scan(&required, &policy, &defaultTimezone, &enabledReviewRecipeKeys, &defaultReviewRecipeKey); err != nil {
+		serverError(w, err)
+		return
+	}
+	if in.EnabledReviewRecipeKeys != nil || in.DefaultReviewRecipeKey != nil {
+		available, err := loadAvailableSystemReviewRecipes(r.Context(), tx)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		requestedKeys := enabledReviewRecipeKeys
+		if in.EnabledReviewRecipeKeys != nil {
+			requestedKeys = *in.EnabledReviewRecipeKeys
+		}
+		requestedDefault := defaultReviewRecipeKey
+		if in.DefaultReviewRecipeKey != nil {
+			requestedDefault = *in.DefaultReviewRecipeKey
+		}
+		enabledReviewRecipeKeys, defaultReviewRecipeKey, err = normalizeWorkspaceReviewKeys(requestedKeys, requestedDefault, available)
+		if err != nil {
+			if writeWorkspaceReviewCatalogError(w, err) {
+				return
+			}
+			serverError(w, err)
+			return
+		}
+	}
+	if in.Require != nil {
+		required = *in.Require
+	}
+	if in.Policy != nil {
+		policy = *in.Policy
+	}
+	if in.DefaultTimezone != nil {
+		defaultTimezone = *in.DefaultTimezone
+	}
+	err = tx.QueryRow(r.Context(), `UPDATE workspace_settings SET require_actual_start_before_completion=$2,schedule_conflict_policy=$3,default_timezone=$4,enabled_review_recipe_keys=$5,default_review_recipe_key=$6,updated_at=NOW() WHERE workspace_id=$1 RETURNING require_actual_start_before_completion,schedule_conflict_policy,default_timezone,enabled_review_recipe_keys,default_review_recipe_key`,
+		a.WorkspaceID, required, policy, defaultTimezone, enabledReviewRecipeKeys, defaultReviewRecipeKey).
+		Scan(&required, &policy, &defaultTimezone, &enabledReviewRecipeKeys, &defaultReviewRecipeKey)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, planningSettings{RequireActualStartBeforeCompletion: &required, ScheduleConflictPolicy: &policy, DefaultTimezone: &defaultTimezone, EnabledReviewRecipeKeys: enabledReviewRecipeKeys, DefaultReviewRecipeKey: defaultReviewRecipeKey})
 }
 
 func (app *application) getProductionPlanningSettings(w http.ResponseWriter, r *http.Request) {

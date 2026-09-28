@@ -17,7 +17,7 @@
     "test:form-controls": "node --test src/lib/form-control-guard.test.js",
     "test:select-options": "node --test src/lib/select-options.test.js",
     "test:campaign-public-submission": "node --test src/lib/campaign-public-submission.test.js src/lib/campaign-form-model.test.js",
-    "test:campaign-review": "node --test src/lib/campaign-review-ui-state.test.js",
+    "test:campaign-review": "node --test src/lib/campaign-review-ui-state.test.js src/lib/review-workflow-options.test.js",
     "test:resource-page-header": "node --test src/lib/resource-page-header.test.js",
     "test:page-header-actions": "node --test src/lib/page-header-actions-layout.test.js",
     "test:page-header-visibility": "node --test src/lib/page-header-visibility.test.js",
