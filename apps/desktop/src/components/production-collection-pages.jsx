@@ -153,7 +153,10 @@ function CampaignCreateDialog({ open, onOpenChange, production, template, onCrea
     setBusy(true);
     try {
       const payload = { name: trimmed, description: description.trim() };
-      if (template) payload.template_id = template.id;
+      if (template) {
+        payload.template_id = template.id;
+        if (template.publishedVersion) payload.template_version = template.publishedVersion;
+      }
       else payload.kind = kind;
       const created = await notify.promise(createCampaign(production.id, payload), {
         loading: "正在创建表单…",
@@ -171,7 +174,7 @@ function CampaignCreateDialog({ open, onOpenChange, production, template, onCrea
 
   return <Dialog open={open} onOpenChange={(value) => !busy && onOpenChange(value)}>
     <DialogContent className="max-w-md">
-      <DialogHeader><DialogTitle>{template ? `使用模板：${template.name}` : "从空白创建表单"}</DialogTitle><DialogDescription>{template ? "创建后会复制模板版本，之后可以独立编辑活动表单。" : "选择表单类型，创建一个可继续配置的活动表单。"}</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>{template ? `使用模板：${template.name}` : "从空白创建表单"}</DialogTitle><DialogDescription>{template ? `固定使用已发布版本 v${template.publishedVersion || "—"}（不使用模板草稿），并复制其审核来源和完整快照；创建后可在活动草稿中独立编辑。` : "选择表单类型，创建一个可继续配置的活动表单。"}</DialogDescription></DialogHeader>
       <form className="space-y-4" onSubmit={submit}>
         <label className="block space-y-1.5"><span className="text-sm font-medium">表单名称</span><Input autoFocus value={name} maxLength={120} onChange={(event) => setName(event.target.value)} placeholder="例如：2026 青年音乐节节目征集" /></label>
         {!template && <label className="block space-y-1.5"><span className="text-sm font-medium">表单类型</span><Select items={FORM_TYPES.map((item) => ({ value: item.apiKind, label: item.label }))} value={kind} onValueChange={setKind}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{FORM_TYPES.map((item) => <SelectItem key={item.apiKind} value={item.apiKind}>{item.label}</SelectItem>)}</SelectContent></Select></label>}

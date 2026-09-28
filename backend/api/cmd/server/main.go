@@ -241,6 +241,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PATCH /v1/campaign-templates/{templateId}", app.auth(http.HandlerFunc(app.updateCampaignTemplate)))
 	mux.Handle("POST /v1/campaign-templates/{templateId}/versions", app.auth(http.HandlerFunc(app.createCampaignTemplateVersion)))
 	mux.Handle("PATCH /v1/campaign-templates/{templateId}/versions/{versionId}", app.auth(http.HandlerFunc(app.updateCampaignTemplateVersion)))
+	mux.Handle("POST /v1/campaign-templates/{templateId}/versions/{versionId}/validate", app.auth(http.HandlerFunc(app.validateCampaignTemplateVersion)))
 	mux.Handle("POST /v1/campaign-templates/{templateId}/versions/{versionId}/publish", app.auth(http.HandlerFunc(app.publishCampaignTemplateVersion)))
 	mux.Handle("GET /v1/productions/{productionId}/campaigns", app.auth(app.requireProductionPermission(productionView, http.HandlerFunc(app.listCampaigns))))
 	mux.Handle("POST /v1/productions/{productionId}/campaigns", app.auth(app.requireProductionPermission(productionEdit, http.HandlerFunc(app.createCampaign))))

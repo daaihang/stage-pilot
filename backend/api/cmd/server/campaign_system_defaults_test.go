@@ -43,11 +43,18 @@ func TestSystemTemplateSingleRoundPublicWorkflow(t *testing.T) {
 					ID string `json:"id"`
 				} `json:"campaign"`
 				Draft struct {
-					ID                    string          `json:"id"`
-					ETag                  string          `json:"etag"`
-					ReviewRecipeVersionID string          `json:"review_recipe_version_id"`
-					ReviewWorkflow        json.RawMessage `json:"review_workflow"`
-					FormVersion           struct {
+					ID                    string `json:"id"`
+					ETag                  string `json:"etag"`
+					ReviewRecipeVersionID string `json:"review_recipe_version_id"`
+					ReviewRecipeSource    struct {
+						VersionID string `json:"version_id"`
+						Key       string `json:"key"`
+						Version   int    `json:"version"`
+						IsCurrent bool   `json:"is_current"`
+						Enabled   bool   `json:"enabled"`
+					} `json:"review_recipe_source"`
+					ReviewWorkflow json.RawMessage `json:"review_workflow"`
+					FormVersion    struct {
 						Fields json.RawMessage `json:"fields"`
 					} `json:"form_version"`
 				} `json:"draft_revision"`
@@ -57,6 +64,9 @@ func TestSystemTemplateSingleRoundPublicWorkflow(t *testing.T) {
 			}
 			if body.Draft.ReviewRecipeVersionID != defaultReviewRecipeVersionID {
 				t.Fatalf("source = %q", body.Draft.ReviewRecipeVersionID)
+			}
+			if body.Draft.ReviewRecipeSource.VersionID != defaultReviewRecipeVersionID || body.Draft.ReviewRecipeSource.Key != defaultWorkspaceReviewRecipeKey || !body.Draft.ReviewRecipeSource.IsCurrent || !body.Draft.ReviewRecipeSource.Enabled {
+				t.Fatalf("source metadata = %+v", body.Draft.ReviewRecipeSource)
 			}
 			if err := validateSingleRoundReviewWorkflowWithUnbound(body.Draft.ReviewWorkflow); err != nil {
 				t.Fatalf("draft workflow = %s: %v", body.Draft.ReviewWorkflow, err)
@@ -174,7 +184,13 @@ func TestBlankWorkspaceTemplateKeepsCustomizedReviewSnapshot(t *testing.T) {
 			ID                    string `json:"id"`
 			ETag                  string `json:"etag"`
 			ReviewRecipeVersionID string `json:"review_recipe_version_id"`
-			Definition            struct {
+			ReviewRecipeSource    struct {
+				VersionID string `json:"version_id"`
+				Key       string `json:"key"`
+				Version   int    `json:"version"`
+				Enabled   bool   `json:"enabled"`
+			} `json:"review_recipe_source"`
+			Definition struct {
 				ReviewWorkflow json.RawMessage `json:"review_workflow"`
 			} `json:"definition"`
 		} `json:"draft_version"`
@@ -185,21 +201,54 @@ func TestBlankWorkspaceTemplateKeepsCustomizedReviewSnapshot(t *testing.T) {
 	if initial.Draft.ReviewRecipeVersionID != defaultReviewRecipeVersionID {
 		t.Fatalf("blank template recipe source = %q", initial.Draft.ReviewRecipeVersionID)
 	}
+	if initial.Draft.ReviewRecipeSource.VersionID != defaultReviewRecipeVersionID || initial.Draft.ReviewRecipeSource.Key != defaultWorkspaceReviewRecipeKey || !initial.Draft.ReviewRecipeSource.Enabled {
+		t.Fatalf("template source metadata = %+v", initial.Draft.ReviewRecipeSource)
+	}
 	if err := validateSingleRoundReviewWorkflowWithUnbound(initial.Draft.Definition.ReviewWorkflow); err != nil {
 		t.Fatal(err)
 	}
-	var definition map[string]any
-	if err := json.Unmarshal(initial.Draft.Definition.ReviewWorkflow, &definition); err != nil {
-		t.Fatal(err)
+	versionPath := "/v1/campaign-templates/" + initial.Template.ID + "/versions/" + initial.Draft.ID
+	validUnbound := authedRequestWithHeaders(t, app, token, http.MethodPost, versionPath+"/validate", map[string]any{}, map[string]string{"If-Match": initial.Draft.ETag})
+	if validUnbound.Code != http.StatusOK || !strings.Contains(validUnbound.Body.String(), `"valid":true`) {
+		t.Fatalf("unbound template validation = %d: %s", validUnbound.Code, validUnbound.Body.String())
 	}
-	definition["rounds"].([]any)[0].(map[string]any)["reviewer_policy"].(map[string]any)["role_keys"] = []string{"producer"}
 	var templateDefinition map[string]any
 	if err := app.db.QueryRow(t.Context(), `SELECT definition FROM campaign_template_versions WHERE id=$1`, initial.Draft.ID).Scan(&templateDefinition); err != nil {
 		t.Fatal(err)
 	}
+	unsupportedWorkflow := map[string]any{"schema_version": 1, "mode": "AUTO_ACCEPT", "rounds": []any{}, "request_changes": map[string]any{"enabled": false}, "final_decision": "auto_accept"}
+	templateDefinition["review_workflow"] = unsupportedWorkflow
+	unsupportedUpdate := authedRequestWithHeaders(t, app, token, http.MethodPatch, versionPath, map[string]any{"definition": templateDefinition}, map[string]string{"If-Match": initial.Draft.ETag})
+	if unsupportedUpdate.Code != http.StatusOK {
+		t.Fatalf("save unsupported draft for validation = %d: %s", unsupportedUpdate.Code, unsupportedUpdate.Body.String())
+	}
+	var unsupportedBody struct {
+		Version struct {
+			ETag string `json:"etag"`
+		} `json:"version"`
+	}
+	if err := json.Unmarshal(unsupportedUpdate.Body.Bytes(), &unsupportedBody); err != nil {
+		t.Fatal(err)
+	}
+	unsupportedValidation := authedRequestWithHeaders(t, app, token, http.MethodPost, versionPath+"/validate", map[string]any{}, map[string]string{"If-Match": unsupportedBody.Version.ETag})
+	if unsupportedValidation.Code != http.StatusOK || !strings.Contains(unsupportedValidation.Body.String(), `"valid":false`) || !strings.Contains(unsupportedValidation.Body.String(), "single_round_manual_required") {
+		t.Fatalf("unsupported template validation = %d: %s", unsupportedValidation.Code, unsupportedValidation.Body.String())
+	}
+	unsupportedPublish := authedRequestWithHeaders(t, app, token, http.MethodPost, versionPath+"/publish", map[string]any{}, map[string]string{"If-Match": unsupportedBody.Version.ETag})
+	if unsupportedPublish.Code != http.StatusUnprocessableEntity || !strings.Contains(unsupportedPublish.Body.String(), "single_round_manual_required") {
+		t.Fatalf("unsupported template publish = %d: %s", unsupportedPublish.Code, unsupportedPublish.Body.String())
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT definition FROM campaign_template_versions WHERE id=$1`, initial.Draft.ID).Scan(&templateDefinition); err != nil {
+		t.Fatal(err)
+	}
+	definition := templateDefinition["review_workflow"].(map[string]any)
+	definition["schema_version"] = float64(1)
+	definition["mode"] = "MANUAL_DECISION"
+	definition["rounds"] = []any{map[string]any{"key": "review", "name": "单轮审核", "execution": "parallel", "reviewer_policy": map[string]any{"source": "production_roles", "member_ids": []any{}, "role_keys": []string{"producer"}}, "completion": map[string]any{"mode": "all"}, "feedback": map[string]any{"kind": "binary"}}}
+	definition["request_changes"] = map[string]any{"enabled": false, "target": "same_round"}
+	definition["final_decision"] = "manual"
 	templateDefinition["review_workflow"] = definition
-	versionPath := "/v1/campaign-templates/" + initial.Template.ID + "/versions/" + initial.Draft.ID
-	updated := authedRequestWithHeaders(t, app, token, http.MethodPatch, versionPath, map[string]any{"definition": templateDefinition}, map[string]string{"If-Match": initial.Draft.ETag})
+	updated := authedRequestWithHeaders(t, app, token, http.MethodPatch, versionPath, map[string]any{"definition": templateDefinition}, map[string]string{"If-Match": unsupportedBody.Version.ETag})
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update template = %d: %s", updated.Code, updated.Body.String())
 	}
@@ -215,11 +264,32 @@ func TestBlankWorkspaceTemplateKeepsCustomizedReviewSnapshot(t *testing.T) {
 	if published.Code != http.StatusOK {
 		t.Fatalf("publish template = %d: %s", published.Code, published.Body.String())
 	}
-	created := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+production["id"].(string)+"/campaigns", map[string]any{"name": "从模板创建", "template_id": initial.Template.ID})
+	newDraft := authedRequest(t, app, token, http.MethodPost, "/v1/campaign-templates/"+initial.Template.ID+"/versions", map[string]any{})
+	if newDraft.Code != http.StatusCreated {
+		t.Fatalf("create newer template draft = %d: %s", newDraft.Code, newDraft.Body.String())
+	}
+	override := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+production["id"].(string)+"/campaigns", map[string]any{
+		"name": "拒绝覆盖模板快照", "template_id": initial.Template.ID,
+		"review_recipe_version_id": defaultReviewRecipeVersionID,
+		"review_workflow":          definition,
+	})
+	if override.Code != http.StatusUnprocessableEntity || !strings.Contains(override.Body.String(), "template_review_snapshot_override") {
+		t.Fatalf("template snapshot override = %d: %s", override.Code, override.Body.String())
+	}
+	nullOverride := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+production["id"].(string)+"/campaigns", map[string]any{
+		"name": "拒绝空覆盖模板快照", "template_id": initial.Template.ID, "review_workflow": nil,
+	})
+	if nullOverride.Code != http.StatusUnprocessableEntity || !strings.Contains(nullOverride.Body.String(), "template_review_snapshot_override") {
+		t.Fatalf("null template snapshot override = %d: %s", nullOverride.Code, nullOverride.Body.String())
+	}
+	created := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+production["id"].(string)+"/campaigns", map[string]any{"name": "从模板创建", "template_id": initial.Template.ID, "template_version": 1})
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create campaign from template = %d: %s", created.Code, created.Body.String())
 	}
 	var campaign struct {
+		Campaign struct {
+			SourceTemplateVersion int `json:"source_template_version"`
+		} `json:"campaign"`
 		Draft struct {
 			ReviewRecipeVersionID string `json:"review_recipe_version_id"`
 			ReviewWorkflow        struct {
@@ -234,7 +304,7 @@ func TestBlankWorkspaceTemplateKeepsCustomizedReviewSnapshot(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &campaign); err != nil {
 		t.Fatal(err)
 	}
-	if campaign.Draft.ReviewRecipeVersionID != defaultReviewRecipeVersionID || len(campaign.Draft.ReviewWorkflow.Rounds) != 1 || len(campaign.Draft.ReviewWorkflow.Rounds[0].ReviewerPolicy.RoleKeys) != 1 || campaign.Draft.ReviewWorkflow.Rounds[0].ReviewerPolicy.RoleKeys[0] != "producer" {
+	if campaign.Campaign.SourceTemplateVersion != 1 || campaign.Draft.ReviewRecipeVersionID != defaultReviewRecipeVersionID || len(campaign.Draft.ReviewWorkflow.Rounds) != 1 || len(campaign.Draft.ReviewWorkflow.Rounds[0].ReviewerPolicy.RoleKeys) != 1 || campaign.Draft.ReviewWorkflow.Rounds[0].ReviewerPolicy.RoleKeys[0] != "producer" {
 		t.Fatalf("template snapshot overwritten by source: %s", created.Body.String())
 	}
 }

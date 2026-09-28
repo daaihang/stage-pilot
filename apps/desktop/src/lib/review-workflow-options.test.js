@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isExecutableSingleRoundWorkflow, isReviewCatalogDefaultSelectable, publishedExecutableRecipes, reviewWorkflowCustomized, updateReviewCatalogSelection } from "./review-workflow-options.js";
+import { isExecutableSingleRoundWorkflow, isReviewCatalogDefaultSelectable, publishedExecutableRecipes, resolveReviewRecipeSource, reviewRecipeSourceStatus, reviewWorkflowCustomized, selectableReviewRecipes, shouldConfirmReviewRecipeChange, updateReviewCatalogSelection } from "./review-workflow-options.js";
 
 const workflow = {
   schema_version: 1, mode: "MANUAL_DECISION",
@@ -27,6 +27,32 @@ test("activity-level reviewer changes are reported without mutating source defin
   customized.rounds[0].reviewer_policy.member_ids.push("reviewer-1");
   assert.equal(reviewWorkflowCustomized(customized, workflow), true);
   assert.deepEqual(workflow.rounds[0].reviewer_policy.member_ids, []);
+});
+
+test("selector exposes only enabled, current published executable system versions", () => {
+  const items = [
+    { id: "single", key: "single_manual", scope: "system", status: "published", enabled: true, publishedVersionId: "single-v3", publishedDefinition: workflow },
+    { id: "disabled", scope: "system", status: "published", enabled: false, publishedVersionId: "disabled-v1", publishedDefinition: workflow },
+    { id: "draft", scope: "system", status: "draft", enabled: true, publishedVersionId: "draft-v1", publishedDefinition: workflow },
+    { id: "workspace", scope: "workspace", status: "published", enabled: true, publishedVersionId: "workspace-v1", publishedDefinition: workflow },
+    { id: "broken", scope: "system", status: "published", enabled: true, publishedVersionId: "broken-v1", publishedDefinition: { ...workflow, request_changes: { enabled: true } } },
+  ];
+  assert.deepEqual(selectableReviewRecipes(items).map((item) => item.publishedVersionId), ["single-v3"]);
+});
+
+test("historical source is displayed from exact saved provenance but never added to current choices", () => {
+  const saved = { versionId: "single-v2", key: "single_manual", name: "单轮人工审核", version: 2, definition: workflow, isCurrent: false, enabled: true };
+  assert.equal(resolveReviewRecipeSource("single-v2", [{ publishedVersionId: "single-v3" }], saved), saved);
+  assert.equal(reviewRecipeSourceStatus(saved), "历史发布版本（保留原快照）");
+  assert.equal(reviewRecipeSourceStatus({ ...saved, enabled: false }), "来源方案已停用，需改选后才能发布");
+  assert.equal(resolveReviewRecipeSource("unknown-v1", [{ publishedVersionId: "single-v3" }], saved), null);
+});
+
+test("changing a source asks before resetting an already customized snapshot", () => {
+  assert.equal(shouldConfirmReviewRecipeChange({ customized: true, currentVersionId: "v1", nextVersionId: "v2" }), true);
+  assert.equal(shouldConfirmReviewRecipeChange({ customized: true, currentVersionId: "", nextVersionId: "v2" }), true);
+  assert.equal(shouldConfirmReviewRecipeChange({ customized: false, currentVersionId: "v1", nextVersionId: "v2" }), false);
+  assert.equal(shouldConfirmReviewRecipeChange({ customized: true, currentVersionId: "v1", nextVersionId: "v1" }), false);
 });
 
 test("workspace review catalog always retains an enabled default", () => {

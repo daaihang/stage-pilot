@@ -15,17 +15,18 @@ import (
 )
 
 type campaignTemplateVersionItem struct {
-	ID                    string          `json:"id"`
-	TemplateID            string          `json:"template_id"`
-	WorkspaceID           *string         `json:"workspace_id"`
-	Version               int             `json:"version"`
-	Status                string          `json:"status"`
-	Definition            json.RawMessage `json:"definition"`
-	ReviewRecipeVersionID *string         `json:"review_recipe_version_id,omitempty"`
-	CreatedBy             *string         `json:"created_by,omitempty"`
-	CreatedAt             time.Time       `json:"created_at"`
-	PublishedAt           *time.Time      `json:"published_at,omitempty"`
-	ETag                  string          `json:"etag"`
+	ID                    string                  `json:"id"`
+	TemplateID            string                  `json:"template_id"`
+	WorkspaceID           *string                 `json:"workspace_id"`
+	Version               int                     `json:"version"`
+	Status                string                  `json:"status"`
+	Definition            json.RawMessage         `json:"definition"`
+	ReviewRecipeVersionID *string                 `json:"review_recipe_version_id,omitempty"`
+	ReviewRecipeSource    *reviewRecipeSourceInfo `json:"review_recipe_source,omitempty"`
+	CreatedBy             *string                 `json:"created_by,omitempty"`
+	CreatedAt             time.Time               `json:"created_at"`
+	PublishedAt           *time.Time              `json:"published_at,omitempty"`
+	ETag                  string                  `json:"etag"`
 }
 
 type templateManagementQueryer interface {
@@ -74,6 +75,13 @@ func loadCampaignTemplateVersion(ctx context.Context, q templateManagementQuerye
 		v.definition,v.review_recipe_version_id,v.created_by,v.created_at,v.published_at
 		FROM campaign_template_versions v JOIN campaign_templates t ON t.id=v.template_id
 		WHERE v.id=$1 AND v.template_id=$2`, versionID, templateID).Scan(&item.ID, &item.TemplateID, &item.WorkspaceID, &item.Version, &item.Status, &item.Definition, &item.ReviewRecipeVersionID, &item.CreatedBy, &item.CreatedAt, &item.PublishedAt)
+	if err == nil {
+		workspaceID := ""
+		if item.WorkspaceID != nil {
+			workspaceID = *item.WorkspaceID
+		}
+		item.ReviewRecipeSource, err = loadReviewRecipeSourceInfo(ctx, q, workspaceID, item.ReviewRecipeVersionID)
+	}
 	if err == nil {
 		item.ETag = templateVersionETag(item)
 	}
@@ -139,6 +147,38 @@ func validateTemplateDefinition(definition templateDefinition, kind string) erro
 		return err
 	}
 	return validateMaterializationPlanValue(definition.MaterializationPlan, kind)
+}
+
+func validateCampaignTemplatePublication(ctx context.Context, queryer workspaceReviewCatalogQueryer, workspaceID, kind string, definition templateDefinition, recipeVersionID *string) ([]revisionValidationIssue, templateDefinition, error) {
+	issues := make([]revisionValidationIssue, 0, 6)
+	if err := validateFormDefinitionValue(definition.Form); err != nil {
+		issues = append(issues, issueFromValidationError(err, "/definition/form"))
+	}
+	if err := validateAvailabilityPolicyValue(definition.AvailabilityPolicy); err != nil {
+		issues = append(issues, issueFromValidationError(err, "/definition/availability_policy"))
+	}
+	if err := validateMaterializationPlanValue(definition.MaterializationPlan, kind); err != nil {
+		issues = append(issues, issueFromValidationError(err, "/definition/materialization_plan"))
+	}
+	if normalized, err := reusableReviewWorkflow(definition.ReviewWorkflow); err != nil {
+		issues = append(issues, issueFromValidationError(err, "/definition/review_workflow"))
+	} else {
+		definition.ReviewWorkflow = normalized
+		if err := validateReusableSingleRoundReviewWorkflow(normalized); err != nil {
+			issues = append(issues, issueFromValidationError(err, "/definition/review_workflow"))
+		}
+	}
+	if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
+		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_source_required", Path: "/review_recipe_version_id", Message: "请为模板选择当前工作空间允许的审核方案来源"})
+	} else if err := validateWorkspaceReviewRecipeVersion(ctx, queryer, workspaceID, *recipeVersionID); err != nil {
+		var validationErr *reviewRecipeValidationError
+		if errors.As(err, &validationErr) {
+			issues = append(issues, issueFromValidationError(err, "/review_recipe_version_id"))
+		} else {
+			return nil, definition, err
+		}
+	}
+	return issues, definition, nil
 }
 
 func reusableReviewWorkflow(raw json.RawMessage) (json.RawMessage, error) {
@@ -275,6 +315,15 @@ func (app *application) listCampaignTemplateVersions(w http.ResponseWriter, r *h
 	for rows.Next() {
 		var item campaignTemplateVersionItem
 		if err := rows.Scan(&item.ID, &item.TemplateID, &item.WorkspaceID, &item.Version, &item.Status, &item.Definition, &item.ReviewRecipeVersionID, &item.CreatedBy, &item.CreatedAt, &item.PublishedAt); err != nil {
+			serverError(w, err)
+			return
+		}
+		workspaceID := ""
+		if item.WorkspaceID != nil {
+			workspaceID = *item.WorkspaceID
+		}
+		item.ReviewRecipeSource, err = loadReviewRecipeSourceInfo(r.Context(), app.db, workspaceID, item.ReviewRecipeVersionID)
+		if err != nil {
 			serverError(w, err)
 			return
 		}
@@ -801,6 +850,67 @@ func (app *application) updateCampaignTemplateVersion(w http.ResponseWriter, r *
 	writeJSON(w, 200, map[string]any{"version": updated, "etag": updated.ETag})
 }
 
+func (app *application) validateCampaignTemplateVersion(w http.ResponseWriter, r *http.Request) {
+	templateID, versionID := r.PathValue("templateId"), r.PathValue("versionId")
+	_, workspaceID, err := app.campaignTemplateAccess(r.Context(), claims(r).Subject, templateID, true)
+	if err != nil {
+		errorJSON(w, http.StatusNotFound, "campaign_template_not_found", "模板不存在或无权访问")
+		return
+	}
+	version, err := loadCampaignTemplateVersion(r.Context(), app.db, templateID, versionID)
+	if err != nil || version.WorkspaceID == nil || *version.WorkspaceID != workspaceID {
+		errorJSON(w, http.StatusNotFound, "campaign_template_version_not_found", "模板版本不存在或无权访问")
+		return
+	}
+	w.Header().Set("ETag", version.ETag)
+	if provided := strings.TrimSpace(r.Header.Get("If-Match")); provided != "" && provided != version.ETag {
+		errorJSONWithFields(w, http.StatusPreconditionFailed, "version_conflict", "模板版本已被其他人修改，请重新加载最新版本", map[string]any{"current_etag": version.ETag})
+		return
+	}
+	if version.Status != "draft" {
+		errorJSON(w, http.StatusConflict, "version_locked", "只有模板草稿可以校验发布")
+		return
+	}
+	var templateStatus, kind string
+	if err := app.db.QueryRow(r.Context(), `SELECT status,kind FROM campaign_templates WHERE id=$1 AND workspace_id=$2`, templateID, workspaceID).Scan(&templateStatus, &kind); err != nil {
+		errorJSON(w, http.StatusNotFound, "campaign_template_not_found", "模板不存在或无权访问")
+		return
+	}
+	if templateStatus == "archived" {
+		errorJSON(w, http.StatusConflict, "template_archived", "归档模板不能校验发布")
+		return
+	}
+	var definition templateDefinition
+	issues := make([]revisionValidationIssue, 0, 1)
+	if err := json.Unmarshal(version.Definition, &definition); err != nil {
+		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "invalid_template_definition", Path: "/definition", Message: "模板定义格式无效"})
+	} else {
+		issues, _, err = validateCampaignTemplatePublication(r.Context(), app.db, workspaceID, kind, normalizeDefinition(definition), version.ReviewRecipeVersionID)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+	writeTemplateValidationResult(w, version.ETag, issues)
+}
+
+func writeTemplateValidationResult(w http.ResponseWriter, etag string, issues []revisionValidationIssue) {
+	errorsCount := 0
+	warnings := 0
+	for _, issue := range issues {
+		if issue.Severity == "error" {
+			errorsCount++
+		} else if issue.Severity == "warning" {
+			warnings++
+		}
+	}
+	w.Header().Set("ETag", etag)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"valid": errorsCount == 0, "etag": etag,
+		"summary": map[string]int{"errors": errorsCount, "warnings": warnings}, "issues": issues,
+	})
+}
+
 func (app *application) publishCampaignTemplateVersion(w http.ResponseWriter, r *http.Request) {
 	templateID, versionID := r.PathValue("templateId"), r.PathValue("versionId")
 	_, workspaceID, err := app.campaignTemplateAccess(r.Context(), claims(r).Subject, templateID, true)
@@ -844,27 +954,16 @@ func (app *application) publishCampaignTemplateVersion(w http.ResponseWriter, r 
 		return
 	}
 	def = normalizeDefinition(def)
-	if normalized, e := reusableReviewWorkflow(def.ReviewWorkflow); e != nil {
-		writeReviewRecipeValidationError(w, e)
+	issues, def, err := validateCampaignTemplatePublication(r.Context(), tx, workspaceID, kind, def, recipeVersionID)
+	if err != nil {
+		serverError(w, err)
 		return
-	} else {
-		def.ReviewWorkflow = normalized
 	}
-	if err := validateTemplateDefinition(def, kind); err != nil {
-		if !writeFormValidationError(w, err) && !writeReviewRecipeValidationError(w, err) {
-			serverError(w, err)
+	for _, issue := range issues {
+		if issue.Severity == "error" {
+			errorJSONWithFields(w, http.StatusUnprocessableEntity, issue.Code, issue.Message, map[string]any{"issues": issues})
+			return
 		}
-		return
-	}
-	if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
-		errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_source_required", "请为模板选择当前工作空间允许的审核方案来源")
-		return
-	}
-	if err := validateWorkspaceReviewRecipeVersion(r.Context(), tx, workspaceID, *recipeVersionID); err != nil {
-		if !writeWorkspaceReviewCatalogError(w, err) {
-			serverError(w, err)
-		}
-		return
 	}
 	if _, err := tx.Exec(r.Context(), `UPDATE campaign_template_versions SET definition=$1,published_at=NOW() WHERE id=$2 AND template_id=$3 AND workspace_id=$4`, mustJSON(def), versionID, templateID, workspaceID); err != nil {
 		serverError(w, err)

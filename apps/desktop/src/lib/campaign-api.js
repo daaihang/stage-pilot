@@ -59,10 +59,25 @@ function mapCampaignTemplateVersion(value) {
     status: value.status,
     definition: value.definition || {},
     reviewRecipeVersionId: value.review_recipe_version_id,
+    reviewRecipeSource: mapReviewRecipeSource(value.review_recipe_source),
     createdBy: value.created_by,
     createdAt: value.created_at,
     publishedAt: value.published_at,
     etag: value.etag || "",
+  };
+}
+
+function mapReviewRecipeSource(value) {
+  if (!value) return null;
+  return {
+    versionId: value.version_id,
+    key: value.key,
+    name: value.name,
+    version: value.version,
+    definition: value.definition || {},
+    publishedAt: value.published_at,
+    isCurrent: Boolean(value.is_current),
+    enabled: value.enabled == null ? null : Boolean(value.enabled),
   };
 }
 
@@ -138,6 +153,7 @@ function mapRevision(value) {
     status: value.status,
     formVersionId: value.form_version_id,
     reviewRecipeVersionId: value.review_recipe_version_id,
+    reviewRecipeSource: mapReviewRecipeSource(value.review_recipe_source),
     availabilityPolicy: value.availability_policy || {},
     reviewWorkflow: value.review_workflow || {},
     materializationPlan: value.materialization_plan || {},
@@ -465,7 +481,7 @@ export async function publishCampaignRevision(campaignId, revisionId, options = 
   };
 }
 
-function mapReviewCatalogItem(item) {
+function mapReviewCatalogItem(item, enabledKeys = []) {
   return {
     id: item.id,
     key: item.key,
@@ -476,16 +492,18 @@ function mapReviewCatalogItem(item) {
     publishedVersion: item.published_version,
     publishedVersionId: item.published_version_id,
     publishedDefinition: item.definition || {},
+    enabled: enabledKeys.includes(item.key),
   };
 }
 
 export async function getWorkspaceReviewCatalog(workspaceId) {
   const result = await request(`/v1/workspaces/${encodeURIComponent(workspaceId)}/review-catalog`);
+  const enabledKeys = result.enabled_keys || [];
   return {
-    enabledKeys: result.enabled_keys || [],
+    enabledKeys,
     defaultKey: result.default_key || "",
-    items: (result.items || []).map(mapReviewCatalogItem),
-    availableItems: (result.available_items || []).map(mapReviewCatalogItem),
+    items: (result.items || []).map((item) => mapReviewCatalogItem(item, enabledKeys)),
+    availableItems: (result.available_items || []).map((item) => mapReviewCatalogItem(item, enabledKeys)),
   };
 }
 
@@ -553,6 +571,20 @@ export async function publishCampaignTemplateVersion(templateId, versionId, opti
   return {
     template: mapTemplate(result.template),
     version: mapCampaignTemplateVersion(result.version),
+  };
+}
+
+export async function validateCampaignTemplateVersion(templateId, versionId, options = {}) {
+  const result = await request(`/v1/campaign-templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(versionId)}/validate`, {
+    method: "POST",
+    body: "{}",
+    headers: { ...(options.etag || options.ifMatch ? { "If-Match": options.etag || options.ifMatch } : {}) },
+  });
+  return {
+    valid: Boolean(result.valid),
+    etag: result.etag || "",
+    summary: result.summary || { errors: 0, warnings: 0 },
+    issues: Array.isArray(result.issues) ? result.issues : [],
   };
 }
 

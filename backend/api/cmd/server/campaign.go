@@ -72,23 +72,24 @@ type formVersionItem struct {
 }
 
 type campaignRevisionItem struct {
-	ID                    string           `json:"id"`
-	CampaignID            string           `json:"campaign_id"`
-	WorkspaceID           string           `json:"workspace_id"`
-	RevisionNo            int              `json:"revision_no"`
-	Status                string           `json:"status"`
-	FormVersionID         string           `json:"form_version_id"`
-	ReviewRecipeVersionID *string          `json:"review_recipe_version_id,omitempty"`
-	AvailabilityPolicy    json.RawMessage  `json:"availability_policy"`
-	ReviewWorkflow        json.RawMessage  `json:"review_workflow"`
-	MaterializationPlan   json.RawMessage  `json:"materialization_plan"`
-	ChangeNote            string           `json:"change_note"`
-	CreatedBy             string           `json:"created_by"`
-	CreatedAt             time.Time        `json:"created_at"`
-	PublishedAt           *time.Time       `json:"published_at,omitempty"`
-	ArchivedAt            *time.Time       `json:"archived_at,omitempty"`
-	ETag                  string           `json:"etag,omitempty"`
-	FormVersion           *formVersionItem `json:"form_version,omitempty"`
+	ID                    string                  `json:"id"`
+	CampaignID            string                  `json:"campaign_id"`
+	WorkspaceID           string                  `json:"workspace_id"`
+	RevisionNo            int                     `json:"revision_no"`
+	Status                string                  `json:"status"`
+	FormVersionID         string                  `json:"form_version_id"`
+	ReviewRecipeVersionID *string                 `json:"review_recipe_version_id,omitempty"`
+	ReviewRecipeSource    *reviewRecipeSourceInfo `json:"review_recipe_source,omitempty"`
+	AvailabilityPolicy    json.RawMessage         `json:"availability_policy"`
+	ReviewWorkflow        json.RawMessage         `json:"review_workflow"`
+	MaterializationPlan   json.RawMessage         `json:"materialization_plan"`
+	ChangeNote            string                  `json:"change_note"`
+	CreatedBy             string                  `json:"created_by"`
+	CreatedAt             time.Time               `json:"created_at"`
+	PublishedAt           *time.Time              `json:"published_at,omitempty"`
+	ArchivedAt            *time.Time              `json:"archived_at,omitempty"`
+	ETag                  string                  `json:"etag,omitempty"`
+	FormVersion           *formVersionItem        `json:"form_version,omitempty"`
 }
 
 type campaignStats struct {
@@ -602,6 +603,16 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 	if len(r.Header.Get("Idempotency-Key")) > 255 {
 		errorJSON(w, http.StatusBadRequest, "invalid_idempotency_key", "幂等键不能超过 255 个字符")
 		return
+	}
+	if strings.TrimSpace(input.TemplateID) != "" {
+		var requestFields map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &requestFields)
+		_, hasRecipeOverride := requestFields["review_recipe_version_id"]
+		_, hasWorkflowOverride := requestFields["review_workflow"]
+		if hasRecipeOverride || hasWorkflowOverride {
+			errorJSON(w, http.StatusUnprocessableEntity, "template_review_snapshot_override", "从模板创建时审核来源与完整快照由所选已发布模板版本决定；创建后可在活动草稿中更换方案")
+			return
+		}
 	}
 	tx, err := app.db.Begin(r.Context())
 	if err != nil {
@@ -1282,6 +1293,10 @@ func (app *application) queryCampaignRevisions(ctx context.Context, queryer inte
 		}
 		item.FormVersion = &form
 		normalizeFormVersionItem(item.FormVersion)
+		item.ReviewRecipeSource, err = loadReviewRecipeSourceInfo(ctx, queryer, workspaceID, item.ReviewRecipeVersionID)
+		if err != nil {
+			return nil, err
+		}
 		item.ETag = revisionETag(item)
 		items = append(items, item)
 	}
@@ -1307,6 +1322,10 @@ func (app *application) loadRevision(ctx context.Context, queryer interface {
 	}
 	item.FormVersion = &form
 	normalizeFormVersionItem(item.FormVersion)
+	item.ReviewRecipeSource, err = loadReviewRecipeSourceInfo(ctx, queryer, workspaceID, item.ReviewRecipeVersionID)
+	if err != nil {
+		return campaignRevisionItem{}, err
+	}
 	item.ETag = revisionETag(item)
 	return item, nil
 }

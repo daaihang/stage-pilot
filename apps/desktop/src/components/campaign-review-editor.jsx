@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,7 +11,7 @@ import { notify } from "@/components/ui/sonner";
 import { getWorkspaceReviewCatalog } from "@/lib/campaign-api";
 import { listProductionMembers } from "@/lib/production-api";
 import { useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
-import { isExecutableSingleRoundWorkflow, reviewWorkflowCustomized } from "@/lib/review-workflow-options";
+import { isExecutableSingleRoundWorkflow, resolveReviewRecipeSource, reviewRecipeSourceFromCatalogItem, reviewRecipeSourceStatus, reviewWorkflowCustomized, selectableReviewRecipes, shouldConfirmReviewRecipeChange } from "@/lib/review-workflow-options";
 import { resolveSelectItems } from "@/lib/select-options";
 
 const roles = { producer: "Producer", editor: "Editor", stage_manager: "Stage Manager", contributor: "Contributor", viewer: "Viewer" };
@@ -51,11 +52,12 @@ export function CampaignReviewEditor() {
   const [recipes, setRecipes] = useState([]);
   const [recipesLoading, setRecipesLoading] = useState(true);
   const [members, setMembers] = useState([]);
+  const [pendingRecipeVersionId, setPendingRecipeVersionId] = useState("");
+  const [confirmRecipeChange, setConfirmRecipeChange] = useState(false);
   const source = draft.reviewWorkflow && typeof draft.reviewWorkflow === "object" ? draft.reviewWorkflow : makeSingleRound();
+  const hasSavedWorkflow = Boolean(draft.reviewWorkflow && typeof draft.reviewWorkflow === "object" && Object.keys(draft.reviewWorkflow).length);
   const supported = isExecutableSingleRoundWorkflow(source);
   const round = supported ? source.rounds[0] : null;
-  const selectedRecipe = recipes.find((recipe) => recipe.publishedVersionId === draft.reviewRecipeVersionId);
-  const customized = selectedRecipe ? reviewWorkflowCustomized(source, selectedRecipe.publishedDefinition) : false;
 
   useEffect(() => {
     let active = true;
@@ -66,7 +68,7 @@ export function CampaignReviewEditor() {
     }
     setRecipesLoading(true);
     getWorkspaceReviewCatalog(workspaceId).then((catalog) => {
-      if (active) setRecipes(catalog.items || []);
+      if (active) setRecipes(selectableReviewRecipes(catalog.items || []));
     })
       .catch((error) => notify.error("加载审核方案失败", { description: error?.message || String(error) }))
       .finally(() => { if (active) setRecipesLoading(false); });
@@ -102,20 +104,44 @@ export function CampaignReviewEditor() {
     }
     return next;
   };
-  const selectRecipe = (id) => {
-    const recipe = recipes.find((item) => item.id === id);
+  const selectedRecipe = recipes.find((recipe) => recipe.publishedVersionId === draft.reviewRecipeVersionId);
+  const sourceInfo = resolveReviewRecipeSource(draft.reviewRecipeVersionId, recipes, draft.reviewRecipeSource);
+  const customized = sourceInfo?.definition
+    ? reviewWorkflowCustomized(source, workflowForContext(sourceInfo.definition))
+    : Boolean(draft.reviewRecipeVersionId || hasSavedWorkflow);
+  const applyRecipe = (recipe) => {
     if (!recipe?.publishedVersionId || !recipe.publishedDefinition) return;
-    draft.setReview({ recipeVersionId: recipe.publishedVersionId, workflow: workflowForContext(recipe.publishedDefinition) });
+    draft.setReview({
+      recipeVersionId: recipe.publishedVersionId,
+      workflow: workflowForContext(recipe.publishedDefinition),
+      recipeSource: reviewRecipeSourceFromCatalogItem(recipe),
+    });
     notify.success("已应用单轮审核方案", { description: "请明确选择审核人并检查完成门槛。" });
+  };
+  const selectRecipe = (versionId) => {
+    const recipe = recipes.find((item) => item.publishedVersionId === versionId);
+    if (!recipe) return;
+    if (shouldConfirmReviewRecipeChange({ customized, currentVersionId: draft.reviewRecipeVersionId, nextVersionId: versionId })) {
+      setPendingRecipeVersionId(versionId);
+      setConfirmRecipeChange(true);
+      return;
+    }
+    applyRecipe(recipe);
+  };
+  const confirmRecipeSelection = () => {
+    const recipe = recipes.find((item) => item.publishedVersionId === pendingRecipeVersionId);
+    setConfirmRecipeChange(false);
+    setPendingRecipeVersionId("");
+    applyRecipe(recipe);
   };
 
   if (!supported) {
-    return <Card><CardHeader><CardTitle className="text-sm">审核配置需要切换到单轮模式</CardTitle><CardDescription>当前只能发布单轮并行人工审核。评分、多轮、补件及自动决定暂不可运行。</CardDescription></CardHeader><CardContent className="space-y-3"><Button type="button" disabled={draft.readOnly || !recipes.length} onClick={() => { draft.setReview({ recipeVersionId: recipes[0].publishedVersionId, workflow: workflowForContext(source) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
+    return <Card><CardHeader><CardTitle className="text-sm">审核配置需要切换到单轮模式</CardTitle><CardDescription>当前只能发布单轮并行人工审核。评分、多轮、补件及自动决定暂不可运行。</CardDescription></CardHeader><CardContent className="space-y-3"><Button type="button" disabled={draft.readOnly || !recipes.length} onClick={() => { draft.setReview({ recipeVersionId: recipes[0].publishedVersionId, workflow: workflowForContext(source), recipeSource: reviewRecipeSourceFromCatalogItem(recipes[0]) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
   }
 
   const completionValue = round.completion.mode === "all" ? "all" : "at_least_n";
-  const recipeOptions = [...recipes.map((recipe) => ({ value: recipe.id, label: `${recipe.name} · v${recipe.publishedVersion}` })), { value: "custom", label: "未关联可用来源" }];
-  const recipeValue = selectedRecipe?.id || (draft.reviewRecipeVersionId ? String(draft.reviewRecipeVersionId) : "custom");
+  const recipeOptions = recipes.map((recipe) => ({ value: recipe.publishedVersionId, label: `${recipe.name} · v${recipe.publishedVersion}` }));
+  const recipeValue = selectedRecipe?.publishedVersionId || "";
   const recipeSelect = resolveSelectItems(recipeOptions, { value: recipeValue, loading: recipesLoading });
   const completionOptions = [{ value: "all", label: "所有已分配审核人完成" }, { value: "at_least_n", label: "至少 N 人完成" }];
   const reviewerSourceOptions = [{ value: "explicit_members", label: "指定有效成员" }, { value: "production_roles", label: "按 Production 角色" }];
@@ -126,11 +152,14 @@ export function CampaignReviewEditor() {
     <CardContent className="space-y-4">
       <Field>
         <FieldLabel htmlFor="review-recipe">审核方案来源</FieldLabel>
-        <Select items={recipeSelect.items} value={recipeValue} disabled={draft.readOnly || recipesLoading} onValueChange={(id) => { if (id !== "custom" && !recipeSelect.missingOption) selectRecipe(id); }}>
-          <SelectTrigger id="review-recipe"><SelectValue placeholder="选择已发布方案" /></SelectTrigger>
-          <SelectContent>{recipeSelect.missingOption ? <SelectItem value={recipeSelect.missingOption.value} disabled>{recipeSelect.missingOption.label}</SelectItem> : null}{recipes.map((recipe) => <SelectItem key={recipe.id} value={recipe.id}>{recipe.name} · v{recipe.publishedVersion}</SelectItem>)}<SelectItem value="custom" disabled>未关联可用来源</SelectItem></SelectContent>
+        <Select items={recipeSelect.items} value={recipeValue} disabled={draft.readOnly || recipesLoading || recipes.length === 0} onValueChange={selectRecipe}>
+          <SelectTrigger id="review-recipe"><SelectValue placeholder={draft.reviewRecipeVersionId ? "当前来源不可选，请重新选择" : "选择工作空间允许的已发布方案"} /></SelectTrigger>
+          <SelectContent>{recipes.map((recipe) => <SelectItem key={recipe.publishedVersionId} value={recipe.publishedVersionId}>{recipe.name} · v{recipe.publishedVersion}</SelectItem>)}</SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">{selectedRecipe ? `来源：${selectedRecipe.name} v${selectedRecipe.publishedVersion}；${customized ? (isTemplate ? "模板内已定制" : "活动内已定制") : "尚未定制"}。` : draft.reviewRecipeVersionId ? "当前来源不是目录中的最新版本。所属方案 key 仍启用时，已保存草稿可继续使用该不可变版本；若方案已停用，请改选允许方式后再发布。" : "请先选择工作空间允许的可运行方案。"}来源版本只记录出处，当前活动或模板版本独立保存完整审核快照。</p>
+        <div className="space-y-1 text-xs text-muted-foreground">
+          {sourceInfo ? <p>来源：{sourceInfo.name} · v{sourceInfo.version} · {reviewRecipeSourceStatus(sourceInfo)}。{customized ? (isTemplate ? "模板快照已定制。" : "活动快照已定制。") : "快照与来源基线一致。"}</p> : <p>{draft.reviewRecipeVersionId ? "来源版本信息不可用；请从当前允许目录重新选择方案。" : "请先选择工作空间允许的可运行方案。"}</p>}
+          <p>来源只记录出处；本{isTemplate ? "模板" : "活动 Revision"}的完整审核快照独立保存并用于后续提交。</p>
+        </div>
       </Field>
       <div className="flex flex-wrap items-center gap-2"><Badge>MANUAL_DECISION</Badge><Badge variant="outline">并行单轮</Badge><Badge variant="outline">文字反馈</Badge><Badge variant="outline">人工最终决定</Badge></div>
       <div className="grid gap-4 rounded-md border p-3">
@@ -148,5 +177,17 @@ export function CampaignReviewEditor() {
         <p className="text-xs text-muted-foreground">发布时会校验审核人和门槛。提交时成员若已失效，系统保留原门槛并将运行标记为“待补足审核人”，不会自动降低要求。</p>
       </div>
     </CardContent>
+    <AlertDialog open={confirmRecipeChange} onOpenChange={setConfirmRecipeChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>切换审核方案并重置参数？</AlertDialogTitle>
+          <AlertDialogDescription>当前审核参数已偏离来源基线。切换后将用新方案的已发布版本重新初始化此草稿的审核参数；取消则保留现有来源和配置。</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={() => setPendingRecipeVersionId("")}>保留当前配置</AlertDialogCancel>
+          <AlertDialogAction onClick={confirmRecipeSelection}>切换并重置参数</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   </Card>;
 }

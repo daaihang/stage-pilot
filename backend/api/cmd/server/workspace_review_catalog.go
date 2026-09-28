@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const defaultWorkspaceReviewRecipeKey = "single_manual"
@@ -33,9 +34,48 @@ type workspaceReviewCatalogResponse struct {
 	AvailableItems []workspaceReviewCatalogItem `json:"available_items"`
 }
 
+// reviewRecipeSourceInfo is provenance for a form-owned workflow snapshot.
+// Definition is the immutable source baseline; consumers must execute the
+// separately stored Campaign/Template snapshot instead.
+type reviewRecipeSourceInfo struct {
+	VersionID   string          `json:"version_id"`
+	Key         string          `json:"key"`
+	Name        string          `json:"name"`
+	Version     int             `json:"version"`
+	Definition  json.RawMessage `json:"definition"`
+	PublishedAt *time.Time      `json:"published_at,omitempty"`
+	IsCurrent   bool            `json:"is_current"`
+	Enabled     *bool           `json:"enabled,omitempty"`
+}
+
 type workspaceReviewCatalogQueryer interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func loadReviewRecipeSourceInfo(ctx context.Context, queryer interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, workspaceID string, versionID *string) (*reviewRecipeSourceInfo, error) {
+	if versionID == nil || strings.TrimSpace(*versionID) == "" {
+		return nil, nil
+	}
+	var source reviewRecipeSourceInfo
+	var enabled pgtype.Bool
+	err := queryer.QueryRow(ctx, `SELECT rv.id,rt.key,rt.name,rv.version,rv.definition,rv.published_at,
+		(rv.published_at IS NOT NULL AND rt.status='published' AND rt.archived_at IS NULL AND rt.published_version=rv.version),
+		CASE WHEN ws.workspace_id IS NULL THEN NULL ELSE rt.key=ANY(ws.enabled_review_recipe_keys) END
+		FROM review_recipe_versions rv JOIN review_recipe_templates rt ON rt.id=rv.template_id
+		LEFT JOIN workspace_settings ws ON ws.workspace_id=$2
+		WHERE rv.id=$1 AND (rt.scope='system' OR rt.workspace_id=$2)`, *versionID, workspaceID).
+		Scan(&source.VersionID, &source.Key, &source.Name, &source.Version, &source.Definition, &source.PublishedAt, &source.IsCurrent, &enabled)
+	if err != nil {
+		return nil, err
+	}
+	if enabled.Valid {
+		value := enabled.Bool
+		source.Enabled = &value
+	}
+	return &source, nil
 }
 
 func (app *application) getWorkspaceReviewCatalog(w http.ResponseWriter, r *http.Request) {

@@ -94,7 +94,15 @@ type reviewTaskDetailResponse struct {
 }
 
 func validateSingleRoundReviewWorkflow(raw json.RawMessage) error {
-	definition, _, err := parseReviewRecipeDefinition(raw, false)
+	return validateSingleRoundReviewWorkflowWithUnboundReviewers(raw, false)
+}
+
+func validateReusableSingleRoundReviewWorkflow(raw json.RawMessage) error {
+	return validateSingleRoundReviewWorkflowWithUnboundReviewers(raw, true)
+}
+
+func validateSingleRoundReviewWorkflowWithUnboundReviewers(raw json.RawMessage, allowUnboundReviewers bool) error {
+	definition, _, err := parseReviewRecipeDefinition(raw, allowUnboundReviewers)
 	if err != nil {
 		return err
 	}

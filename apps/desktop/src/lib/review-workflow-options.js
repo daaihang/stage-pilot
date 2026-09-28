@@ -15,6 +15,45 @@ export function publishedExecutableRecipes(recipes, versionsById) {
     && recipe.publishedVersionId && isExecutableSingleRoundWorkflow(versionsById[recipe.publishedVersionId]?.definition));
 }
 
+export function selectableReviewRecipes(items = []) {
+  return items.filter((recipe) => recipe?.scope === "system"
+    && recipe.status === "published"
+    && recipe.enabled !== false
+    && recipe.publishedVersionId
+    && isExecutableSingleRoundWorkflow(recipe.publishedDefinition));
+}
+
+export function reviewRecipeSourceFromCatalogItem(recipe) {
+  if (!recipe?.publishedVersionId) return null;
+  return {
+    versionId: recipe.publishedVersionId,
+    key: recipe.key,
+    name: recipe.name,
+    version: recipe.publishedVersion,
+    definition: recipe.publishedDefinition || {},
+    publishedAt: recipe.publishedAt || null,
+    isCurrent: true,
+    enabled: recipe.enabled !== false,
+  };
+}
+
+export function resolveReviewRecipeSource(versionId, items = [], savedSource = null) {
+  if (!versionId) return null;
+  const current = items.find((recipe) => recipe.publishedVersionId === versionId);
+  if (current) return reviewRecipeSourceFromCatalogItem(current);
+  return savedSource?.versionId === versionId ? savedSource : null;
+}
+
+export function shouldConfirmReviewRecipeChange({ customized, currentVersionId, nextVersionId }) {
+  return Boolean(customized && nextVersionId && currentVersionId !== nextVersionId);
+}
+
+export function reviewRecipeSourceStatus(source) {
+  if (!source) return "来源信息不可用";
+  if (source.enabled === false) return "来源方案已停用，需改选后才能发布";
+  return source.isCurrent ? "当前发布版本" : "历史发布版本（保留原快照）";
+}
+
 export function updateReviewCatalogSelection(enabledKeys, defaultKey, key, checked) {
   const next = new Set(enabledKeys || []);
   if (checked) next.add(key);

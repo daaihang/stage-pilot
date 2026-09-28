@@ -37,6 +37,17 @@ func TestSingleRoundReviewWorkflowContract(t *testing.T) {
 	}
 }
 
+func TestReusableTemplateWorkflowRequiresSupportedModeButMayLeaveReviewersUnbound(t *testing.T) {
+	unbound := json.RawMessage(`{"schema_version":1,"mode":"MANUAL_DECISION","rounds":[{"key":"review","name":"单轮审核","execution":"parallel","reviewer_policy":{"source":"production_roles","member_ids":[],"role_keys":[]},"completion":{"mode":"all"},"feedback":{"kind":"binary"}}],"request_changes":{"enabled":false,"target":"same_round"},"final_decision":"manual"}`)
+	if err := validateReusableSingleRoundReviewWorkflow(unbound); err != nil {
+		t.Fatalf("unbound reusable template workflow should be valid: %v", err)
+	}
+	unsupported := json.RawMessage(`{"schema_version":1,"mode":"AUTO_ACCEPT","rounds":[],"request_changes":{"enabled":false},"final_decision":"auto_accept"}`)
+	if err := validateReusableSingleRoundReviewWorkflow(unsupported); err == nil {
+		t.Fatal("unsupported workflow mode must not publish as a reusable template")
+	}
+}
+
 func TestReviewCompletionThreshold(t *testing.T) {
 	anyRound := reviewRecipeRound{Completion: reviewRecipeCompletion{Mode: "any"}}
 	if mode, required := reviewCompletion(anyRound, 7); mode != "at_least_n" || required != 1 {

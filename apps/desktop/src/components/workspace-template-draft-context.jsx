@@ -4,6 +4,7 @@ import {
   listCampaignTemplateVersions,
   publishCampaignTemplateVersion,
   updateCampaignTemplateVersion,
+  validateCampaignTemplateVersion,
 } from "@/lib/campaign-api";
 import { emptyFormVersion } from "@/lib/campaign-form-model";
 
@@ -19,6 +20,7 @@ function revisionForVersion(template, version) {
     reviewWorkflow: definition.review_workflow || {},
     materializationPlan: definition.materialization_plan || {},
     reviewRecipeVersionId: version?.reviewRecipeVersionId || "",
+    reviewRecipeSource: version?.reviewRecipeSource || null,
     campaignId: template?.id,
   };
 }
@@ -55,7 +57,7 @@ export function TemplateDraftProvider({ template, version, workspace, onSaved, o
         }, { etag: options.etag });
         return revisionForVersion(template, result.version || result);
       },
-      validate: async (_snapshot, options) => ({ valid: true, issues: [], etag: options.etag }),
+      validate: async (_snapshot, options) => validateCampaignTemplateVersion(template.id, version.id, { etag: options.etag }),
       publish: async (_snapshot, options) => {
         const result = await publishCampaignTemplateVersion(template.id, version.id, { etag: options.etag });
         return { revision: revisionForVersion(template, result.version), template: result.template, version: result.version };
