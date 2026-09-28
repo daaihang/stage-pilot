@@ -34,6 +34,7 @@ test("workspace child pages share one deterministic parent", () => {
     "/w/ws_1/members",
     "/w/ws_1/roles",
     "/w/ws_1/templates",
+    "/w/ws_1/forms-review",
     "/w/ws_1/settings",
     "/w/ws_1/library/file-types",
     "/w/ws_1/library/program-sheet-segment-types",
@@ -48,6 +49,14 @@ test("workspace child pages share one deterministic parent", () => {
     assert.ok(route, path);
     assert.equal(resolvePageBack({ route, workspace })?.to, workspacePath("ws_1", "home"), path);
   }
+});
+
+test("workspace form and review settings have a dedicated route and metadata", () => {
+  const path = workspacePath("ws_1", "forms-review");
+  assert.equal(path, "/w/ws_1/forms-review");
+  const route = matchStagePilotRoute(path);
+  assert.equal(route?.page, "forms-review");
+  assert.equal(route?.meta?.title, "表单与审核");
 });
 
 test("production overview exits to the activity list", () => {

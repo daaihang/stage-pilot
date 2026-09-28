@@ -20,6 +20,7 @@ import { UserPreferencesProvider, useUserPreferences } from "@/components/user-p
 import { WorkspacesPage } from "@/components/workspaces-page";
 import { UnifiedWorkContextPage } from "@/components/unified-work-context-page";
 import { WorkspaceSettingsPage } from "@/components/workspace-settings-page";
+import { WorkspaceFormsReviewSettingsPage } from "@/components/workspace-forms-review-settings-page";
 import { ProductionOverviewPage } from "@/components/production-overview-page";
 import { ProductionSettingsPage } from "@/components/production-settings-page";
 import { ProductionMembersPage, ProductionRolesPage } from "@/components/production-access-pages";
@@ -639,6 +640,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtool
   else if (route.mode === "workspace" && route.page === "programs") content = <ProgramLibraryPage workspace={workspace} selectedResourceId={route.resourceId} panel={route.panel} />;
   else if (route.mode === "workspace" && ["people", "organizations", "venues", "equipment"].includes(route.page)) content = <WorkspaceResourcePage workspace={workspace} resourceType={route.page} selectedResourceId={route.resourceId} panel={route.panel} />;
   else if (route.mode === "workspace" && route.page === "settings") content = <WorkspaceSettingsPage workspaceId={workspace.id} key={workspace.id} />;
+  else if (route.mode === "workspace" && route.page === "forms-review") content = <WorkspaceFormsReviewSettingsPage workspace={workspace} key={workspace.id} />;
   else if (route.mode === "workspace" && route.page === "files") content = <FilesPage workspace={workspace} backTo={workspacePath(workspace.id, "home")} backLabel={workspace.name} />;
   else if (route.mode === "production" && route.page === "overview") content = <ProductionOverviewPage workspace={workspace} production={production} onUpdateProduction={updateProductionData} onLeaveCreation={leaveCreationSession} creationBusy={creationRequestPending} key={route.productionId} />;
   else if (route.mode === "production" && production?.isCreationSession) content = <NavigationFailure title="创建会话仅支持概览" description="提交第一个有效字段后，活动的其他模块会自动开放。" homePath={productionPath(workspace.id, production.id, "overview")} />;
