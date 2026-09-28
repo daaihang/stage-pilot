@@ -694,32 +694,27 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 
 	reviewWorkflow := templateDefinitionValue.ReviewWorkflow
 	reviewRecipeVersionID := strings.TrimSpace(input.ReviewRecipeVersionID)
+	explicitRecipe := reviewRecipeVersionID != ""
 	if reviewRecipeVersionID == "" && templateRecipeVersionID != nil {
 		reviewRecipeVersionID = strings.TrimSpace(*templateRecipeVersionID)
 	}
-	if len(input.ReviewWorkflow) > 0 && string(input.ReviewWorkflow) != "null" {
+	inlineReview := len(input.ReviewWorkflow) > 0 && string(input.ReviewWorkflow) != "null"
+	if inlineReview {
 		reviewWorkflow = input.ReviewWorkflow
 	}
-	var recipeID *string
-	var recipeDefinition json.RawMessage
-	if reviewRecipeVersionID != "" || len(input.ReviewWorkflow) == 0 || string(input.ReviewWorkflow) == "null" {
-		recipeID, recipeDefinition, err = resolveReviewRecipeSnapshot(r.Context(), tx, reviewRecipeVersionID, access.WorkspaceID)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				errorJSON(w, http.StatusNotFound, "review_recipe_not_found", "审核方案不存在或无权使用")
-			} else {
-				serverError(w, err)
-			}
-			return
+	recipeID, recipeDefinition, err := resolveReviewRecipeSnapshot(r.Context(), tx, reviewRecipeVersionID, access.WorkspaceID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			errorJSON(w, http.StatusNotFound, "review_recipe_not_found", "审核方案不存在或无权使用")
+		} else {
+			serverError(w, err)
 		}
+		return
 	}
-	if len(input.ReviewWorkflow) == 0 || string(input.ReviewWorkflow) == "null" {
-		if recipeID != nil {
-			// A linked/default recipe is the canonical source unless the caller
-			// explicitly supplied a campaign-level override. This also upgrades
-			// legacy templates that predate ReviewRecipe V1 to auto-accept drafts.
-			reviewWorkflow = recipeDefinition
-		}
+	if !inlineReview && (explicitRecipe || len(reviewWorkflow) == 0 || string(reviewWorkflow) == "{}") {
+		// A template's complete workflow is its own snapshot. The catalog
+		// version records provenance, but must not erase template customizations.
+		reviewWorkflow = recipeDefinition
 	}
 	parsedReviewDefinition, normalizedReviewWorkflow, err := parseReviewRecipeDefinition(reviewWorkflow, true)
 	if err != nil {
@@ -1012,7 +1007,7 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 	inlineReviewProvided := len(input.ReviewWorkflow) > 0 && string(input.ReviewWorkflow) != "null"
 	var recipeID *string
 	var recipeDefinition json.RawMessage
-	if reviewRecipeVersionID != "" || !inlineReviewProvided && (len(review) == 0 || string(review) == "{}") {
+	if reviewRecipeVersionID != "" || sourceRecipeVersionID == nil || !inlineReviewProvided && (len(review) == 0 || string(review) == "{}") {
 		recipeID, recipeDefinition, err = resolveReviewRecipeSnapshot(r.Context(), tx, reviewRecipeVersionID, access.WorkspaceID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -1131,13 +1126,8 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 	if !requireRevisionMatchWithSummary(w, r, currentRevision.ETag, &currentRevision) {
 		return
 	}
-	// Older revisions may contain a legacy stage-based JSON snapshot with no
-	// recipe source. They remain readable but cannot be published. A new draft
-	// may instead provide a complete V1 review_workflow inline without a source
-	// recipe, so only an empty/legacy snapshot is rejected here.
-	if (recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "") &&
-		(len(review) == 0 || string(review) == "null" || string(review) == "{}") {
-		errorJSON(w, http.StatusUnprocessableEntity, "legacy_review_recipe_unavailable", "该版本没有审核方案来源，请创建新草稿并选择 V1 审核方案")
+	if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
+		errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_source_required", "请为表单草稿选择已发布的单轮审核方案来源")
 		return
 	}
 	if err := validateFormDefinitionValue(form); err != nil {

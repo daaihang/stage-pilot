@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30-45 时运行；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 schema 30 或更新版本时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -38,8 +38,8 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
 	versionNumber, parseErr := strconv.Atoi(version)
-	if parseErr != nil || versionNumber < 30 || versionNumber > 45 {
-		t.Skipf("campaign migration schema is %s, want 30-45", version)
+	if parseErr != nil || versionNumber < 30 {
+		t.Skipf("campaign migration schema is %s, want >=30", version)
 	}
 	tables := []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",

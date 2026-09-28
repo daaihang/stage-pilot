@@ -97,34 +97,52 @@ func TestReviewRecipeLibraryAndCampaignPublish(t *testing.T) {
 	if err := json.Unmarshal(global.Body.Bytes(), &globalBody); err != nil {
 		t.Fatal(err)
 	}
-	if len(globalBody.Items) != 5 || globalBody.Total != 5 {
-		t.Fatalf("system recipe count = %d/%d, want 5/5", len(globalBody.Items), globalBody.Total)
+	if len(globalBody.Items) != 1 || globalBody.Total != 1 || globalBody.Items[0].PublishedVersionID == nil || *globalBody.Items[0].PublishedVersionID != defaultReviewRecipeVersionID {
+		t.Fatalf("selectable system recipes = %#v, want only single-round v2", globalBody.Items)
 	}
-	versions := authedRequest(t, app, token, http.MethodGet, "/v1/review-recipes/review_recipe_auto_accept/versions", nil)
-	if versions.Code != http.StatusOK || !strings.Contains(versions.Body.String(), "review_recipe_auto_accept_v1") {
+	versions := authedRequest(t, app, token, http.MethodGet, "/v1/review-recipes/review_recipe_single_manual/versions", nil)
+	if versions.Code != http.StatusOK || !strings.Contains(versions.Body.String(), defaultReviewRecipeVersionID) {
 		t.Fatalf("list recipe versions = %d: %s", versions.Code, versions.Body.String())
 	}
 
 	created := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+productionID+"/campaigns", map[string]any{
-		"name": "自动确认报名", "kind": campaignKindCollection,
+		"name": "单轮审核报名", "kind": campaignKindCollection,
 	})
 	if created.Code != http.StatusCreated {
-		t.Fatalf("create auto campaign = %d: %s", created.Code, created.Body.String())
+		t.Fatalf("create blank campaign = %d: %s", created.Code, created.Body.String())
 	}
 	var createdBody map[string]any
 	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
 		t.Fatal(err)
 	}
 	draft := createdBody["draft_revision"].(map[string]any)
-	if draft["review_recipe_version_id"] != "review_recipe_auto_accept_v1" {
+	if draft["review_recipe_version_id"] != defaultReviewRecipeVersionID {
 		t.Fatalf("draft recipe source = %#v", draft["review_recipe_version_id"])
 	}
-	published := authedRequestWithHeaders(t, app, token, http.MethodPost, "/v1/campaigns/"+createdBody["campaign"].(map[string]any)["id"].(string)+"/revisions/"+draft["id"].(string)+"/publish", map[string]any{}, map[string]string{"If-Match": draft["etag"].(string)})
-	if published.Code != http.StatusOK || !strings.Contains(published.Body.String(), `"status":"published"`) {
-		t.Fatalf("publish auto campaign = %d: %s", published.Code, published.Body.String())
+	campaignID := createdBody["campaign"].(map[string]any)["id"].(string)
+	revisionPath := "/v1/campaigns/" + campaignID + "/revisions/" + draft["id"].(string)
+	unassigned := authedRequestWithHeaders(t, app, token, http.MethodPost, revisionPath+"/publish", map[string]any{}, map[string]string{"If-Match": draft["etag"].(string)})
+	if unassigned.Code != http.StatusUnprocessableEntity || !strings.Contains(unassigned.Body.String(), "reviewer_required") {
+		t.Fatalf("unassigned publish = %d: %s", unassigned.Code, unassigned.Body.String())
 	}
-	inheritedRevision := authedRequest(t, app, token, http.MethodPost, "/v1/campaigns/"+createdBody["campaign"].(map[string]any)["id"].(string)+"/revisions", map[string]any{})
-	if inheritedRevision.Code != http.StatusCreated || !strings.Contains(inheritedRevision.Body.String(), "review_recipe_auto_accept_v1") {
+	assignedWorkflow := defaultSingleRoundReviewRecipe()
+	var workflow map[string]any
+	if err := json.Unmarshal(assignedWorkflow, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	workflow["rounds"].([]any)[0].(map[string]any)["reviewer_policy"].(map[string]any)["member_ids"] = []string{uid}
+	updated := authedRequestWithHeaders(t, app, token, http.MethodPatch, revisionPath, map[string]any{"review_workflow": workflow}, map[string]string{"If-Match": draft["etag"].(string)})
+	if updated.Code != http.StatusOK {
+		t.Fatalf("assign reviewer = %d: %s", updated.Code, updated.Body.String())
+	}
+	var updatedBody map[string]any
+	_ = json.Unmarshal(updated.Body.Bytes(), &updatedBody)
+	published := authedRequestWithHeaders(t, app, token, http.MethodPost, revisionPath+"/publish", map[string]any{}, map[string]string{"If-Match": updatedBody["etag"].(string)})
+	if published.Code != http.StatusOK {
+		t.Fatalf("publish assigned campaign = %d: %s", published.Code, published.Body.String())
+	}
+	inheritedRevision := authedRequest(t, app, token, http.MethodPost, "/v1/campaigns/"+campaignID+"/revisions", map[string]any{})
+	if inheritedRevision.Code != http.StatusCreated || !strings.Contains(inheritedRevision.Body.String(), defaultReviewRecipeVersionID) {
 		t.Fatalf("inherit published recipe = %d: %s", inheritedRevision.Code, inheritedRevision.Body.String())
 	}
 
@@ -137,7 +155,7 @@ func TestReviewRecipeLibraryAndCampaignPublish(t *testing.T) {
 			"completion":      map[string]any{"mode": "all"},
 			"feedback":        map[string]any{"kind": "binary"},
 		}},
-		"request_changes": map[string]any{"enabled": true, "target": "same_round"},
+		"request_changes": map[string]any{"enabled": false, "target": "same_round"},
 		"final_decision":  "manual",
 	}
 	inlineCampaign := authedRequest(t, app, token, http.MethodPost, "/v1/productions/"+productionID+"/campaigns", map[string]any{

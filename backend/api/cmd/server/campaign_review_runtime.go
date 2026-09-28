@@ -98,7 +98,7 @@ func validateSingleRoundReviewWorkflow(raw json.RawMessage) error {
 	if err != nil {
 		return err
 	}
-	if definition.Mode != "MANUAL_DECISION" {
+	if !executableIntakeProcessingMode(definition.Mode) {
 		return reviewRecipeError("single_round_manual_required", "当前仅支持单轮人工审核，请改用 MANUAL_DECISION")
 	}
 	if len(definition.Rounds) != 1 {
@@ -262,7 +262,7 @@ func refreshReviewRunStatus(ctx context.Context, tx pgx.Tx, runID string) error 
 			) current_member WHERE current_member.status='active'
 				AND (current_member.starts_at IS NULL OR current_member.starts_at<=NOW())
 				AND (current_member.expires_at IS NULL OR current_member.expires_at>NOW())
-			)),
+			))),
 		COUNT(DISTINCT t.id) FILTER (WHERE t.status='submitted')
 		FROM entry_review_tasks t JOIN entries e ON e.workspace_id=t.workspace_id AND e.id=t.entry_id
 		LEFT JOIN entry_review_task_assignments a ON a.workspace_id=t.workspace_id AND a.task_id=t.id AND a.ended_at IS NULL

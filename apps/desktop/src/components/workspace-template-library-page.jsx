@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Copy, FileText, Pencil, Plus, RefreshCw, ShieldCheck } from "@/components/ui/icons";
+import { Archive, Copy, Pencil, Plus, RefreshCw, ShieldCheck } from "@/components/ui/icons";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,7 +8,6 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notify } from "@/components/ui/sonner";
 import { WorkspacePageHeader } from "@/components/workspace-page-shell";
 import { ResourcePage } from "@/components/resource-page";
@@ -36,13 +35,6 @@ import {
 } from "@/lib/campaign-api";
 
 const Edit3 = Pencil;
-
-const EMPTY_FORM_DEFINITION = {
-  form: { schema_version: 1, blocks: [], fields: [], logic_rules: [], end_screen: {} },
-  availability_policy: {},
-  review_workflow: { schema_version: 1, mode: "AUTO_ACCEPT", rounds: [], request_changes: { enabled: false, target: "same_round" }, final_decision: "auto_accept" },
-  materialization_plan: {},
-};
 
 const kindLabels = { REGISTRATION: "活动报名", SUBMISSION: "节目征集", RECRUITMENT: "人员招募", COLLECTION: "通用收集" };
 
@@ -113,8 +105,9 @@ function CreateDialog({ open, mode, workspaceId, source, onClose, onCreated }) {
   return <Dialog open={open} onOpenChange={(next) => !busy && !next && onClose()}><DialogContent><DialogHeader><DialogTitle>{source ? `复制${mode === "recipe" ? "审核方案" : "表单模板"}` : `新建${mode === "recipe" ? "审核方案" : "表单模板"}`}</DialogTitle><DialogDescription>{source ? "只复制已发布版本的结构和配置，不复制活动提交或审核任务。" : "创建后会生成一个可编辑的 Draft Version。"}</DialogDescription></DialogHeader><div className="space-y-4"><Field><FieldLabel htmlFor="template-name">名称</FieldLabel><Input id="template-name" value={name} onChange={(event) => setName(event.target.value)} autoFocus /></Field><Field><FieldLabel htmlFor="template-description">描述</FieldLabel><Textarea id="template-description" value={description} onChange={(event) => setDescription(event.target.value)} /></Field>{mode !== "recipe" && <Field><FieldLabel htmlFor="template-kind">类型</FieldLabel><Select value={kind} onValueChange={setKind}><SelectTrigger id="template-kind" className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(kindLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></Field>}</div><DialogFooter><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button><Button onClick={submit} disabled={busy}>创建草稿</Button></DialogFooter></DialogContent></Dialog>;
 }
 
+// The legacy workspace recipe UI is intentionally unreachable in this batch.
+// Its API/model cleanup belongs to the workspace-catalog follow-up.
 export function WorkspaceTemplateLibraryPage({ route, workspace }) {
-  const [tab, setTab] = useState("campaign");
   const [scope, setScope] = useState("all");
   const [status, setStatus] = useState("all");
   const [search, setSearch] = useState("");
@@ -131,13 +124,11 @@ export function WorkspaceTemplateLibraryPage({ route, workspace }) {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [systemCampaignResult, campaignResult, systemRecipeResult, recipeResult] = await Promise.all([
+      const [systemCampaignResult, campaignResult] = await Promise.all([
         listCampaignTemplates({ status: status === "all" ? undefined : status }),
         listWorkspaceCampaignTemplates(workspace.id, { status: status === "all" ? undefined : status }),
-        listReviewRecipes({ status: status === "all" ? undefined : status }),
-        listWorkspaceReviewRecipes(workspace.id, { status: status === "all" ? undefined : status }),
       ]);
-      setCampaignTemplates([...(systemCampaignResult.items || []), ...(campaignResult.items || [])]); setRecipes([...(systemRecipeResult.items || []), ...(recipeResult.items || [])]);
+      setCampaignTemplates([...(systemCampaignResult.items || []), ...(campaignResult.items || [])]);
     } catch (error) {
       notify.error("模板库加载失败", { description: error?.message || String(error) });
     } finally { if (!silent) setLoading(false); }
@@ -228,9 +219,9 @@ export function WorkspaceTemplateLibraryPage({ route, workspace }) {
 
   const renderCampaignCard = (item) => <Card key={item.id}><CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="truncate text-base">{item.name}</CardTitle><CardDescription className="mt-1 line-clamp-2">{item.description || "暂无描述"}</CardDescription></div>{statusBadge(item.status)}</div></CardHeader><CardContent className="space-y-3"><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><Badge variant="outline">{kindLabels[item.kind] || item.kind}</Badge><span>最新 v{item.latestVersion || "—"}</span><span>发布 v{item.publishedVersion || "—"}</span></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={(event) => void openDetail("campaign", item, event.currentTarget)}>查看详情</Button>{item.scope === "system" ? <Button size="sm" variant="outline" onClick={() => copyTemplate(item)}><Copy />复制到工作空间</Button> : item.status === "archived" ? <span className="text-xs text-muted-foreground">已归档，只读</span> : <><Button size="sm" variant="outline" onClick={() => item.draftVersionId ? void editTemplate(item) : void createDraft(item, "campaign")}><Edit3 />{item.draftVersionId ? "编辑草稿" : "新建版本"}</Button>{item.draftVersionId ? <Button size="sm" onClick={() => void publish(item, "campaign")}><ShieldCheck />发布</Button> : null}<Button size="sm" variant="ghost" onClick={() => setHistoryDialog({ mode: "campaign", item })}>版本历史</Button><Button size="sm" variant="ghost" onClick={() => void archive(item, "campaign")}><Archive />归档</Button></>}</div></CardContent></Card>;
   const renderRecipeCard = (item) => <Card key={item.id}><CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="truncate text-base">{item.name}</CardTitle><CardDescription className="mt-1 line-clamp-2">{item.description || "暂无描述"}</CardDescription></div>{statusBadge(item.status)}</div></CardHeader><CardContent className="space-y-3"><div className="flex flex-wrap gap-2 text-xs text-muted-foreground"><Badge variant="outline">{item.scope === "system" ? "系统方案" : "工作空间方案"}</Badge><span>最新 v{item.latestVersion || "—"}</span><span>发布 v{item.publishedVersion || "—"}</span></div><div className="flex flex-wrap gap-2"><Button size="sm" variant="ghost" onClick={(event) => void openDetail("recipe", item, event.currentTarget)}>查看详情</Button>{item.scope === "system" ? <Button size="sm" variant="outline" onClick={() => void copyRecipe(item)}><Copy />复制到工作空间</Button> : item.status === "archived" ? <span className="text-xs text-muted-foreground">已归档，只读</span> : <><Button size="sm" variant="outline" onClick={() => item.draftVersionId ? void editRecipe(item) : void createDraft(item, "recipe")}><Edit3 />{item.draftVersionId ? "编辑草稿" : "新建版本"}</Button>{item.draftVersionId ? <Button size="sm" onClick={() => void publish(item, "recipe")}><ShieldCheck />发布</Button> : null}<Button size="sm" variant="ghost" onClick={() => setHistoryDialog({ mode: "recipe", item })}>版本历史</Button><Button size="sm" variant="ghost" onClick={() => void archive(item, "recipe")}><Archive />归档</Button></>}</div></CardContent></Card>;
-  const cards = tab === "campaign" ? filteredCampaigns.map(renderCampaignCard) : filteredRecipes.map(renderRecipeCard);
+  const cards = filteredCampaigns.map(renderCampaignCard);
 
   const campaignEmpty = filteredCampaigns.length ? null : { title: "还没有表单模板", description: "从系统模板复制，或创建一份空白模板。", action: <Button onClick={() => setDialog({ mode: "campaign" })}><Plus />新建模板</Button> };
   const recipeEmpty = filteredRecipes.length ? null : { title: "还没有审核方案", description: "从系统方案复制，或创建一份自动确认方案。", action: <Button onClick={() => setDialog({ mode: "recipe" })}><Plus />新建方案</Button> };
-  return <div className="space-y-6"><WorkspacePageHeader workspace={workspace} role={workspace.role} title="模板与审核方案" description="管理可复用的表单模板和审核方案。已发布版本可供活动选择，草稿发布后形成不可变快照。" actions={{ secondary: [<Button key="refresh" variant="outline" onClick={() => void load()}><RefreshCw />刷新</Button>] }} /><Tabs value={tab} onValueChange={setTab}><TabsList><TabsTrigger value="campaign"><FileText />表单模板</TabsTrigger><TabsTrigger value="recipe"><ShieldCheck />审核方案</TabsTrigger></TabsList><TabsContent value="campaign" className="mt-5"><ResourcePage headingLevel="h2" title="表单模板" description="系统模板只读；工作空间模板可复制、编辑和发布。" count={filteredCampaigns.length} search={{ value: search, onChange: setSearch, placeholder: "搜索模板…" }} filters={<TemplateLibraryFilters scope={scope} status={status} onScopeChange={setScope} onStatusChange={setStatus} entityLabel="模板" />} view="grid" showViewToggle={false} actions={{ primary: <Button onClick={() => setDialog({ mode: "campaign" })}><Plus />新建模板</Button> }} loading={loading} empty={campaignEmpty}>{<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards}</div>}</ResourcePage></TabsContent><TabsContent value="recipe" className="mt-5"><ResourcePage headingLevel="h2" title="审核方案" description="审核方案只保存可复用的 Production 角色，具体成员在 Campaign 内选择。" count={filteredRecipes.length} search={{ value: search, onChange: setSearch, placeholder: "搜索审核方案…" }} filters={<TemplateLibraryFilters scope={scope} status={status} onScopeChange={setScope} onStatusChange={setStatus} entityLabel="方案" />} view="grid" showViewToggle={false} actions={{ primary: <Button onClick={() => setDialog({ mode: "recipe" })}><Plus />新建方案</Button> }} loading={loading} empty={recipeEmpty}>{<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards}</div>}</ResourcePage></TabsContent></Tabs><CreateDialog open={Boolean(dialog)} mode={dialog?.mode} workspaceId={workspace.id} source={dialog?.source} onClose={() => setDialog(null)} onCreated={() => void load(true)} /><VersionHistoryDialog open={Boolean(historyDialog)} mode={historyDialog?.mode} item={historyDialog?.item} onClose={() => setDialog(null)} onCopyVersion={(version) => void copyVersion(historyDialog.item, historyDialog.mode, version)} onOpenVersion={(version) => openVersionDetail(historyDialog.mode, historyDialog.item, version)} /></div>;
+  return <div className="space-y-6"><WorkspacePageHeader workspace={workspace} role={workspace.role} title="表单模板" description="管理可复用的表单模板。审核人和门槛在活动表单的审核配置中设定。" actions={{ secondary: [<Button key="refresh" variant="outline" onClick={() => void load()}><RefreshCw />刷新</Button>] }} /><ResourcePage headingLevel="h2" title="表单模板" description="系统模板只读；工作空间模板可复制、编辑和发布。" count={filteredCampaigns.length} search={{ value: search, onChange: setSearch, placeholder: "搜索模板…" }} filters={<TemplateLibraryFilters scope={scope} status={status} onScopeChange={setScope} onStatusChange={setStatus} entityLabel="模板" />} view="grid" showViewToggle={false} actions={{ primary: <Button onClick={() => setDialog({ mode: "campaign" })}><Plus />新建模板</Button> }} loading={loading} empty={campaignEmpty}><div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{cards}</div></ResourcePage><CreateDialog open={Boolean(dialog)} mode={dialog?.mode} workspaceId={workspace.id} source={dialog?.source} onClose={() => setDialog(null)} onCreated={() => void load(true)} /><VersionHistoryDialog open={Boolean(historyDialog)} mode={historyDialog?.mode} item={historyDialog?.item} onClose={() => setHistoryDialog(null)} onCopyVersion={(version) => void copyVersion(historyDialog.item, historyDialog.mode, version)} onOpenVersion={(version) => openVersionDetail(historyDialog.mode, historyDialog.item, version)} /></div>;
 }

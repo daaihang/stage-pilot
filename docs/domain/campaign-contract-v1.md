@@ -20,9 +20,8 @@ COLLECTION    通用收集   “我提供这次运营需要的信息”
 ## 2. 领域关系
 
 ```text
-System CampaignTemplate
-└── Workspace CampaignTemplate
-    └── Campaign（属于一个 Production）
+System CampaignTemplate ─┐
+Workspace CampaignTemplate ─┴── Campaign（属于一个 Production；也可从空白创建）
         ├── CampaignRevision（可编辑草稿 / 不可变发布快照）
         │   ├── FormVersion
         │   ├── AvailabilityPolicy（值对象）
@@ -158,7 +157,7 @@ Revision 编辑 API 使用完整 `FormVersion` 快照。读取、保存、校验
 - `visibility`：`public`、`workspace`、`invite_only`。
 - `submission_limit` 是最多接收的 Entry 数；`capacity` 是最终录取/确认数量；`target` 只是运营目标；`waitlist_limit` 是候补数量上限，四者不能混用。
 - `review_recipe_version_id` 记录创建时所用的已发布 `ReviewRecipeVersion`；`review_workflow` 是复制到 Revision 的完整审核快照，也是运行时权威配置。方案后续升级不得改变历史 Revision。
-- Campaign 当前只允许发布单轮 `MANUAL_DECISION`：恰好一个并行轮次、必填文字反馈、人工最终决定、关闭补件。AUTO_ACCEPT、多轮与评分方案可保留在方案库，但不能用于当前可收件 Revision。
+- Campaign 当前只允许发布单轮 `MANUAL_DECISION`：恰好一个并行轮次、必填文字反馈、人工最终决定、关闭补件。唯一可选系统来源是 `review_recipe_single_manual_v2`。历史自动确认、多轮与评分内置版本保留但已退出可选目录，不能用于当前可收件 Revision。四种提交后处理方式及其未来状态、权限与容量规则见 [表单提交后处理与 ReviewRecipe 契约](review-recipe-contract-v1.md)。
 - 审核人和完成门槛必须在发布时可解析；`all` 表示全部已分配任务完成，`any` 运行时等价于 N=1，`at_least_n` 的 N 必须大于零且不高于审核人数。成员提交时失效会进入“待补足审核人”，不得降低门槛。
 - Entry 的 Campaign Revision 和答案版本在提交时固定。审核意见是追加历史，与最终 Decision 分开；达到门槛后待最终决定，但其他任务仍可反馈，最终决定提交时才关闭未完成任务。
 - `materialization_plan` 只能选择系统支持的目标和重复处理策略，不能提交任意表名、SQL 或脚本。

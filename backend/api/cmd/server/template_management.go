@@ -144,7 +144,7 @@ func validateTemplateDefinition(definition templateDefinition, kind string) erro
 func reusableReviewWorkflow(raw json.RawMessage) (json.RawMessage, error) {
 	var value map[string]any
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
-		raw = defaultAutoAcceptReviewRecipe()
+		raw = defaultSingleRoundReviewRecipe()
 	}
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, reviewRecipeError("invalid_review_recipe", "审核方案格式无效")
@@ -185,7 +185,7 @@ func reusableReviewWorkflow(raw json.RawMessage) (json.RawMessage, error) {
 func portableReviewWorkflow(raw json.RawMessage) (json.RawMessage, error) {
 	var value map[string]any
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
-		raw = defaultAutoAcceptReviewRecipe()
+		raw = defaultSingleRoundReviewRecipe()
 	}
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return nil, reviewRecipeError("invalid_review_recipe", "审核方案格式无效")
@@ -417,6 +417,18 @@ func (app *application) createWorkspaceCampaignTemplate(w http.ResponseWriter, r
 		return
 	}
 	def = normalizeDefinition(def)
+	if sourceRecipeVersionID == nil {
+		_, snapshot, resolveErr := resolveReviewRecipeSnapshot(r.Context(), tx, "", access.WorkspaceID)
+		if resolveErr != nil {
+			serverError(w, resolveErr)
+			return
+		}
+		defaultID := defaultReviewRecipeVersionID
+		sourceRecipeVersionID = &defaultID
+		if len(def.ReviewWorkflow) == 0 || string(def.ReviewWorkflow) == "{}" {
+			def.ReviewWorkflow = snapshot
+		}
+	}
 	if copyingCampaignRevision {
 		def = portableTemplateDefinition(def)
 	}

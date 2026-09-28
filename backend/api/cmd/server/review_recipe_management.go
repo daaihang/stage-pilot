@@ -74,15 +74,16 @@ func reusablePublishedReviewWorkflow(raw json.RawMessage) (json.RawMessage, erro
 	if err != nil {
 		return nil, err
 	}
+	if err := validateSingleRoundReviewWorkflow(normalized); err != nil {
+		return nil, err
+	}
 	definition, normalized, err := parseReviewRecipeDefinition(normalized, true)
 	if err != nil {
 		return nil, err
 	}
-	if definition.Mode != "AUTO_ACCEPT" {
-		for _, round := range definition.Rounds {
-			if round.ReviewerPolicy.Source != "production_roles" || len(round.ReviewerPolicy.RoleKeys) == 0 {
-				return nil, reviewRecipeError("recipe_roles_required", "工作空间审核方案必须使用至少一个 Production 角色")
-			}
+	for _, round := range definition.Rounds {
+		if round.ReviewerPolicy.Source != "production_roles" || len(round.ReviewerPolicy.RoleKeys) == 0 {
+			return nil, reviewRecipeError("recipe_roles_required", "工作空间审核方案必须使用至少一个 Production 角色")
 		}
 	}
 	return normalized, nil
@@ -209,7 +210,7 @@ func (app *application) createWorkspaceReviewRecipe(w http.ResponseWriter, r *ht
 		sourceTemplateID = &sourceID
 	}
 	if len(definitionRaw) == 0 || string(definitionRaw) == "null" {
-		definitionRaw = defaultAutoAcceptReviewRecipe()
+		definitionRaw = defaultSingleRoundReviewRecipe()
 	}
 	// A newly copied/created workspace recipe is a draft. It may intentionally
 	// have no roles yet; the stricter executable-role check happens at publish.
@@ -403,7 +404,7 @@ func (app *application) createReviewRecipeVersion(w http.ResponseWriter, r *http
 				return
 			}
 		} else {
-			in.Definition = defaultAutoAcceptReviewRecipe()
+			in.Definition = defaultSingleRoundReviewRecipe()
 		}
 	}
 	normalized, err := reusableReviewWorkflow(in.Definition)

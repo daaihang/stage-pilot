@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const defaultReviewRecipeVersionID = "review_recipe_auto_accept_v1"
+const defaultReviewRecipeVersionID = "review_recipe_single_manual_v2"
 
 type reviewRecipeTemplateItem struct {
 	ID                 string     `json:"id"`
@@ -118,7 +118,7 @@ func reviewRecipeError(code, message string) error {
 
 func parseReviewRecipeDefinition(raw json.RawMessage, allowUnboundReviewers bool) (reviewRecipeDefinition, json.RawMessage, error) {
 	if len(raw) == 0 || string(raw) == "null" {
-		raw = json.RawMessage(`{"schema_version":1,"mode":"AUTO_ACCEPT","rounds":[],"request_changes":{"enabled":false,"target":"same_round"},"final_decision":"auto_accept"}`)
+		raw = defaultSingleRoundReviewRecipe()
 	}
 	var definition reviewRecipeDefinition
 	if err := json.Unmarshal(raw, &definition); err != nil {
@@ -305,7 +305,6 @@ func validateReviewRecipeReferences(ctx context.Context, queryer reviewRecipeQue
 		for _, memberID := range round.ReviewerPolicy.MemberIDs {
 			var exists bool
 			err := queryer.QueryRow(ctx, `SELECT EXISTS(
-				UNION ALL
 				SELECT 1 FROM workspace_memberships wm
 				WHERE wm.workspace_id=$3 AND wm.user_id=$2 AND wm.status='active'
 				UNION ALL
@@ -351,8 +350,8 @@ func loadReviewRecipeVersion(ctx context.Context, queryer reviewRecipeQueryer, v
 	return source, err
 }
 
-func defaultAutoAcceptReviewRecipe() json.RawMessage {
-	return json.RawMessage(`{"schema_version":1,"mode":"AUTO_ACCEPT","rounds":[],"request_changes":{"enabled":false,"target":"same_round"},"final_decision":"auto_accept"}`)
+func defaultSingleRoundReviewRecipe() json.RawMessage {
+	return json.RawMessage(`{"schema_version":1,"mode":"MANUAL_DECISION","rounds":[{"key":"review","name":"单轮审核","execution":"parallel","reviewer_policy":{"source":"explicit_members","member_ids":[],"role_keys":[]},"completion":{"mode":"all"},"feedback":{"kind":"binary"}}],"request_changes":{"enabled":false,"target":"same_round"},"final_decision":"manual"}`)
 }
 
 func resolveReviewRecipeSnapshot(ctx context.Context, queryer reviewRecipeQueryer, versionID, workspaceID string) (*string, json.RawMessage, error) {

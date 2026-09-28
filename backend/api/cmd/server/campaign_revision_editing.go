@@ -302,6 +302,16 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 		return
 	}
 	issues := make([]revisionValidationIssue, 0, 8)
+	if revision.ReviewRecipeVersionID == nil || strings.TrimSpace(*revision.ReviewRecipeVersionID) == "" {
+		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_source_required", Path: "/review_recipe_version_id", Message: "请选择已发布的单轮审核方案来源"})
+	} else if _, err := loadReviewRecipeVersion(r.Context(), app.db, *revision.ReviewRecipeVersionID, access.WorkspaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_not_found", Path: "/review_recipe_version_id", Message: "审核方案版本不存在、未发布或无权使用"})
+		} else {
+			serverError(w, err)
+			return
+		}
+	}
 	if revision.FormVersion == nil {
 		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "form_version_missing", Path: "/form", Message: "表单定义不存在"})
 	} else {

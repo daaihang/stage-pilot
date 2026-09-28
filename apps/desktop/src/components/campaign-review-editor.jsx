@@ -7,9 +7,10 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { notify } from "@/components/ui/sonner";
-import { listReviewRecipes, listReviewRecipeVersions, listWorkspaceReviewRecipes } from "@/lib/campaign-api";
+import { listReviewRecipes, listReviewRecipeVersions } from "@/lib/campaign-api";
 import { listProductionMembers } from "@/lib/production-api";
 import { useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
+import { isExecutableSingleRoundWorkflow, publishedExecutableRecipes, reviewWorkflowCustomized } from "@/lib/review-workflow-options";
 
 const roles = { producer: "Producer", editor: "Editor", stage_manager: "Stage Manager", contributor: "Contributor", viewer: "Viewer" };
 
@@ -31,18 +32,6 @@ function newRound(source = {}) {
   };
 }
 
-function supportedWorkflow(workflow) {
-  if (!workflow || workflow.mode !== "MANUAL_DECISION" || workflow.final_decision === "auto_accept" || workflow.rounds?.length !== 1) return false;
-  const round = workflow.rounds[0];
-  return round.execution === "parallel"
-    && workflow.request_changes?.enabled !== true
-    && round.feedback?.kind !== "score"
-    && (!round.scorecard?.criteria?.length)
-    && ["all", "any", "at_least_n"].includes(round.completion?.mode)
-    && (round.completion?.mode !== "at_least_n" || Number(round.completion?.n) > 0)
-    && ["explicit_members", "production_roles"].includes(round.reviewer_policy?.source);
-}
-
 function makeSingleRound(workflow = {}) {
   const sourceRound = Array.isArray(workflow.rounds) ? workflow.rounds[0] : null;
   return {
@@ -57,21 +46,26 @@ function makeSingleRound(workflow = {}) {
 export function CampaignReviewEditor() {
   const draft = useCampaignRevisionDraft();
   const [recipes, setRecipes] = useState([]);
+  const [recipesLoading, setRecipesLoading] = useState(true);
   const [members, setMembers] = useState([]);
   const source = draft.reviewWorkflow && typeof draft.reviewWorkflow === "object" ? draft.reviewWorkflow : makeSingleRound();
-  const supported = supportedWorkflow(source);
+  const supported = isExecutableSingleRoundWorkflow(source);
   const round = supported ? source.rounds[0] : null;
-  const selectedRecipe = recipes.find((recipe) => recipe.latestVersionId === draft.reviewRecipeVersionId);
+  const selectedRecipe = recipes.find((recipe) => recipe.publishedVersionId === draft.reviewRecipeVersionId);
+  const customized = selectedRecipe ? reviewWorkflowCustomized(source, selectedRecipe.publishedDefinition) : false;
 
   useEffect(() => {
     let active = true;
-    Promise.all([
-      listReviewRecipes({ status: "published" }),
-      draft.campaign?.workspaceId ? listWorkspaceReviewRecipes(draft.campaign.workspaceId, { status: "published" }) : Promise.resolve({ items: [] }),
-    ]).then(([system, workspace]) => { if (active) setRecipes([...system.items, ...workspace.items]); })
-      .catch((error) => notify.error("加载审核方案失败", { description: error?.message || String(error) }));
+    setRecipesLoading(true);
+    listReviewRecipes({ status: "published" }).then(async (result) => {
+      const versions = await Promise.all((result.items || []).map((recipe) => listReviewRecipeVersions(recipe.id)));
+      const byId = Object.fromEntries(versions.flatMap((item) => item.items || []).map((version) => [version.id, version]));
+      if (active) setRecipes(publishedExecutableRecipes(result.items || [], byId).map((recipe) => ({ ...recipe, publishedDefinition: byId[recipe.publishedVersionId].definition })));
+    })
+      .catch((error) => notify.error("加载审核方案失败", { description: error?.message || String(error) }))
+      .finally(() => { if (active) setRecipesLoading(false); });
     return () => { active = false; };
-  }, [draft.campaign?.workspaceId]);
+  }, []);
 
   useEffect(() => {
     if (!draft.campaign?.productionId) return undefined;
@@ -90,25 +84,15 @@ export function CampaignReviewEditor() {
   const reviewerSet = useMemo(() => new Set(round?.reviewer_policy?.source === "explicit_members" ? round.reviewer_policy.member_ids || [] : round?.reviewer_policy?.role_keys || []), [round]);
   const update = (nextRound) => draft.setReview({ workflow: { ...source, schema_version: 1, mode: "MANUAL_DECISION", rounds: [nextRound], request_changes: { enabled: false, target: "same_round" }, final_decision: "manual" } });
   const updatePolicy = (patch) => update({ ...round, reviewer_policy: { ...(round.reviewer_policy || {}), ...patch } });
-  const selectRecipe = async (id) => {
+  const selectRecipe = (id) => {
     const recipe = recipes.find((item) => item.id === id);
-    if (!recipe?.latestVersionId) return;
-    try {
-      const result = await listReviewRecipeVersions(id);
-      const version = result.items.find((item) => item.id === recipe.latestVersionId) || result.items[0];
-      if (!version) return;
-      if (!supportedWorkflow(version.definition)) {
-        notify.error("该方案不符合当前单轮审核契约", { description: "只能使用一个并行轮次、文字反馈和人工最终决定的方案。" });
-        return;
-      }
-      draft.setReview({ recipeVersionId: version.id, workflow: version.definition });
-    } catch (error) {
-      notify.error("加载审核方案失败", { description: error?.message || String(error) });
-    }
+    if (!recipe?.publishedVersionId || !recipe.publishedDefinition) return;
+    draft.setReview({ recipeVersionId: recipe.publishedVersionId, workflow: recipe.publishedDefinition });
+    notify.success("已应用单轮审核方案", { description: "请明确选择审核人并检查完成门槛。" });
   };
 
   if (!supported) {
-    return <Card><CardHeader><CardTitle className="text-sm">审核方案需要迁移到单轮模式</CardTitle><CardDescription>当前 P1 只允许单轮并行人工审核、必填文字反馈和人工决定。评分、多轮、补件及自动决定不能发布或公开收件。</CardDescription></CardHeader><CardContent className="space-y-3"><Button type="button" onClick={() => { draft.setReview({ workflow: makeSingleRound(source) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
+    return <Card><CardHeader><CardTitle className="text-sm">审核配置需要切换到单轮模式</CardTitle><CardDescription>当前只能发布单轮并行人工审核。评分、多轮、补件及自动决定暂不可运行。</CardDescription></CardHeader><CardContent className="space-y-3"><Button type="button" disabled={draft.readOnly || !recipes.length} onClick={() => { draft.setReview({ recipeVersionId: recipes[0].publishedVersionId, workflow: makeSingleRound(source) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
   }
 
   const completionValue = round.completion.mode === "all" ? "all" : "at_least_n";
@@ -118,12 +102,12 @@ export function CampaignReviewEditor() {
     <CardHeader><CardTitle className="text-sm">单轮人工审核</CardTitle><CardDescription>提交后按此 Revision 快照创建并行审核任务。反馈必填文字意见，不是最终决定；完成门槛满足后由有决定权限的成员作出结果。</CardDescription></CardHeader>
     <CardContent className="space-y-4">
       <Field>
-        <FieldLabel htmlFor="review-recipe">审核方案来源（可选）</FieldLabel>
-        <Select value={selectedRecipe?.id || "custom"} onValueChange={(id) => { if (id !== "custom") void selectRecipe(id); }}>
+        <FieldLabel htmlFor="review-recipe">审核方案来源</FieldLabel>
+        <Select value={selectedRecipe?.id} disabled={recipesLoading} onValueChange={selectRecipe}>
           <SelectTrigger id="review-recipe"><SelectValue placeholder="选择已发布方案" /></SelectTrigger>
-          <SelectContent>{recipes.map((recipe) => <SelectItem key={recipe.id} value={recipe.id}>{recipe.name} · v{recipe.latestVersion}</SelectItem>)}<SelectItem value="custom">自定义快照</SelectItem></SelectContent>
+          <SelectContent>{recipes.map((recipe) => <SelectItem key={recipe.id} value={recipe.id}>{recipe.name} · v{recipe.publishedVersion}</SelectItem>)}</SelectContent>
         </Select>
-        <p className="text-xs text-muted-foreground">方案版本仅作为来源，活动保存独立快照；超出 P1 范围的方案不能应用。</p>
+        <p className="text-xs text-muted-foreground">{selectedRecipe ? `来源：${selectedRecipe.name} v${selectedRecipe.publishedVersion}；${customized ? "活动内已定制" : "尚未定制"}。` : "请先选择可运行的系统方案。"}来源版本只记录出处，当前活动 Revision 独立保存完整审核快照。</p>
       </Field>
       <div className="flex flex-wrap items-center gap-2"><Badge>MANUAL_DECISION</Badge><Badge variant="outline">并行单轮</Badge><Badge variant="outline">文字反馈</Badge><Badge variant="outline">人工最终决定</Badge></div>
       <div className="grid gap-4 rounded-md border p-3">

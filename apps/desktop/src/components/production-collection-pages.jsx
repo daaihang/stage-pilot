@@ -51,8 +51,8 @@ const CAMPAIGN_DETAIL_GROUPS = [
   ["form", "表单", FileText],
   ["presentation", "展示", LayoutPanelTop],
   ["rules", "规则", SlidersHorizontal],
-  ["review", "审核", ClipboardCheck],
   ["entries", "提交记录", ClipboardList],
+  ["review", "审核配置", ClipboardCheck],
   ["results", "结果", CheckCircle2],
   ["settings", "设置", Settings],
 ];

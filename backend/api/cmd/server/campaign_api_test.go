@@ -51,11 +51,11 @@ func TestCampaignTemplateCreateListDetailAndArchive(t *testing.T) {
 	}
 	templateID := items[0].(map[string]any)["id"].(string)
 	var originalDefinition []byte
-	if err := app.db.QueryRow(t.Context(), `SELECT definition FROM campaign_template_versions WHERE template_id=$1 AND version=1`, templateID).Scan(&originalDefinition); err != nil {
+	if err := app.db.QueryRow(t.Context(), `SELECT v.definition FROM campaign_template_versions v JOIN campaign_templates t ON t.id=v.template_id AND t.published_version=v.version WHERE v.template_id=$1`, templateID).Scan(&originalDefinition); err != nil {
 		t.Fatal(err)
 	}
 	var publishedAt *time.Time
-	if err := app.db.QueryRow(t.Context(), `SELECT published_at FROM campaign_template_versions WHERE template_id=$1 AND version=1`, templateID).Scan(&publishedAt); err != nil {
+	if err := app.db.QueryRow(t.Context(), `SELECT v.published_at FROM campaign_template_versions v JOIN campaign_templates t ON t.id=v.template_id AND t.published_version=v.version WHERE v.template_id=$1`, templateID).Scan(&publishedAt); err != nil {
 		t.Fatal(err)
 	}
 	defer func() {
@@ -78,7 +78,7 @@ func TestCampaignTemplateCreateListDetailAndArchive(t *testing.T) {
 	if campaign["kind"] != campaignKindSubmission || createdBody["draft_revision"] == nil {
 		t.Fatalf("unexpected create response: %#v", createdBody)
 	}
-	if createdBody["draft_revision"].(map[string]any)["review_recipe_version_id"] != "review_recipe_multi_stage_scored_v1" {
+	if createdBody["draft_revision"].(map[string]any)["review_recipe_version_id"] != defaultReviewRecipeVersionID {
 		t.Fatalf("system template recipe snapshot = %#v", createdBody["draft_revision"].(map[string]any)["review_recipe_version_id"])
 	}
 	changedID := "snapshot_changed_" + newID()
