@@ -27,8 +27,8 @@ func (c minioFileCleanupClient) AbortMultipartUpload(ctx context.Context, bucket
 	return (minio.Core{Client: c.Client}).AbortMultipartUpload(ctx, bucket, key, uploadID)
 }
 
-// cleanupFiles only reclaims unfinished uploads. Soft-deleted uploaded files
-// retain their object until a separate retention policy is established.
+// cleanupFiles reclaims unfinished uploads, expired quarantined versions, and
+// soft-deleted file versions whose retention deadline has elapsed.
 func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool) {
 	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "http://"), "https://")
 	if endpoint == "" {
@@ -41,6 +41,12 @@ func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool) {
 	})
 	if err != nil {
 		logger.Warn("create object storage cleanup client", "error", err)
+		return
+	}
+	bucket := envOrDefault("S3_BUCKET", "stagepilot")
+	stagingBucket := envOrDefault("S3_STAGING_BUCKET", bucket+"-staging")
+	if err := validateWorkerStorageBuckets(ctx, client, []string{bucket, stagingBucket}); err != nil {
+		logger.Error("skip object cleanup because bucket versioning or scope is unsafe", "error", err)
 		return
 	}
 	uploadTTL := durationOrDefault("S3_UPLOAD_URL_TTL", 15*time.Minute)

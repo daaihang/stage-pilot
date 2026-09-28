@@ -62,14 +62,18 @@ func main() {
 func show(ctx context.Context, pool *pgxpool.Pool, workspaceID string) {
 	var name string
 	var quotaLimit *int64
-	var used, reserved, physicalUsed, physicalReserved int64
+	var used, reserved, physicalUsed, physicalReserved, heldPhysical int64
 	var observed *int64
 	var observedAt *time.Time
 	var blocked bool
 	err := pool.QueryRow(ctx, `SELECT w.name,a.quota_limit_bytes,COALESCE(a.quota_used_bytes,0),COALESCE(a.quota_reserved_bytes,0),
-		COALESCE(a.physical_used_bytes,0),COALESCE(a.physical_reserved_bytes,0),a.physical_observed_bytes,a.physical_observed_at,COALESCE(a.uploads_blocked,FALSE)
+		COALESCE(a.physical_used_bytes,0),COALESCE(a.physical_reserved_bytes,0),
+		COALESCE((SELECT SUM(v.size_bytes) FROM file_retention_holds h JOIN file_versions v
+			ON v.workspace_id=h.workspace_id AND v.file_id=h.file_id
+			WHERE h.workspace_id=w.id AND h.released_at IS NULL AND v.object_purged_at IS NULL),0),
+		a.physical_observed_bytes,a.physical_observed_at,COALESCE(a.uploads_blocked,FALSE)
 		FROM workspaces w LEFT JOIN workspace_storage_accounts a ON a.workspace_id=w.id WHERE w.id=$1`, workspaceID).
-		Scan(&name, &quotaLimit, &used, &reserved, &physicalUsed, &physicalReserved, &observed, &observedAt, &blocked)
+		Scan(&name, &quotaLimit, &used, &reserved, &physicalUsed, &physicalReserved, &heldPhysical, &observed, &observedAt, &blocked)
 	if err != nil {
 		fatal("read Workspace storage account: %v", err)
 	}
@@ -77,6 +81,7 @@ func show(ctx context.Context, pool *pgxpool.Pool, workspaceID string) {
 		"workspace_id": workspaceID, "workspace_name": name, "quota_limit_bytes": quotaLimit,
 		"quota_used_bytes": used, "quota_reserved_bytes": reserved,
 		"physical_tracked_bytes": physicalUsed, "physical_reserved_bytes": physicalReserved,
+		"held_physical_bytes":     heldPhysical,
 		"physical_observed_bytes": observed, "physical_observed_at": observedAt, "uploads_blocked": blocked,
 	})
 }

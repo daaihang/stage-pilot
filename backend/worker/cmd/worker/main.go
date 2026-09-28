@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -50,22 +51,57 @@ func main() {
 	}
 	bucket := envOrDefault("S3_BUCKET", "stagepilot")
 	stagingBucket := envOrDefault("S3_STAGING_BUCKET", bucket+"-staging")
-	if storage != nil && stagingBucket != bucket {
-		if err := storage.MakeBucket(ctx, stagingBucket, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil && minio.ToErrorResponse(err).Code != "BucketAlreadyOwnedByYou" {
-			logger.Warn("ensure temporary upload bucket", "bucket", stagingBucket, "error", err)
-		}
-	}
 	storageBuckets := []string{bucket}
 	if stagingBucket != bucket {
 		storageBuckets = append(storageBuckets, stagingBucket)
 	}
+	storageRetentionReady := false
+	if storage != nil {
+		for _, name := range storageBuckets {
+			if err := storage.MakeBucket(ctx, name, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil && minio.ToErrorResponse(err).Code != "BucketAlreadyOwnedByYou" {
+				logger.Error("ensure file storage bucket", "bucket", name, "error", err)
+			}
+		}
+		if err := validateWorkerStorageBuckets(ctx, storage, storageBuckets); err != nil {
+			logger.Error("file object cleanup and storage reconciliation disabled", "error", err)
+		} else {
+			storageRetentionReady = true
+		}
+	}
 
 	logger.Info("worker started", "interval", interval)
-	go cleanupTicker(ctx, logger, pool, interval)
+	if storageRetentionReady {
+		go cleanupTicker(ctx, logger, pool, interval)
+		go storageReconcileTicker(ctx, logger, pool, storage, storageBuckets, physicalLimit, durationOrDefault("STORAGE_RECONCILE_INTERVAL", 6*time.Hour))
+	} else {
+		logger.Error("file cleanup and reconciliation remain disabled until the formal and staging buckets are distinct and both have versioning disabled")
+	}
 	go fileScanTicker(ctx, logger, pool, storage, scanner, interval, maxFileBytesFromEnv())
-	go storageReconcileTicker(ctx, logger, pool, storage, storageBuckets, physicalLimit, durationOrDefault("STORAGE_RECONCILE_INTERVAL", 6*time.Hour))
 	run(ctx, logger, pool, interval)
 	logger.Info("worker stopped")
+}
+
+func validateWorkerBucketVersioningDisabled(bucket string, config minio.BucketVersioningConfiguration) error {
+	if config.Status != "" {
+		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, config.Status)
+	}
+	return nil
+}
+
+func validateWorkerStorageBuckets(ctx context.Context, client *minio.Client, buckets []string) error {
+	if client == nil || len(buckets) != 2 || buckets[0] == "" || buckets[1] == "" || buckets[0] == buckets[1] {
+		return fmt.Errorf("formal and staging buckets must both exist and be distinct")
+	}
+	for _, bucket := range buckets {
+		config, err := client.GetBucketVersioning(ctx, bucket)
+		if err != nil {
+			return fmt.Errorf("check bucket %q versioning: %w", bucket, err)
+		}
+		if err := validateWorkerBucketVersioningDisabled(bucket, config); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func fileScanTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, storage *minio.Client, scanner fileScanner, interval time.Duration, maxBytes int64) {

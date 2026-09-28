@@ -28,6 +28,20 @@ func fileTestID(t *testing.T, response map[string]any) string {
 	return id
 }
 
+func TestValidateBucketVersioningDisabled(t *testing.T) {
+	for _, test := range []struct {
+		name, status string
+		wantError    bool
+	}{{name: "unversioned"}, {name: "enabled", status: "Enabled", wantError: true}, {name: "suspended", status: "Suspended", wantError: true}} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateBucketVersioningDisabled("files", minio.BucketVersioningConfiguration{Status: test.status})
+			if (err != nil) != test.wantError {
+				t.Fatalf("validate versioning status %q error = %v", test.status, err)
+			}
+		})
+	}
+}
+
 func markFileVersionClean(t *testing.T, app *application, fileID, versionID string) {
 	t.Helper()
 	if _, err := app.db.Exec(t.Context(), `UPDATE file_versions SET security_status='clean',sha256=repeat('a',64),scan_engine='test',scan_signature='test',scanned_at=NOW()

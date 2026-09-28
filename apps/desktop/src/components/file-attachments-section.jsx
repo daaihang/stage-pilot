@@ -111,7 +111,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
       await detachAttachment(confirmDetach.id);
       setConfirmDetach(null);
       await reload();
-      notify.success("已解除关联，文件版本已保留", { id: toast });
+      notify.success("已解除关联，配额已释放；内容仍保留 30 天供恢复", { id: toast });
     } catch (error) { notify.error("解除关联失败", { id: toast, description: error?.message || String(error) }); }
   };
 
@@ -154,7 +154,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
         {versionItems[item.id]?.map((version) => <div key={version.id} className="mt-2 flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "processing" ? "检查中" : version.scan_status === "rejected" ? "未通过" : "可用"}</span><Button size="sm" variant="ghost" disabled={version.scan_status !== "ready"} onClick={() => download(item, version.id)}>下载</Button></div>)}
       </div>) : <p className="text-sm text-muted-foreground">{showTrash ? "回收站为空" : "暂无附件"}</p>}
       {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="space-y-1"><div className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="ghost" onClick={() => showVersions(source)}><Clock3 />历史版本</Button><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy || !source.capabilities?.can_download}><Copy />复制当前版</Button></div>{versionItems[source.id]?.map((version) => <div key={version.id} className="flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "ready" ? "可用" : version.scan_status === "processing" ? "检查中" : "未通过"}</span><Button size="sm" variant="outline" onClick={() => copy(source, version.id)} disabled={busy || version.scan_status !== "ready"}>复制此版本</Button></div>)}</div>)}</div>}
-      {confirmDetach && <div role="alertdialog" aria-label="确认解除附件关联" className="space-y-2 rounded-md border p-3 text-sm"><p>解除“{confirmDetach.filename}”的关联？文件和历史版本仍会保留。</p><div className="flex gap-2"><Button size="sm" variant="destructive" onClick={detach}>确认解除</Button><Button size="sm" variant="outline" onClick={() => setConfirmDetach(null)}>取消</Button></div></div>}
+      {confirmDetach && <div role="alertdialog" aria-label="确认解除附件关联" className="space-y-2 rounded-md border p-3 text-sm"><p>解除“{confirmDetach.filename}”的关联？配额会立即释放，文件和全部历史版本仍保留 30 天供恢复。</p><div className="flex gap-2"><Button size="sm" variant="destructive" onClick={detach}>确认解除</Button><Button size="sm" variant="outline" onClick={() => setConfirmDetach(null)}>取消</Button></div></div>}
     </CardContent>
   </Card>;
 }

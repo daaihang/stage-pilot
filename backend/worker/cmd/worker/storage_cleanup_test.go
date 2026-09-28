@@ -24,6 +24,20 @@ type testObjectRemover struct {
 	release  chan struct{}
 }
 
+func TestValidateWorkerBucketVersioningDisabled(t *testing.T) {
+	for _, test := range []struct {
+		name, status string
+		wantError    bool
+	}{{name: "unversioned"}, {name: "enabled", status: "Enabled", wantError: true}, {name: "suspended", status: "Suspended", wantError: true}} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateWorkerBucketVersioningDisabled("files", minio.BucketVersioningConfiguration{Status: test.status})
+			if (err != nil) != test.wantError {
+				t.Fatalf("validate versioning status %q error = %v", test.status, err)
+			}
+		})
+	}
+}
+
 func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" || os.Getenv("S3_ENDPOINT") == "" {
 		t.Skip("database and S3 are required")

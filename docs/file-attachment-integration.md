@@ -107,9 +107,12 @@ DELETE   /v1/attachments/{attachmentId}
 - 创建上传会话时在 Workspace 账本事务内预留用户配额和物理峰值空间，并执行每用户/Workspace 并发会话数与每小时创建速率限制。会话完成后，待扫描和 clean 版本都计入用户配额；扫描拒绝释放用户配额，但隔离对象仍计入物理占用。固定到 Production 的独立副本再次计量。
 - `quota_used_bytes` 是产品额度口径；`physical_observed_bytes` 是 Worker 最近一次从对象存储盘点到的对象内容字节，含临时、回收站、隔离和未完成分段。它不等同供应商账单或底层磁盘空间。活动上传中的 `physical_reserved_bytes` 覆盖“临时对象 + 不可变副本”的峰值，不能因用户取消就提前释放。
 - 小于或等于 100,000,000 字节的上传使用有 `content-length-range` 的预签名 POST；更大文件按 64 MiB 分段，服务端只签发所需分段并在组装前校验实际分段大小和 SHA-256。上传暂存桶必须通过 `S3_STAGING_BUCKET` 与正式 `S3_BUCKET` 分离；对象完成校验后由服务端跨桶复制到不可变版本桶。新接口不回退到无大小约束 PUT；既有旧 PUT 会话只允许在原链接期限内完成。
-- 文件删除和附件解除关联立即从用户配额释放，但对象保留 30 天；原管理者可用 Workspace 或对应 Production 的回收站接口恢复，恢复前重新核对权限和当前配额。过期对象清除失败可重试；行、版本哈希、来源追溯和审计仍保留。迁移前的回收站项目自迁移上线起至少再保留 30 天。
+- 文件删除和附件解除关联立即从用户配额释放，但对象保留 30 天并继续占真实物理空间；原管理者可用 Workspace 或对应 Production 的回收站接口恢复，恢复前重新核对权限和当前配额。到期物理清理使用持久任务、租约与退避重试；对象确认删除后才减少物理账本。文件仍有效期间的全部历史版本均保留并计入配额；进入回收站后全部版本共用同一恢复期限。迁移前的回收站项目自迁移上线起至少再保留 30 天。
+- Production 节目副本是独立文件、对象和账本项目；来源删除、恢复或保留锁不会级联改变副本。应用保留锁针对整个逻辑文件，阻止 Worker 清理其全部及后续版本，不授予查看权限，也不恢复已释放的用户配额。
 - 上传额度由运维命令设置，不提供成员自行扩容 API：`storage-quota show --workspace <id>`、`storage-quota set --workspace <id> --bytes <bytes> --actor <operator>`、`storage-quota unset --workspace <id> --actor <operator>`。`GET /v1/me/workspace-storage` 供用户查看本人 active Workspace 的汇总，不暴露文件名；活动直连成员但非 Workspace 成员不会出现在个人清单中。
-- Worker 周期性对账正式桶、暂存桶中的对象和未完成分段，记录最近观测值。发现未知对象、数据库引用缺失或物理上限风险时只告警并暂停该 Workspace 新上传，不自动删除来源不明内容。Worker 清理是未完成分段的主路径；Compose 还为只存临时对象的 `S3_STAGING_BUCKET` 设置两天到期/中止兜底。由于 MinIO 生命周期的 `expire-days` 会对所在桶的完整对象也生效，禁止把该规则加到存放正式版本的桶；S3 生产部署应在专用暂存桶配置等价的两天 incomplete-multipart 规则和临时对象到期策略。
+- 平台运维可用 `storage-retention check-storage` 检查对象桶配置；正式桶和暂存桶必须分离且均关闭版本控制，否则 API 不开放文件存储，Worker 停止对象清理和物理对账。关闭版本控制是本期删除能代表真实对象清除的前提；未来若启用版本控制，必须实现按存储端版本 ID 清除与盘点后再切换。Compose 环境可通过 `docker compose exec api storage-retention ...` 运行此工具。
+- 平台保留处置仅通过 `storage-retention` 命令执行：`show --workspace <id> [--file <id>]` 查询；`hold` / `release-hold` 管理应用级保留锁；`purge --confirm <file-id>` 可对软删除文件申请提前永久清理。每次变更都必须提供 `--actor`、`--reason` 和 `--case`，写入 append-only 账本。`storage-quota show` 和 `storage-retention show` 会单独显示保留锁占用的对象字节。
+- 应用级保留锁不是 S3 Object Lock/WORM，能阻止应用 Worker 清理，但不防止拥有对象存储权限的运维人员绕过；审计元数据保留用于历史追溯，不代表符合任何特定法规或法定保留期限。正式桶和暂存桶都不能设置会删除普通正式对象的通用生命周期规则；暂存桶可配置两天 incomplete-multipart 兜底。
 
 要验证 API → MinIO → 持久扫描队列 → Worker → ClamAV 的完整链路，启动本地 Compose 栈并让 API 集成测试能连接本地 PostgreSQL/MinIO，然后设置 `FILE_SCAN_E2E=1` 运行 `go test -count=1 -run '^TestFileScanWorkerEndToEnd$' ./cmd/server`。此用例分别上传普通文本和 EICAR 测试签名，检查最终状态为 `ready` 与 `rejected`；EICAR 是无害的防病毒测试样本，不是可执行恶意软件。
 

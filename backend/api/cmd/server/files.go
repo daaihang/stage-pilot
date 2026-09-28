@@ -59,6 +59,15 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 			return nil, err
 		}
 	}
+	for _, name := range []string{bucket, stagingBucket} {
+		versioning, err := client.GetBucketVersioning(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("check object bucket %q versioning: %w", name, err)
+		}
+		if err := validateBucketVersioningDisabled(name, versioning); err != nil {
+			return nil, err
+		}
+	}
 	public := os.Getenv("S3_PUBLIC_ENDPOINT")
 	if public == "" {
 		public = endpoint
@@ -89,6 +98,13 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 		return nil, err
 	}
 	return &objectStorage{client: client, presignClient: publicClient, core: minio.Core{Client: client}, bucket: bucket, stagingBucket: stagingBucket, ttl: ttl, maxBytes: max, physicalMaxBytes: physicalMax}, nil
+}
+
+func validateBucketVersioningDisabled(bucket string, config minio.BucketVersioningConfiguration) error {
+	if config.Status != "" {
+		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, config.Status)
+	}
+	return nil
 }
 
 func registerFileRoutes(app *application, mux *http.ServeMux) {

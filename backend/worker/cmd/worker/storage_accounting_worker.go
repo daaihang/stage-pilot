@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -348,35 +349,202 @@ func blockWorkspaceUploads(ctx context.Context, db *pgxpool.Pool, workspaceID, r
 }
 
 func cleanupExpiredFileVersions(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover) {
-	rows, err := db.Query(ctx, `SELECT v.id,v.workspace_id FROM file_versions v JOIN files f ON f.id=v.file_id AND f.workspace_id=v.workspace_id
-		WHERE v.object_purged_at IS NULL AND f.deleted_at IS NOT NULL AND COALESCE(f.purge_after,f.deleted_at+INTERVAL '30 days')<=NOW()
-		ORDER BY f.purge_after,v.id LIMIT 100`)
-	if err != nil {
-		logger.Warn("list expired soft-deleted file versions", "error", err)
+	if _, err := db.Exec(ctx, `INSERT INTO file_purge_tasks(workspace_id,file_id,version_id,cause,actor_label,reason)
+		SELECT v.workspace_id,v.file_id,v.id,'retention_expired','system','30_day_trash_expiry'
+		FROM file_versions v JOIN files f ON f.id=v.file_id AND f.workspace_id=v.workspace_id
+		WHERE v.object_purged_at IS NULL AND f.deleted_at IS NOT NULL
+		AND COALESCE(f.purge_after,f.deleted_at+INTERVAL '30 days')<=NOW()
+		AND NOT EXISTS(SELECT 1 FROM file_retention_holds h WHERE h.workspace_id=f.workspace_id AND h.file_id=f.id AND h.released_at IS NULL)
+		ON CONFLICT(version_id) DO UPDATE SET cause='retention_expired',actor_label='system',reason='30_day_trash_expiry',
+			status='pending',available_at=NOW(),lease_owner='',lease_until=NULL,last_error='',updated_at=NOW()
+		WHERE file_purge_tasks.status='cancelled' AND (
+			file_purge_tasks.cause='operator_requested' OR
+			EXISTS(SELECT 1 FROM files f WHERE f.workspace_id=EXCLUDED.workspace_id AND f.id=EXCLUDED.file_id
+				AND COALESCE(f.purge_after,f.deleted_at+INTERVAL '30 days')<=NOW())
+		)`); err != nil {
+		logger.Warn("enqueue expired file versions for purge", "error", err)
 		return
 	}
-	type candidate struct{ versionID, workspaceID string }
-	items := []candidate{}
+	host, _ := os.Hostname()
+	owner := fmt.Sprintf("file-purge-%s-%d", host, os.Getpid())
+	tasks, err := claimFilePurgeTasks(ctx, db, owner, 100)
+	if err != nil {
+		logger.Warn("claim file purge tasks", "error", err)
+		return
+	}
+	for _, task := range tasks {
+		if err := processFilePurgeTask(ctx, db, client, task, owner); err != nil && ctx.Err() == nil {
+			logger.Warn("purge retained file version", "version_id", task.versionID, "attempt", task.attempts, "error", err)
+		}
+	}
+}
+
+type filePurgeTask struct {
+	workspaceID, fileID, versionID string
+	cause, actor, reason, caseRef  string
+	attempts                       int
+}
+
+func claimFilePurgeTasks(ctx context.Context, db *pgxpool.Pool, owner string, limit int) ([]filePurgeTask, error) {
+	rows, err := db.Query(ctx, `WITH candidate AS (
+		SELECT version_id FROM file_purge_tasks
+		WHERE (status='pending' AND available_at<=NOW()) OR (status='leased' AND lease_until<NOW())
+		ORDER BY available_at,created_at,version_id FOR UPDATE SKIP LOCKED LIMIT $2
+	), claimed AS (
+		UPDATE file_purge_tasks t SET status='leased',attempts=t.attempts+1,lease_owner=$1,
+			lease_until=NOW()+INTERVAL '10 minutes',updated_at=NOW()
+		FROM candidate c WHERE t.version_id=c.version_id
+		RETURNING t.workspace_id,t.file_id,t.version_id,t.cause,t.actor_label,t.reason,t.case_reference,t.attempts
+	)
+	SELECT workspace_id,file_id,version_id,cause,actor_label,reason,case_reference,attempts FROM claimed
+	ORDER BY version_id`, owner, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tasks := []filePurgeTask{}
 	for rows.Next() {
-		var item candidate
-		if err := rows.Scan(&item.versionID, &item.workspaceID); err != nil {
-			rows.Close()
-			logger.Warn("scan expired file version", "error", err)
-			return
+		var task filePurgeTask
+		if err := rows.Scan(&task.workspaceID, &task.fileID, &task.versionID, &task.cause, &task.actor, &task.reason, &task.caseRef, &task.attempts); err != nil {
+			return nil, err
 		}
-		items = append(items, item)
+		tasks = append(tasks, task)
 	}
-	err = rows.Err()
-	rows.Close()
+	return tasks, rows.Err()
+}
+
+func processFilePurgeTask(ctx context.Context, db *pgxpool.Pool, client fileObjectRemover, task filePurgeTask, owner string) error {
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
-		logger.Warn("read expired file versions", "error", err)
-		return
+		return err
 	}
-	for _, item := range items {
-		if err := purgeStoredVersion(ctx, db, client, item.workspaceID, item.versionID, "retention_expired"); err != nil && ctx.Err() == nil {
-			logger.Warn("purge retained file version", "version_id", item.versionID, "error", err)
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `INSERT INTO workspace_storage_accounts(workspace_id) VALUES($1) ON CONFLICT DO NOTHING`, task.workspaceID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM workspace_storage_accounts WHERE workspace_id=$1 FOR UPDATE`, task.workspaceID); err != nil {
+		return err
+	}
+	var status, leaseOwner string
+	if err := tx.QueryRow(ctx, `SELECT status,lease_owner FROM file_purge_tasks WHERE version_id=$1 FOR UPDATE`, task.versionID).Scan(&status, &leaseOwner); err != nil {
+		return err
+	}
+	if status != "leased" || leaseOwner != owner {
+		return tx.Commit(ctx)
+	}
+	var deletedAt *time.Time
+	var held bool
+	err = tx.QueryRow(ctx, `SELECT f.deleted_at,
+		EXISTS(SELECT 1 FROM file_retention_holds h WHERE h.workspace_id=f.workspace_id AND h.file_id=f.id AND h.released_at IS NULL)
+		FROM files f WHERE f.workspace_id=$1 AND f.id=$2 FOR UPDATE`, task.workspaceID, task.fileID).Scan(&deletedAt, &held)
+	if err != nil {
+		return err
+	}
+	if held {
+		if _, err := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='cancelled',lease_owner='',lease_until=NULL,
+			last_error='cancelled_by_retention_hold',updated_at=NOW() WHERE version_id=$1`, task.versionID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	if deletedAt == nil {
+		if _, err := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='cancelled',lease_owner='',lease_until=NULL,
+			last_error='file_restored',updated_at=NOW() WHERE version_id=$1`, task.versionID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	var bucket, key string
+	var size int64
+	var charged, alreadyPurged bool
+	err = tx.QueryRow(ctx, `SELECT bucket,object_key,size_bytes,quota_charged,object_purged_at IS NOT NULL
+		FROM file_versions WHERE workspace_id=$1 AND file_id=$2 AND id=$3 FOR UPDATE`, task.workspaceID, task.fileID, task.versionID).
+		Scan(&bucket, &key, &size, &charged, &alreadyPurged)
+	if err != nil {
+		return err
+	}
+	if alreadyPurged {
+		if _, err := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='completed',lease_owner='',lease_until=NULL,
+			completed_at=COALESCE(completed_at,NOW()),updated_at=NOW() WHERE version_id=$1`, task.versionID); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+	if task.cause == "retention_expired" {
+		var expired bool
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(purge_after,deleted_at+INTERVAL '30 days')<=NOW()
+			FROM files WHERE workspace_id=$1 AND id=$2`, task.workspaceID, task.fileID).Scan(&expired); err != nil {
+			return err
+		}
+		if !expired {
+			if _, err := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='cancelled',lease_owner='',lease_until=NULL,
+				last_error='retention_deadline_not_reached',updated_at=NOW() WHERE version_id=$1`, task.versionID); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
 		}
 	}
+	if _, err := tx.Exec(ctx, `UPDATE file_versions SET object_cleanup_attempted_at=NOW() WHERE id=$1`, task.versionID); err != nil {
+		return err
+	}
+	if err := client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		wait := nextRetry(task.attempts)
+		if _, updateErr := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='pending',available_at=NOW()+make_interval(secs=>$2),
+			lease_owner='',lease_until=NULL,last_error=$3,updated_at=NOW() WHERE version_id=$1`, task.versionID, wait.Seconds(), trimPurgeError(err.Error())); updateErr != nil {
+			return updateErr
+		}
+		if _, updateErr := tx.Exec(ctx, `INSERT INTO workspace_storage_events(workspace_id,actor_label,event_type,reference_type,reference_id,details)
+			VALUES($1,$2,'file_content_purge_retry_scheduled','file_version',$3,jsonb_build_object('attempt',$4::int,'delay_seconds',$5::bigint))`,
+			task.workspaceID, purgeActor(task.actor), task.versionID, task.attempts, int64(wait.Seconds())); updateErr != nil {
+			return updateErr
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE file_versions SET object_purged_at=NOW(),quota_charged=FALSE WHERE id=$1 AND object_purged_at IS NULL`, task.versionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE workspace_storage_accounts SET physical_used_bytes=GREATEST(0,physical_used_bytes-$2),
+		quota_used_bytes=GREATEST(0,quota_used_bytes-CASE WHEN $3 THEN $4::bigint ELSE 0::bigint END),updated_at=NOW() WHERE workspace_id=$1`,
+		task.workspaceID, size, charged, size); err != nil {
+		return err
+	}
+	eventType := "file_content_purged_after_retention"
+	if task.cause == "operator_requested" {
+		eventType = "file_content_purged_by_operator"
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO workspace_storage_events(workspace_id,actor_label,event_type,physical_used_delta,
+		reference_type,reference_id,details)
+		VALUES($1,$2,$3,-$4::bigint,'file_version',$5,jsonb_build_object('reason',$6::text,'case_reference',$7::text,'attempt',$8::int))`,
+		task.workspaceID, purgeActor(task.actor), eventType, size, task.versionID, task.reason, task.caseRef, task.attempts); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE files f SET object_purged_at=NOW() WHERE f.id=$1
+		AND NOT EXISTS(SELECT 1 FROM file_versions v WHERE v.file_id=f.id AND v.object_purged_at IS NULL)`, task.fileID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='completed',lease_owner='',lease_until=NULL,
+		last_error='',completed_at=NOW(),updated_at=NOW() WHERE version_id=$1`, task.versionID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func purgeActor(actor string) string {
+	if actor == "" {
+		return "system:file-retention-worker"
+	}
+	return actor
+}
+
+func trimPurgeError(value string) string {
+	const max = 1000
+	if len(value) > max {
+		return value[:max]
+	}
+	return value
 }
 
 func purgeStoredVersion(ctx context.Context, db *pgxpool.Pool, client fileObjectRemover, workspaceID, versionID, eventType string) error {
@@ -397,12 +565,16 @@ func purgeStoredVersion(ctx context.Context, db *pgxpool.Pool, client fileObject
 	if eventType == "quarantine_expired" {
 		err = tx.QueryRow(ctx, `SELECT bucket,object_key,size_bytes,quota_charged FROM file_versions
 			WHERE id=$1 AND workspace_id=$2 AND security_status IN ('infected','unsupported') AND quarantine_until<=NOW()
-			AND object_purged_at IS NULL FOR UPDATE`, versionID, workspaceID).Scan(&bucket, &key, &size, &charged)
+			AND object_purged_at IS NULL AND NOT EXISTS(
+				SELECT 1 FROM file_retention_holds h WHERE h.workspace_id=file_versions.workspace_id
+				AND h.file_id=file_versions.file_id AND h.released_at IS NULL
+			) FOR UPDATE`, versionID, workspaceID).Scan(&bucket, &key, &size, &charged)
 	} else {
 		err = tx.QueryRow(ctx, `SELECT v.bucket,v.object_key,v.size_bytes,v.quota_charged FROM file_versions v
 			JOIN files f ON f.id=v.file_id AND f.workspace_id=v.workspace_id
 			WHERE v.id=$1 AND v.workspace_id=$2 AND v.object_purged_at IS NULL
 			AND f.deleted_at IS NOT NULL AND COALESCE(f.purge_after,f.deleted_at+INTERVAL '30 days')<=NOW()
+			AND NOT EXISTS(SELECT 1 FROM file_retention_holds h WHERE h.workspace_id=f.workspace_id AND h.file_id=f.id AND h.released_at IS NULL)
 			FOR UPDATE OF v,f`, versionID, workspaceID).Scan(&bucket, &key, &size, &charged)
 	}
 	if err != nil {
@@ -481,7 +653,14 @@ func storageReconcileTicker(ctx context.Context, logger *slog.Logger, db *pgxpoo
 		logger.Warn("storage reconciliation disabled: object storage bucket or physical limit missing")
 		return
 	}
-	reconcileWorkspaceStorage(ctx, logger, db, client, buckets, physicalLimit)
+	reconcile := func() {
+		if err := validateWorkerStorageBuckets(ctx, client, buckets); err != nil {
+			logger.Error("skip storage reconciliation because bucket versioning or scope is unsafe", "error", err)
+			return
+		}
+		reconcileWorkspaceStorage(ctx, logger, db, client, buckets, physicalLimit)
+	}
+	reconcile()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -489,7 +668,7 @@ func storageReconcileTicker(ctx context.Context, logger *slog.Logger, db *pgxpoo
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reconcileWorkspaceStorage(ctx, logger, db, client, buckets, physicalLimit)
+			reconcile()
 		}
 	}
 }
