@@ -17,7 +17,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+AlertDialogBody, } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -629,7 +629,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
         open={dialog?.type === "archive" || dialog?.type === "duplicate"}
         onOpenChange={(open) => !open && setDialog(null)}
       >
-        <AlertDialogContent>
+        <AlertDialogContent size="sm">
           <AlertDialogHeader>
             <AlertDialogTitle>
               {dialog?.type === "archive" ? "归档活动节目" : "复制活动节目"}

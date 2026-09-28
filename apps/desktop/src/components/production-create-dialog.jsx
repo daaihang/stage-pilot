@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogFormGrid } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { notify } from "@/components/ui/sonner"
 import { createProduction } from "@/lib/production-api"
@@ -79,17 +79,17 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>新建活动</DialogTitle>
           <DialogDescription>创建后自动进入这场活动的生产空间。</DialogDescription>
-        </DialogHeader>
+        </DialogHeader><DialogBody>
         <form className="space-y-3" onSubmit={submit}>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">活动名称</span>
             <Input value={form.name} onChange={set("name")} maxLength={120} placeholder="例如：2026 青年音乐节" />
           </label>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <DialogFormGrid className="gap-3">
             <div className="space-y-1.5">
                 <span className="text-sm font-medium">项目开始时间</span>
               <DateTimePicker value={form.plannedStartAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, plannedStartAt: instant }))} placeholder="选择日期与时间" />
@@ -98,7 +98,7 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
                 <span className="text-sm font-medium">预计完成时间</span>
               <DateTimePicker value={form.plannedEndAt} timezone={form.timezone} onChange={(instant) => setForm((current) => ({ ...current, plannedEndAt: instant }))} placeholder="选择日期与时间" />
             </div>
-          </div>
+          </DialogFormGrid>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">活动时区</span>
             <TimezoneCombobox value={form.timezone} onValueChange={(timezone) => setForm((current) => ({ ...current, timezone }))} className="w-full" />
@@ -108,11 +108,13 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
             <span className="text-sm font-medium">描述（可选）</span>
             <Input value={form.description} onChange={set("description")} maxLength={500} />
           </label>
-          <Button type="submit" className="w-full" disabled={creating}>
-            {creating ? "创建中..." : "创建活动"}
-          </Button>
+          <DialogFooter className="w-full">
+            <Button type="submit" className="w-full" disabled={creating}>
+              {creating ? "创建中..." : "创建活动"}
+            </Button>
+          </DialogFooter>
         </form>
-      </DialogContent>
+      </DialogBody></DialogContent>
     </Dialog>
   )
 }

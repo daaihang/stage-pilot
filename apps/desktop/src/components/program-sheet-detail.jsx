@@ -48,7 +48,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
+DialogBody, } from "@/components/ui/dialog";
 import {
   createShareLink,
   listProgramReleases,
@@ -709,13 +709,13 @@ export function ProgramSheetDetail({
         }
       />
       <Dialog open={shareOpen} onOpenChange={setShareOpen}>
-        <DialogContent>
+        <DialogContent size="sm">
           <DialogHeader>
             <DialogTitle>分享设置</DialogTitle>
             <DialogDescription>
               分享只读取当前已发布版本，公开链接仅显示观众可见内容。
             </DialogDescription>
-          </DialogHeader>
+          </DialogHeader><DialogBody>
           <div className="space-y-3">
             <Select items={[{ value: "link", label: "持有链接的任何人" }, { value: "members", label: "仅活动成员" }]} value={shareScope} onValueChange={setShareScope}>
               <SelectTrigger>
@@ -779,7 +779,7 @@ export function ProgramSheetDetail({
               </div>
             ))}
           </div>
-          <DialogFooter>
+          </DialogBody><DialogFooter>
             <Button variant="outline" onClick={() => setShareOpen(false)}>
               关闭
             </Button>

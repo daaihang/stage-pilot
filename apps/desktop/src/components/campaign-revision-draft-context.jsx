@@ -27,6 +27,7 @@ function draftSnapshot(revision) {
   return {
     form: normalizeFormVersion(revision?.formVersion || emptyFormVersion()),
     policy: clone(revision?.availabilityPolicy || {}),
+    processingMode: revision?.processingMode || "MANUAL_DECISION",
     reviewRecipeVersionId: revision?.reviewRecipeVersionId || "",
     reviewRecipeSource: revision?.reviewRecipeSource || null,
     reviewWorkflow: clone(revision?.reviewWorkflow || {}),
@@ -54,6 +55,7 @@ function currentSnapshot(state) {
   return {
     form: state.form,
     policy: state.policy,
+    processingMode: state.processingMode,
     reviewRecipeVersionId: state.reviewRecipeVersionId,
     reviewWorkflow: state.reviewWorkflow,
     materializationPlan: state.materializationPlan,
@@ -130,6 +132,7 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
           : await updateCampaignRevision(campaign.id, current.revisionId, {
             form: outgoing.form,
             availability_policy: outgoing.policy,
+          processing_mode: outgoing.processingMode,
             review_recipe_version_id: outgoing.reviewRecipeVersionId || null,
             review_workflow: outgoing.reviewWorkflow,
             materialization_plan: outgoing.materializationPlan,
@@ -162,7 +165,7 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
     if (!state.dirty || state.revisionStatus !== "draft") return undefined;
     saveTimerRef.current = window.setTimeout(() => { void enqueueSave().catch(() => {}); }, 500);
     return () => { if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current); };
-  }, [enqueueSave, state.dirty, state.revisionStatus, state.form, state.policy, state.reviewRecipeVersionId, state.reviewWorkflow, state.materializationPlan]);
+  }, [enqueueSave, state.dirty, state.revisionStatus, state.form, state.policy, state.processingMode, state.reviewRecipeVersionId, state.reviewWorkflow, state.materializationPlan]);
 
   // SPA navigation unmounts the editor without firing beforeunload. Flush a
   // pending draft so changes made immediately before returning to the list do
@@ -231,6 +234,7 @@ export function CampaignRevisionDraftProvider({ campaign, revision, production, 
     setDraft,
     setForm: (value) => setDraft("form", normalizeFormVersion(value)),
     setPolicy: (value) => setDraft("policy", value || {}),
+    setProcessingMode: (value) => setDraft("processingMode", value || "MANUAL_DECISION"),
     setReview: ({ recipeVersionId, workflow, recipeSource } = {}) => {
       if (recipeVersionId !== undefined) setDraft("reviewRecipeVersionId", recipeVersionId || "");
       if (workflow !== undefined) setDraft("reviewWorkflow", workflow || {});
@@ -289,5 +293,5 @@ export function RevisionEditorShell({ children, showPreview = false, previewButt
   if (draft.readOnly) return <div className="space-y-4"><div className="flex items-center justify-between"><Badge variant="secondary">{draft.revisionStatus === "published" ? "当前发布快照" : draft.revisionStatus === "superseded" ? "历史发布快照" : "只读版本"} · Revision {draft.revisionNo}</Badge>{showPreview ? <Button ref={draft.previewTriggerRef} variant="outline" size="sm" aria-pressed={detailOpen} onClick={() => setDetailOpen(!detailOpen)}><Eye />{detailOpen ? "关闭预览" : previewButtonLabel}</Button> : null}</div><div className="pointer-events-none opacity-70">{children}</div></div>;
 
   const publishButton = <Button type="button" size="sm" onClick={() => void validateBeforePublish()} disabled={busy}><CheckCircle2 />发布</Button>;
-  return <div ref={editorRef} className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge variant={draft.saveState === "存在冲突" ? "destructive" : "outline"}>草稿 · Revision {draft.revisionNo} · {draft.saveState}</Badge>{draft.saveState === "存在冲突" ? <Button type="button" variant="ghost" size="sm" onClick={() => void notify.promise(draft.reload(), { loading: "正在重新加载最新版本…", success: "已加载最新版本", error: "重新加载失败" }).catch(() => {})}><RefreshCw />重新加载最新版本</Button> : null}</div><div className="flex flex-wrap gap-2">{draft.toolbarAction}{showPreview ? <Button ref={draft.previewTriggerRef} type="button" variant={detailOpen ? "secondary" : "outline"} size="sm" aria-pressed={detailOpen} onClick={() => setDetailOpen(!detailOpen)}><Eye />{detailOpen ? "关闭预览" : previewButtonLabel}</Button> : null}<Button type="button" variant="outline" size="sm" onClick={() => void draft.save().catch(() => {})} disabled={busy}><Save />保存</Button><Button type="button" variant="outline" size="sm" onClick={() => void draft.validate().catch(() => {})} disabled={busy}><CheckCircle2 />校验</Button>{publishButton}</div></div>{floatingPrimary && <FloatingPrimaryAction anchorRef={editorRef}>{publishButton}</FloatingPrimaryAction>}{draft.issues.length ? <Card className="border-amber-500/40"><CardHeader className="pb-2"><CardTitle className="text-sm">校验结果</CardTitle><CardDescription>{errorCount} 个错误，{warningCount} 个警告</CardDescription></CardHeader><CardContent className="space-y-1.5">{draft.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className="flex gap-2 text-xs"><Badge variant={issue.severity === "error" ? "destructive" : "secondary"}>{issue.severity === "error" ? "错误" : "警告"}</Badge><span>{issue.message}{issue.path ? <span className="ml-1 text-muted-foreground">({issue.path})</span> : null}</span></div>)}</CardContent></Card> : null}{children}<Dialog open={confirmOpen} onOpenChange={(open) => !busy && setConfirmOpen(open)}><DialogContent><DialogHeader><DialogTitle>确认发布表单</DialogTitle><DialogDescription>发布后当前 Revision 和 FormVersion 将锁定，后续修改会创建新的草稿版本。</DialogDescription></DialogHeader><DialogFooter><Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>取消</Button><Button type="button" onClick={() => void confirmPublish()}>确认发布</Button></DialogFooter></DialogContent></Dialog></div>;
+  return <div ref={editorRef} className="space-y-4"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge variant={draft.saveState === "存在冲突" ? "destructive" : "outline"}>草稿 · Revision {draft.revisionNo} · {draft.saveState}</Badge>{draft.saveState === "存在冲突" ? <Button type="button" variant="ghost" size="sm" onClick={() => void notify.promise(draft.reload(), { loading: "正在重新加载最新版本…", success: "已加载最新版本", error: "重新加载失败" }).catch(() => {})}><RefreshCw />重新加载最新版本</Button> : null}</div><div className="flex flex-wrap gap-2">{draft.toolbarAction}{showPreview ? <Button ref={draft.previewTriggerRef} type="button" variant={detailOpen ? "secondary" : "outline"} size="sm" aria-pressed={detailOpen} onClick={() => setDetailOpen(!detailOpen)}><Eye />{detailOpen ? "关闭预览" : previewButtonLabel}</Button> : null}<Button type="button" variant="outline" size="sm" onClick={() => void draft.save().catch(() => {})} disabled={busy}><Save />保存</Button><Button type="button" variant="outline" size="sm" onClick={() => void draft.validate().catch(() => {})} disabled={busy}><CheckCircle2 />校验</Button>{publishButton}</div></div>{floatingPrimary && <FloatingPrimaryAction anchorRef={editorRef}>{publishButton}</FloatingPrimaryAction>}{draft.issues.length ? <Card className="border-amber-500/40"><CardHeader className="pb-2"><CardTitle className="text-sm">校验结果</CardTitle><CardDescription>{errorCount} 个错误，{warningCount} 个警告</CardDescription></CardHeader><CardContent className="space-y-1.5">{draft.issues.map((issue, index) => <div key={`${issue.code}-${index}`} className="flex gap-2 text-xs"><Badge variant={issue.severity === "error" ? "destructive" : "secondary"}>{issue.severity === "error" ? "错误" : "警告"}</Badge><span>{issue.message}{issue.path ? <span className="ml-1 text-muted-foreground">({issue.path})</span> : null}</span></div>)}</CardContent></Card> : null}{children}<Dialog open={confirmOpen} onOpenChange={(open) => !busy && setConfirmOpen(open)}><DialogContent size="sm"><DialogHeader><DialogTitle>确认发布表单</DialogTitle><DialogDescription>发布后当前 Revision 和 FormVersion 将锁定，后续修改会创建新的草稿版本。</DialogDescription></DialogHeader><DialogFooter><Button type="button" variant="outline" onClick={() => setConfirmOpen(false)}>取消</Button><Button type="button" onClick={() => void confirmPublish()}>确认发布</Button></DialogFooter></DialogContent></Dialog></div>;
 }

@@ -14,6 +14,7 @@ import { AccountCenter } from "@/components/account-center";
 import { DeveloperTools } from "@/components/developer-tools";
 import { PageChromeProvider, PageDetailTitlebarAction, usePageChrome } from "@/components/page-chrome";
 import { WindowDetailHost, WindowDetailProvider } from "@/components/window-detail-context";
+import { AppModalLayerProvider, useAppModalLayer } from "@/components/modal-layer-context";
 import { NavigationProvider, useNavigationData } from "@/components/navigation-provider";
 import { WorkspaceProvider, useWorkspaceContext } from "@/components/workspace-provider";
 import { UserPreferencesProvider, useUserPreferences } from "@/components/user-preferences-provider";
@@ -42,7 +43,7 @@ import { WorkspaceMembersPage, WorkspaceRolesPage } from "@/components/workspace
 import { WorkspaceTemplateLibraryPage } from "@/components/workspace-template-library-page";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Menubar, MenubarCheckboxItem, MenubarContent, MenubarItem, MenubarMenu, MenubarRadioItem, MenubarSeparator, MenubarShortcut, MenubarSub, MenubarSubContent, MenubarSubTrigger, MenubarTrigger } from "@/components/ui/menubar";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -197,6 +198,7 @@ function UnauthenticatedHome({ onOpenAuth }) {
 }
 
 function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtools, onDevtoolsChange, onRequireAuth, onOpenDocuments, onLogout, onNativeAction, isMaximized, onMinimize, onToggleMaximize, onHide }) {
+  const { active: modalOpen } = useAppModalLayer();
   const location = useLocation();
   const navigate = useNavigate();
   const {
@@ -721,13 +723,19 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtool
         {isWindows && <div className="flex h-full shrink-0"><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onMinimize}><Minus className="size-3" /></Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px]" onClick={onToggleMaximize}>{isMaximized ? <Copy className="size-3" /> : <Square className="size-3" />}</Button><Button variant="ghost" size="icon-sm" className="h-full w-[46px] hover:bg-destructive/15 hover:text-destructive" onClick={onHide}><X /></Button></div>}
       </div>
     </header>
-    <div className="flex min-h-0 min-w-0 flex-1">{shellLayout.showSidebar && <AppSidebar navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onJoinInvitation={() => setJoinInvitationOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} {...utilityBarProps} />}<SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth} floatingActionExpandAtEnd={floatingActionExpandAtEnd} bottomBar={shellLayout.showGlobalUtilityBar ? <GlobalUtilityBar variant="bottom" {...utilityBarProps} /> : null}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
+    <div className="flex min-h-0 min-w-0 flex-1" inert={modalOpen ? "" : undefined}>{shellLayout.showSidebar && <AppSidebar navigationLoading={navigationLoading} route={route} workspace={workspace} production={sidebarProduction} recentContexts={recentContexts} onOpenRecentContext={openRecentContext} workspaceSelectionMode={isWorkspacesRoute} railEnabled={sidebarRailEnabled} accountReturnPath={accountReturnPath} accountReturnLabel={accountReturnLabel} onLeaveCreation={leaveCreationSession} onCreateWorkspace={() => setCreateWorkspaceOpen(true)} onJoinInvitation={() => setJoinInvitationOpen(true)} onManageWorkspaces={() => { if (creationRequestPending && creationSession) { notify.info("正在创建活动，请稍候"); return; } if (creationSession) discardCreationSession(creationSession.id); navigate("/work"); }} {...utilityBarProps} />}<SidebarInset className="min-h-0 min-w-0 overflow-hidden"><WindowDetailHost><AppContentLayout mode={contentLayout} contentWidth={contentWidth} floatingActionExpandAtEnd={floatingActionExpandAtEnd} bottomBar={shellLayout.showGlobalUtilityBar ? <GlobalUtilityBar variant="bottom" {...utilityBarProps} /> : null}>{content}</AppContentLayout></WindowDetailHost></SidebarInset></div>
    </div><CreateWorkspaceDialog open={createWorkspaceOpen} onOpenChange={setCreateWorkspaceOpen} onCreated={handleWorkspaceCreated} /><JoinInvitationDialog open={joinInvitationOpen} onOpenChange={setJoinInvitationOpen} onAccepted={handleInvitationAccepted} /><AppSonner sidebarVisible={shellLayout.toastSidebarVisible} bottomOffset={shellLayout.toastBottomOffset} /></SidebarProvider></WindowDetailProvider></OverlayAvoidanceProvider>;
 }
 
-function SafeRoutedMainShell(props) {
+function SafeRoutedMainShell({ authDialogOpen, onAuthDialogChange, onLogin, onRegister, aboutOpen, onAboutOpenChange, ...props }) {
   const location = useLocation();
-  return <PageChromeProvider><AppErrorBoundary resetKey={`${location.pathname}${location.search}`}><RoutedMainShell {...props} /></AppErrorBoundary></PageChromeProvider>;
+  const route = matchStagePilotRoute(location.pathname, location.search);
+  const titlebarVisible = route?.mode !== "public-program-sheet" && route?.mode !== "public-campaign";
+  return <AppModalLayerProvider titlebarVisible={titlebarVisible}>
+    <PageChromeProvider><AppErrorBoundary resetKey={`${location.pathname}${location.search}`}><RoutedMainShell {...props} /></AppErrorBoundary></PageChromeProvider>
+    <AuthDialog open={authDialogOpen} onOpenChange={onAuthDialogChange} onLogin={onLogin} onRegister={onRegister} />
+    <Dialog open={aboutOpen} onOpenChange={onAboutOpenChange}><DialogContent size="sm"><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><DialogBody><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织筹备与现场执行。</p></DialogBody></DialogContent></Dialog>
+  </AppModalLayerProvider>;
 }
 
 function MainApp() {
@@ -771,7 +779,7 @@ function MainApp() {
   useEffect(() => { const suppress = (event) => event.preventDefault(); document.addEventListener("contextmenu", suppress); return () => document.removeEventListener("contextmenu", suppress); }, []);
 
   const handleDevtoolsChange = async (checked) => { setDevtools(checked); await appStore.set("devtools", checked); if (isTauriRuntime && checked) { try { await invoke("set_devtools", { enabled: true }); } catch {} } notify.message(checked ? "开发者工具已开启" : "开发者工具已关闭"); };
- return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><UserPreferencesProvider authStatus={authStatus} user={user}><NavigationProvider authStatus={authStatus}><WorkspaceProvider authStatus={authStatus}><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} /></WorkspaceProvider></NavigationProvider></UserPreferencesProvider></HashRouter><AuthDialog open={authDialogOpen} onOpenChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} /><Dialog modal={false} open={aboutOpen} onOpenChange={setAboutOpen}><DialogContent><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织筹备与现场执行。</p></DialogContent></Dialog></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
+ return <TooltipProvider><ContextMenu><ContextMenuTrigger className="contents select-text"><HashRouter><UserPreferencesProvider authStatus={authStatus} user={user}><NavigationProvider authStatus={authStatus}><WorkspaceProvider authStatus={authStatus}><SafeRoutedMainShell authStatus={authStatus} user={user} onUserUpdate={setUser} subscription={subscription} devtools={devtools} onDevtoolsChange={handleDevtoolsChange} onRequireAuth={() => setAuthDialogOpen(true)} onOpenDocuments={openDocuments} onLogout={handleLogout} onNativeAction={handleNativeAction} isMaximized={isMaximized} onMinimize={minimizeWindow} onToggleMaximize={toggleMaximize} onHide={hideWindow} authDialogOpen={authDialogOpen} onAuthDialogChange={setAuthDialogOpen} onLogin={handleLogin} onRegister={handleRegister} aboutOpen={aboutOpen} onAboutOpenChange={setAboutOpen} /></WorkspaceProvider></NavigationProvider></UserPreferencesProvider></HashRouter></ContextMenuTrigger><ContextMenuContent className="min-w-48">{contextMenuItems.map((item, index) => item === "separator" ? <ContextMenuSeparator key={`sep-${index}`} /> : <ContextMenuItem key={item.action} onClick={() => handleNativeAction(item.action)}><item.icon /><span>{item.label}</span></ContextMenuItem>)}</ContextMenuContent></ContextMenu></TooltipProvider>;
 }
 
 function App() { return <MainApp />; }

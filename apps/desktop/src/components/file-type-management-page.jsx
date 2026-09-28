@@ -16,7 +16,7 @@ import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -133,7 +133,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
 
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-md flex-col">
+      <DialogContent size="md" className="flex flex-col">
         <DialogHeader>
           <DialogTitle>{editing ? "编辑文件类型" : "新建文件类型"}</DialogTitle>
           <DialogDescription>
@@ -141,8 +141,8 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
               ? protectedName ? "系统默认类型的名称受保护，但可以调整描述。" : "名称在当前范围内必须唯一。"
               : "自定义类型只会添加到当前选中的文件归属范围。"}
           </DialogDescription>
-        </DialogHeader>
-        <DetailFormLayout className="min-h-0 flex-1" scrollBoundary="self" onSubmit={submit} error={error} busy={busy} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={() => onOpenChange(false)} busy={busy} submitLabel="保存" busyLabel="保存中…" />}>
+        </DialogHeader><DialogBody>
+        <DetailFormLayout className="min-h-0 flex-1" scrollBoundary="parent" onSubmit={submit} error={error} busy={busy} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={() => onOpenChange(false)} busy={busy} submitLabel="保存" busyLabel="保存中…" />}>
           <label className="block space-y-1">
             <span className="text-sm font-medium">名称</span>
             <Input
@@ -173,7 +173,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
             </label>
           )}
         </DetailFormLayout>
-      </DialogContent>
+      </DialogBody></DialogContent>
     </Dialog>
   );
 }
@@ -181,7 +181,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
 function ConfirmDialog({ open, title, description, confirmLabel, destructive = false, busy, onOpenChange, onConfirm }) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
-      <DialogContent className="max-w-md">
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

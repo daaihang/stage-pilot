@@ -458,6 +458,79 @@
   scroll-padding-block-end: calc(1rem + var(--app-overlay-clearance, 0px));
 }
 
+.app-modal-host {
+  position: fixed;
+  z-index: 50;
+  inset-block: var(--app-modal-top-inset, 0px) env(safe-area-inset-bottom, 0px);
+  inset-inline: 0;
+  isolation: isolate;
+  pointer-events: none;
+}
+
+.app-modal-host [data-slot="dialog-overlay"],
+.app-modal-host [data-slot="alert-dialog-overlay"] {
+  pointer-events: auto;
+}
+
+.app-modal-host [data-modal-top="true"][data-slot$="overlay"] {
+  z-index: 30;
+}
+
+.app-modal-host [data-modal-top="true"][data-slot$="content"] {
+  z-index: 40;
+}
+
+.app-dialog-content {
+  width: calc(100% - 2rem);
+  max-width: var(--app-dialog-max-width, 32rem);
+  max-height: calc(100% - min(2rem, 8dvh));
+  overflow: hidden;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+}
+
+.app-dialog-body {
+  container: app-dialog-body / inline-size;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-block-end: var(--app-dialog-body-footer-clearance, 0px);
+  scroll-padding-block-end: var(--app-dialog-body-footer-clearance, 0px);
+}
+
+.app-dialog-form-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@container app-dialog-body (min-width: 28.75rem) {
+  .app-dialog-form-grid {
+    grid-template-columns: repeat(2, minmax(14rem, 1fr));
+  }
+
+  .app-dialog-form-grid > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+.app-dialog-content form [data-slot="select-trigger"],
+.app-dialog-form-grid [data-slot="select-trigger"] {
+  width: 100%;
+}
+
+.app-dialog-content [data-slot="dialog-footer"],
+.app-dialog-content [data-slot="alert-dialog-footer"] {
+  background: var(--popover);
+}
+
+.app-dialog-body [data-slot="dialog-footer"],
+.app-dialog-body [data-slot="alert-dialog-footer"] {
+  position: sticky;
+  z-index: 10;
+  inset-block-end: 0;
+  margin-block-start: 0.75rem;
+  padding-block: 0.75rem 0.25rem;
+  border-block-start: 1px solid var(--border);
+}
+
 @media (min-width: 48rem) {
   .app-content-scroll {
     padding-block-end: calc(1.5rem + var(--app-overlay-clearance, 0px));

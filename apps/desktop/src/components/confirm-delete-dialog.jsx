@@ -1,4 +1,4 @@
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogBody, } from "@/components/ui/alert-dialog";
 
 /**
  * Shared destructive confirmation for soft-deleted resources.
@@ -26,7 +26,7 @@ export function ConfirmDeleteDialog({
         if (!busy) onOpenChange?.(nextOpen);
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogTitle>删除{resourceType}</AlertDialogTitle>
           <AlertDialogDescription>

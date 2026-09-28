@@ -4,7 +4,7 @@ import { CampaignFormRenderer } from "@/components/campaign-form-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -65,7 +65,7 @@ function DecisionDialog({ actionType, busy, legacyRequired, onOpenChange, onSubm
   if (!action) return null;
   return (
     <Dialog open={Boolean(actionType)} onOpenChange={(open) => !busy && onOpenChange(open)}>
-      <DialogContent>
+      <DialogContent size="sm"><DialogBody>
         <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
           <DialogHeader>
             <DialogTitle>确认{action.label}提交</DialogTitle>
@@ -82,7 +82,7 @@ function DecisionDialog({ actionType, busy, legacyRequired, onOpenChange, onSubm
             <Button type="submit" variant={action.variant} disabled={busy || (legacyRequired && !legacyOverride)}>{busy ? "正在保存…" : "确认" + action.label}</Button>
           </DialogFooter>
         </form>
-      </DialogContent>
+      </DialogBody></DialogContent>
     </Dialog>
   );
 }
@@ -94,6 +94,7 @@ function ReviewRunCard({ detail, members, onAssign, assignmentBusy }) {
   const run = detail?.review;
   const activeReviewers = members || [];
   useEffect(() => { setTaskId(""); setReviewerId(""); setReason(""); }, [run?.id]);
+  if (detail?.entry?.processingMode === "COLLECT_ONLY") return <Card><CardHeader><div className="flex items-center gap-2"><CardTitle className="text-sm">审核状态</CardTitle><Badge variant="outline">无需审核</Badge></div><CardDescription>该 Entry 固定采用仅收集处理方式，不创建审核任务、反馈或审核人分配。</CardDescription></CardHeader><CardContent className="text-sm text-muted-foreground">如需处理结果，请在未来单独启用相应处理路径；此处不能通过遗留覆盖改变该 Entry。</CardContent></Card>;
   if (!run) return <Card><CardHeader><CardTitle className="text-sm">审核状态</CardTitle></CardHeader><CardContent className="space-y-3 text-sm text-muted-foreground"><p>该存量提交没有可运行的审核任务。管理员可使用带原因的遗留流程覆盖作出决定。</p></CardContent></Card>;
   const runLabels = { awaiting_assignment: "待补足审核人", collecting_feedback: "收集审核意见中", ready_for_decision: "已达到决定门槛", decided: "已完成决定", blocked_unsupported: "存量审核配置不兼容", legacy_override_decided: "已通过遗留流程覆盖" };
   const pendingTasks = run.tasks.filter((task) => task.status === "pending");
@@ -161,11 +162,13 @@ function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, o
   const [decisionType, setDecisionType] = useState(null);
   const entry = detail?.entry;
   const state = detail?.inboxState || {};
+  useEffect(() => { setDecisionType(null); }, [entry?.id, entry?.processingMode]);
   const decisionState = getEntryReviewDecisionState({
     canDecide: Boolean(detail?.canDecide),
     entryStatus: entry?.status,
     reviewStatus: detail?.review?.status,
     hasDecision: Boolean(detail?.decision),
+    processingMode: entry?.processingMode,
   });
   const { legacyRequired } = decisionState;
   const canDecide = decisionState.canSubmitDecision;
@@ -196,6 +199,7 @@ function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, o
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Badge>{STATUS_LABELS[entry.status] || entry.status}</Badge>
+        {entry.processingMode === "COLLECT_ONLY" ? <Badge variant="outline">仅收集</Badge> : null}
         {entry.contactEmail ? <span className="text-xs text-muted-foreground">{entry.contactEmail}</span> : null}
         <Button type="button" variant="ghost" size="sm" onClick={() => void toggle("is_read", !state.isRead)}>{state.isRead ? "标记未读" : "标记已读"}</Button>
       </div>
@@ -225,19 +229,22 @@ function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, o
       </Card>
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
-          <CardHeader className="gap-3">
+        <CardHeader className="gap-3">
             <CardTitle className="text-sm">决定</CardTitle>
+          {entry.processingMode === "COLLECT_ONLY" ? <p className="text-xs text-muted-foreground">仅收集记录不适用接受、候补、拒绝或遗留流程覆盖。</p> : null}
             {decisionState.quorumPending ? <p className="text-xs text-muted-foreground">审核门槛尚未达到，当前不可作最终决定。</p> : null}
             {canDecide ? <div className="flex flex-wrap gap-2">{Object.entries(DECISION_ACTIONS).map(([type, action]) => <Button key={type} type="button" size="sm" variant={action.variant} onClick={() => setDecisionType(type)} disabled={decisionBusy}>{action.label}</Button>)}</div> : null}
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
-            {detail.decision ? <div className="rounded-md border p-3"><p className="font-medium text-foreground">当前：{DECISION_ACTIONS[detail.decision.type]?.label || detail.decision.type}</p><p className="mt-1">{detail.decision.reason || "无备注"}</p><p className="mt-1 text-xs">作出于 {formatDate(detail.decision.decidedAt)}</p></div> : <p>当前没有 Decision。</p>}
-            {detail.decisionHistory?.length ? <div className="space-y-2"><p className="text-xs font-medium text-foreground">决定历史</p>{detail.decisionHistory.map((decision) => <div key={decision.id} className="border-t pt-2 text-xs"><p className="font-medium text-foreground">{DECISION_ACTIONS[decision.type]?.label || decision.type}</p><p>{decision.reason || "无备注"} · {formatDate(decision.decidedAt)}</p></div>)}</div> : null}
+            {entry.processingMode === "COLLECT_ONLY" ? <p>该路径不会创建 Decision 或 Materialization。</p> : <>
+              {detail.decision ? <div className="rounded-md border p-3"><p className="font-medium text-foreground">当前：{DECISION_ACTIONS[detail.decision.type]?.label || detail.decision.type}</p><p className="mt-1">{detail.decision.reason || "无备注"}</p><p className="mt-1 text-xs">作出于 {formatDate(detail.decision.decidedAt)}</p></div> : <p>当前没有 Decision。</p>}
+              {detail.decisionHistory?.length ? <div className="space-y-2"><p className="text-xs font-medium text-foreground">决定历史</p>{detail.decisionHistory.map((decision) => <div key={decision.id} className="border-t pt-2 text-xs"><p className="font-medium text-foreground">{DECISION_ACTIONS[decision.type]?.label || decision.type}</p><p>{decision.reason || "无备注"} · {formatDate(decision.decidedAt)}</p></div>)}</div> : null}
+            </>}
           </CardContent>
         </Card>
-        <Card><CardHeader><CardTitle className="text-sm">转化</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{detail.materializations?.length ? detail.materializations.length + " 条转化记录" : "当前没有 Materialization。"}</CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-sm">转化</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{entry.processingMode === "COLLECT_ONLY" ? "仅收集方式不支持结果转化。" : detail.materializations?.length ? detail.materializations.length + " 条转化记录" : "当前没有 Materialization。"}</CardContent></Card>
       </div>
-      <DecisionDialog actionType={decisionType} busy={decisionBusy} legacyRequired={legacyRequired} onOpenChange={(open) => !open && setDecisionType(null)} onSubmit={(payload) => onDecision(entry.id, payload)} />
+      {entry.processingMode === "COLLECT_ONLY" ? null : <DecisionDialog actionType={decisionType} busy={decisionBusy} legacyRequired={legacyRequired} onOpenChange={(open) => !open && setDecisionType(null)} onSubmit={(payload) => onDecision(entry.id, payload)} />}
     </div>
   );
 }
@@ -431,7 +438,7 @@ export function CampaignEntryInbox({ campaignId }) {
           <div className="divide-y rounded-md border">
             {items.map((item) => <div key={item.id} className={`flex items-center gap-3 px-3 py-3 text-sm transition-colors hover:bg-muted/40 ${!item.inboxState?.isRead ? "bg-primary/5" : ""}`}>
               <button type="button" ref={selectedId === item.id ? triggerRef : undefined} className="min-w-0 flex-1 text-left" onClick={() => void openEntry(item)}>
-                <div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.id}</span>{!item.inboxState?.isRead ? <Badge variant="secondary">未读</Badge> : null}<Badge variant="outline">{STATUS_LABELS[item.status] || item.status}</Badge></div>
+                <div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.id}</span>{!item.inboxState?.isRead ? <Badge variant="secondary">未读</Badge> : null}<Badge variant="outline">{STATUS_LABELS[item.status] || item.status}</Badge>{item.processingMode === "COLLECT_ONLY" ? <Badge variant="outline">仅收集</Badge> : null}</div>
                 <p className="mt-1 truncate text-xs text-muted-foreground">{item.contactEmail || "匿名提交"} · {formatDate(item.submittedAt || item.lastActivityAt)} · Revision {item.currentRevisionNo}</p>
               </button>
               <Button type="button" variant={item.inboxState?.isStarred ? "secondary" : "ghost"} size="icon" aria-label={item.inboxState?.isStarred ? "取消星标" : "标记星标"} onClick={async (event) => { event.stopPropagation(); try { const next = await updateEntryInboxState(item.id, { isStarred: !item.inboxState?.isStarred }); setItems((current) => current.map((row) => row.id === item.id ? { ...row, inboxState: { ...row.inboxState, isStarred: next.isStarred } } : row)); notify.success(next.isStarred ? "已标记星标" : "已取消星标"); } catch (nextError) { notify.error("更新星标失败", { description: nextError?.message || String(nextError) }); } }}><Star className={item.inboxState?.isStarred ? "fill-current" : ""} /></Button>

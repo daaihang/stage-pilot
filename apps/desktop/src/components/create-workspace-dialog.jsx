@@ -1,7 +1,7 @@
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { notify } from "@/components/ui/sonner"
 import { createWorkspace } from "@/lib/workspace-api"
@@ -34,22 +34,22 @@ export function CreateWorkspaceDialog({ open, onOpenChange, onCreated }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>创建工作空间</DialogTitle>
           <DialogDescription>创建后你将自动成为 OWNER，并进入这个工作空间的工作台。</DialogDescription>
-        </DialogHeader>
+        </DialogHeader><DialogBody>
         <form className="space-y-4" onSubmit={submit}>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">工作空间名称</span>
             <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：南宁高中传媒社团联盟" maxLength={80} autoFocus />
           </label>
-          <div className="flex justify-end gap-2">
+          <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={creating}>取消</Button>
             <Button type="submit" disabled={creating}>{creating ? "创建中..." : "创建工作空间"}</Button>
-          </div>
+          </DialogFooter>
         </form>
-      </DialogContent>
+      </DialogBody></DialogContent>
     </Dialog>
   )
 }

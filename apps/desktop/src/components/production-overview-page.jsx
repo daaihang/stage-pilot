@@ -26,7 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { previewProductionTimezone, productionStatusLabel } from "@/lib/production-api";
 import { getSupportedTimeZones, resolveWallClockTime, timeZoneCityLabel } from "@/lib/timezone";
@@ -88,13 +88,13 @@ const TIMEZONE_KEEP_INSTANT = "keep_instant";
 function ProductionTimezoneChangeDialog({ open, onOpenChange, currentTimezone, nextTimezone, strategy, onStrategyChange, onConfirm, busy, preview, previewLoading }) {
   return (
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
-      <DialogContent className="max-w-md">
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>更改活动时区</DialogTitle>
           <DialogDescription>
             {timeZoneCityLabel(currentTimezone)}（{currentTimezone}）→ {timeZoneCityLabel(nextTimezone)}（{nextTimezone}）。请选择如何处理已有的计划时间；实际发生时间不会改变。
           </DialogDescription>
-        </DialogHeader>
+        </DialogHeader><DialogBody>
         <RadioGroup value={strategy} onValueChange={onStrategyChange} className="gap-2">
           <label className="flex cursor-pointer items-start gap-2 border p-3">
             <RadioGroupItem value={TIMEZONE_KEEP_WALL_TIME} className="mt-0.5" />
@@ -108,7 +108,7 @@ function ProductionTimezoneChangeDialog({ open, onOpenChange, currentTimezone, n
         <div className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
           {previewLoading ? "正在计算受影响的计划…" : preview ? <><p>将影响 {preview.counts.occurrences} 个场次、{preview.counts.rehearsals} 个彩排和 {preview.counts.schedule_items} 个排程项目。</p>{preview.samples?.some((item) => item.date_changed) ? <p className="mt-1 text-amber-600">部分时间会发生日期变化，请确认后继续。</p> : null}</> : "无法加载影响摘要，确认后服务端仍会再次校验。"}
         </div>
-        <DialogFooter>
+        </DialogBody><DialogFooter>
           <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>
           <Button type="button" disabled={busy} onClick={onConfirm}>{busy ? "保存中…" : "确认更改"}</Button>
         </DialogFooter>

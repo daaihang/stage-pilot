@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogBody, } from "@/components/ui/alert-dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -15,6 +15,10 @@ import { isExecutableSingleRoundWorkflow, resolveReviewRecipeSource, reviewRecip
 import { resolveSelectItems } from "@/lib/select-options";
 
 const roles = { producer: "Producer", editor: "Editor", stage_manager: "Stage Manager", contributor: "Contributor", viewer: "Viewer" };
+const processingModes = [
+  { value: "COLLECT_ONLY", label: "仅收集" },
+  { value: "MANUAL_DECISION", label: "单轮人工审核后决定" },
+];
 
 function newRound(source = {}) {
   const policy = source.reviewer_policy || {};
@@ -55,6 +59,14 @@ export function CampaignReviewEditor() {
   const [pendingRecipeVersionId, setPendingRecipeVersionId] = useState("");
   const [confirmRecipeChange, setConfirmRecipeChange] = useState(false);
   const source = draft.reviewWorkflow && typeof draft.reviewWorkflow === "object" ? draft.reviewWorkflow : makeSingleRound();
+  const processingMode = draft.processingMode || "MANUAL_DECISION";
+  const processingModeField = <Field>
+    <FieldLabel htmlFor="campaign-processing-mode">提交后处理方式</FieldLabel>
+    <Select items={processingModes} value={processingMode} disabled={draft.readOnly} onValueChange={(value) => draft.setProcessingMode(value)}>
+      <SelectTrigger id="campaign-processing-mode"><SelectValue /></SelectTrigger>
+      <SelectContent>{processingModes.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+    </Select>
+  </Field>;
   const hasSavedWorkflow = Boolean(draft.reviewWorkflow && typeof draft.reviewWorkflow === "object" && Object.keys(draft.reviewWorkflow).length);
   const supported = isExecutableSingleRoundWorkflow(source);
   const round = supported ? source.rounds[0] : null;
@@ -135,8 +147,15 @@ export function CampaignReviewEditor() {
     applyRecipe(recipe);
   };
 
+  if (processingMode === "COLLECT_ONLY") {
+    return <Card>
+      <CardHeader><CardTitle className="text-sm">仅收集</CardTitle><CardDescription>提交后只保存 Entry 和答案版本，不创建审核任务或决定；工作人员可查看记录，但不能从该路径作出接受、候补或拒绝决定。</CardDescription></CardHeader>
+      <CardContent className="space-y-4">{processingModeField}<div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">原有审核方案来源与参数已保留为未启用草稿配置。切回人工审核时，这些参数会重新参与校验；请检查来源、审核人和完成门槛后再发布。</div></CardContent>
+    </Card>;
+  }
+
   if (!supported) {
-    return <Card><CardHeader><CardTitle className="text-sm">审核配置需要切换到单轮模式</CardTitle><CardDescription>当前只能发布单轮并行人工审核。评分、多轮、补件及自动决定暂不可运行。</CardDescription></CardHeader><CardContent className="space-y-3"><Button type="button" disabled={draft.readOnly || !recipes.length} onClick={() => { draft.setReview({ recipeVersionId: recipes[0].publishedVersionId, workflow: workflowForContext(source), recipeSource: reviewRecipeSourceFromCatalogItem(recipes[0]) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
+    return <Card><CardHeader><CardTitle className="text-sm">审核配置需要切换到单轮模式</CardTitle><CardDescription>当前只能发布单轮并行人工审核。评分、多轮、补件及自动决定暂不可运行。</CardDescription></CardHeader><CardContent className="space-y-3">{processingModeField}<Button type="button" disabled={draft.readOnly || !recipes.length} onClick={() => { draft.setReview({ recipeVersionId: recipes[0].publishedVersionId, workflow: workflowForContext(source), recipeSource: reviewRecipeSourceFromCatalogItem(recipes[0]) }); notify.success("已转换为单轮人工审核", { description: "请检查审核人和完成门槛后再发布。" }); }}>转换为单轮人工审核</Button><p className="text-xs text-muted-foreground">转换会保留第一轮的审核人和完成门槛；其他轮次、评分与补件设置会移除。</p></CardContent></Card>;
   }
 
   const completionValue = round.completion.mode === "all" ? "all" : "at_least_n";
@@ -150,6 +169,7 @@ export function CampaignReviewEditor() {
   return <Card>
     <CardHeader><CardTitle className="text-sm">单轮人工审核</CardTitle><CardDescription>提交后按此版本快照创建并行审核任务。反馈必填文字意见，不是最终决定；完成门槛满足后由有决定权限的成员作出结果。</CardDescription></CardHeader>
     <CardContent className="space-y-4">
+      {processingModeField}
       <Field>
         <FieldLabel htmlFor="review-recipe">审核方案来源</FieldLabel>
         <Select items={recipeSelect.items} value={recipeValue} disabled={draft.readOnly || recipesLoading || recipes.length === 0} onValueChange={selectRecipe}>
@@ -178,7 +198,7 @@ export function CampaignReviewEditor() {
       </div>
     </CardContent>
     <AlertDialog open={confirmRecipeChange} onOpenChange={setConfirmRecipeChange}>
-      <AlertDialogContent>
+      <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogTitle>切换审核方案并重置参数？</AlertDialogTitle>
           <AlertDialogDescription>当前审核参数已偏离来源基线。切换后将用新方案的已发布版本重新初始化此草稿的审核参数；取消则保留现有来源和配置。</AlertDialogDescription>
