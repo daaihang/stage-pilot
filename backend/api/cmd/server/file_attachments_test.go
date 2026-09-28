@@ -125,10 +125,11 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 		t.Fatalf("non-uploader completed upload = %d", response.Code)
 	}
 	completed := authedRequest(t, app, ownerToken, http.MethodPost, completeURL, nil)
-	if completed.Code != 200 {
+	if completed.Code != http.StatusAccepted {
 		t.Fatalf("complete rights attachment = %d: %s", completed.Code, completed.Body.String())
 	}
-	if response := authedRequest(t, app, ownerToken, http.MethodPost, completeURL, nil); response.Code != 200 {
+	firstVersion := attachmentResponse(t, completed.Body.Bytes())["version_id"].(string)
+	if response := authedRequest(t, app, ownerToken, http.MethodPost, completeURL, nil); response.Code != http.StatusAccepted {
 		t.Fatalf("idempotent complete = %d", response.Code)
 	}
 	if response := authedRequest(t, app, memberToken, http.MethodGet, programURL, nil); response.Code != 200 || bytes.Contains(response.Body.Bytes(), []byte(attachmentID)) {
@@ -143,10 +144,13 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 	if response := authedRequest(t, app, memberToken, http.MethodGet, "/v1/attachments/"+attachmentID+"/download", nil); response.Code != 404 {
 		t.Fatalf("member rights download = %d", response.Code)
 	}
-	firstVersion := attachmentResponse(t, completed.Body.Bytes())["version_id"].(string)
 	if response := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/attachments/"+attachmentID+"/download?version_id="+newID(), nil); response.Code != 404 {
 		t.Fatalf("unrelated historical version = %d", response.Code)
 	}
+	if response := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/attachments/"+attachmentID+"/download?version_id="+firstVersion, nil); response.Code != 404 {
+		t.Fatalf("unscanned attachment version download = %d", response.Code)
+	}
+	markFileVersionClean(t, app, fileID, firstVersion)
 	firstDownload := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/attachments/"+attachmentID+"/download?version_id="+firstVersion, nil)
 	if firstDownload.Code != 200 {
 		t.Fatalf("version download = %d", firstDownload.Code)
@@ -162,9 +166,18 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 	}
 	newUpload := attachmentResponse(t, newVersion.Body.Bytes())["upload"].(map[string]any)
 	signedFilePut(t, newUpload["url"].(string), "second")
-	if response := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/file-upload-sessions/"+newUpload["upload_id"].(string)+"/complete", nil); response.Code != 200 {
-		t.Fatalf("complete v2 = %d: %s", response.Code, response.Body.String())
+	v2Complete := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/file-upload-sessions/"+newUpload["upload_id"].(string)+"/complete", nil)
+	if v2Complete.Code != http.StatusAccepted {
+		t.Fatalf("complete v2 = %d: %s", v2Complete.Code, v2Complete.Body.String())
 	}
+	v2 := attachmentResponse(t, v2Complete.Body.Bytes())["version_id"].(string)
+	if response := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/attachments/"+attachmentID+"/download", nil); response.Code != 200 {
+		t.Fatalf("previous clean attachment unavailable during scan = %d", response.Code)
+	}
+	if response := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/attachments/"+attachmentID+"/download?version_id="+v2, nil); response.Code != 404 {
+		t.Fatalf("unscanned v2 download = %d", response.Code)
+	}
+	markFileVersionClean(t, app, fileID, v2)
 	if response := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/attachments/"+attachmentID+"/versions", nil); response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"version_no":2`)) {
 		t.Fatalf("history missing v2: %d %s", response.Code, response.Body.String())
 	}
@@ -174,10 +187,13 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 	}
 	standardUpload := attachmentResponse(t, standard.Body.Bytes())["upload"].(map[string]any)
 	signedFilePut(t, standardUpload["url"].(string), "notes")
-	if response := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/file-upload-sessions/"+standardUpload["upload_id"].(string)+"/complete", nil); response.Code != 200 {
-		t.Fatalf("complete ordinary attachment = %d", response.Code)
+	standardComplete := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/file-upload-sessions/"+standardUpload["upload_id"].(string)+"/complete", nil)
+	if standardComplete.Code != http.StatusAccepted {
+		t.Fatalf("complete ordinary attachment = %d", standardComplete.Code)
 	}
-	standardID := attachmentResponse(t, standard.Body.Bytes())["attachment_id"].(string)
+	standardBody := attachmentResponse(t, standard.Body.Bytes())
+	standardID := standardBody["attachment_id"].(string)
+	markFileVersionClean(t, app, standardBody["file_id"].(string), attachmentResponse(t, standardComplete.Body.Bytes())["version_id"].(string))
 	if response := authedRequest(t, app, memberToken, http.MethodGet, programURL, nil); response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(standardID)) {
 		t.Fatalf("workspace member could not see ordinary attachment: %d %s", response.Code, response.Body.String())
 	}
@@ -189,10 +205,15 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 		t.Fatalf("source read restriction did not block copy = %d", response.Code)
 	}
 	copyA := authedRequest(t, app, ownerToken, http.MethodPost, copyURLA, map[string]any{"attachment_id": attachmentID, "version_id": firstVersion})
-	if copyA.Code != 201 {
+	if copyA.Code != http.StatusAccepted {
 		t.Fatalf("copy activity A = %d: %s", copyA.Code, copyA.Body.String())
 	}
-	copyAttachmentID := attachmentResponse(t, copyA.Body.Bytes())["attachment_id"].(string)
+	copyABody := attachmentResponse(t, copyA.Body.Bytes())
+	copyAttachmentID := copyABody["attachment_id"].(string)
+	if response := authedRequest(t, app, producerToken, http.MethodGet, "/v1/attachments/"+copyAttachmentID+"/download", nil); response.Code != 404 {
+		t.Fatalf("unscanned copied attachment download = %d", response.Code)
+	}
+	markFileVersionClean(t, app, copyABody["file_id"].(string), copyABody["version_id"].(string))
 	if response := authedRequest(t, app, producerToken, http.MethodGet, "/v1/attachments/"+copyAttachmentID+"/download", nil); response.Code != 200 {
 		t.Fatalf("direct producer rights download = %d", response.Code)
 	}
@@ -204,10 +225,12 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 	}
 	copyURLB := "/v1/productions/" + productionB + "/programs/" + activityB + "/attachments/copy"
 	copyB := authedRequest(t, app, ownerToken, http.MethodPost, copyURLB, map[string]any{"attachment_id": attachmentID, "version_id": firstVersion})
-	if copyB.Code != 201 {
+	if copyB.Code != http.StatusAccepted {
 		t.Fatalf("copy activity B = %d: %s", copyB.Code, copyB.Body.String())
 	}
-	copyBID := attachmentResponse(t, copyB.Body.Bytes())["attachment_id"].(string)
+	copyBBody := attachmentResponse(t, copyB.Body.Bytes())
+	copyBID := copyBBody["attachment_id"].(string)
+	markFileVersionClean(t, app, copyBBody["file_id"].(string), copyBBody["version_id"].(string))
 	if response := authedRequest(t, app, producerToken, http.MethodGet, "/v1/attachments/"+copyBID+"/download", nil); response.Code != 404 {
 		t.Fatalf("activity A producer accessed activity B copy = %d", response.Code)
 	}

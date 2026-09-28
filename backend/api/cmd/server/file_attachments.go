@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func registerFileAttachmentRoutes(app *application, mux *http.ServeMux) {
@@ -19,16 +21,11 @@ func registerFileAttachmentRoutes(app *application, mux *http.ServeMux) {
 }
 
 func (app *application) parentFromRoute(r *http.Request, kind fileParentKind) (fileParent, error) {
-	p := fileParent{Kind: kind, ID: r.PathValue("programId")}
-	if kind == programFileParent {
-		p.WorkspaceID = r.PathValue("id")
-	} else {
-		p.ProductionID = r.PathValue("productionId")
-		if err := app.db.QueryRow(r.Context(), `SELECT workspace_id FROM productions WHERE id=$1 AND deleted_at IS NULL`, p.ProductionID).Scan(&p.WorkspaceID); err != nil {
-			return p, err
-		}
+	adapter := app.fileParentAdapter(kind)
+	if adapter == nil {
+		return fileParent{}, pgx.ErrNoRows
 	}
-	return app.resolveFileParent(r.Context(), p)
+	return adapter.FromRoute(r)
 }
 
 func (app *application) attachmentFileType(ctx context.Context, workspaceID string, id *string) (bool, bool) {
@@ -46,23 +43,12 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 		errorJSON(w, 404, "parent_not_found", "节目不存在或无权访问")
 		return
 	}
-	query := `SELECT a.id,a.file_id,a.file_type_id,a.security_class,f.status,v.id,v.version_no,v.filename,v.content_type,v.size_bytes
-		FROM file_attachments a JOIN files f ON f.id=a.file_id AND f.workspace_id=a.workspace_id
-		JOIN file_versions v ON v.id=f.current_version_id
-		JOIN program_file_attachments x ON x.attachment_id=a.id
-		WHERE x.workspace_id=$1 AND x.program_id=$2 AND a.deleted_at IS NULL AND f.deleted_at IS NULL AND f.status='uploaded' ORDER BY a.created_at,a.id`
-	if kind == productionProgramFileParent {
-		query = `SELECT a.id,a.file_id,a.file_type_id,a.security_class,f.status,v.id,v.version_no,v.filename,v.content_type,v.size_bytes
-		FROM file_attachments a JOIN files f ON f.id=a.file_id AND f.workspace_id=a.workspace_id
-		JOIN file_versions v ON v.id=f.current_version_id
-		JOIN production_program_file_attachments x ON x.attachment_id=a.id
-		WHERE x.workspace_id=$1 AND x.production_program_id=$2 AND x.production_id=$3 AND a.deleted_at IS NULL AND f.deleted_at IS NULL AND f.status='uploaded' ORDER BY a.created_at,a.id`
+	adapter := app.fileParentAdapter(kind)
+	if adapter == nil {
+		serverError(w, pgx.ErrNoRows)
+		return
 	}
-	args := []any{p.WorkspaceID, p.ID}
-	if kind == productionProgramFileParent {
-		args = append(args, p.ProductionID)
-	}
-	rows, err := app.db.Query(r.Context(), query, args...)
+	rows, err := adapter.List(r.Context(), app.db, p)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -71,18 +57,20 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 	items := []map[string]any{}
 	for rows.Next() {
 		var a attachmentAccess
-		var versionID, filename, contentType string
+		var versionID, filename, contentType, scanStatus string
 		var versionNo int
 		var size int64
-		if err := rows.Scan(&a.ID, &a.FileID, &a.FileTypeID, &a.SecurityClass, &a.Status, &versionID, &versionNo, &filename, &contentType, &size); err != nil {
+		var hasCleanVersion bool
+		if err := rows.Scan(&a.ID, &a.FileID, &a.FileTypeID, &a.SecurityClass, &a.Status, &versionID, &versionNo, &filename, &contentType, &size, &scanStatus, &hasCleanVersion); err != nil {
 			serverError(w, err)
 			return
 		}
 		a.Parent = p
+		a.HasCleanVersion = hasCleanVersion
 		if !app.authorizeFileParent(r.Context(), claims(r).Subject, p, a.SecurityClass, fileView) {
 			continue
 		}
-		items = append(items, map[string]any{"id": a.ID, "file_id": a.FileID, "file_type_id": a.FileTypeID, "security_class": a.SecurityClass, "version_id": versionID, "version_no": versionNo, "filename": filename, "content_type": contentType, "size_bytes": size, "capabilities": app.fileCapabilities(r.Context(), claims(r).Subject, a)})
+		items = append(items, map[string]any{"id": a.ID, "file_id": a.FileID, "file_type_id": a.FileTypeID, "security_class": a.SecurityClass, "version_id": versionID, "version_no": versionNo, "filename": filename, "content_type": contentType, "size_bytes": size, "scan_status": publicScanStatus(scanStatus), "has_clean_version": hasCleanVersion, "capabilities": app.fileCapabilities(r.Context(), claims(r).Subject, a)})
 	}
 	if err := rows.Err(); err != nil {
 		serverError(w, err)
@@ -160,11 +148,12 @@ func (app *application) createAttachment(w http.ResponseWriter, r *http.Request,
 		serverError(w, err)
 		return
 	}
-	if kind == programFileParent {
-		_, err = tx.Exec(r.Context(), `INSERT INTO program_file_attachments(attachment_id,workspace_id,program_id) VALUES($1,$2,$3)`, attachmentID, p.WorkspaceID, p.ID)
-	} else {
-		_, err = tx.Exec(r.Context(), `INSERT INTO production_program_file_attachments(attachment_id,workspace_id,production_id,production_program_id) VALUES($1,$2,$3,$4)`, attachmentID, p.WorkspaceID, p.ProductionID, p.ID)
+	adapter := app.fileParentAdapter(kind)
+	if adapter == nil {
+		serverError(w, pgx.ErrNoRows)
+		return
 	}
+	err = adapter.Attach(r.Context(), tx, attachmentID, p)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -250,8 +239,9 @@ func (app *application) downloadAttachment(w http.ResponseWriter, r *http.Reques
 	}
 	versionID := strings.TrimSpace(r.URL.Query().Get("version_id"))
 	if versionID == "" {
-		if err := app.db.QueryRow(r.Context(), `SELECT current_version_id FROM files WHERE id=$1`, a.FileID).Scan(&versionID); err != nil {
-			serverError(w, err)
+		if err := app.db.QueryRow(r.Context(), `SELECT v.id FROM files f JOIN file_versions v ON v.id=f.current_version_id
+			WHERE f.id=$1 AND v.security_status='clean' AND v.object_purged_at IS NULL`, a.FileID).Scan(&versionID); err != nil {
+			errorJSON(w, 404, "version_not_ready", "附件尚无通过安全检查的版本")
 			return
 		}
 	}
@@ -299,14 +289,16 @@ func (app *application) copyProductionProgramAttachment(w http.ResponseWriter, r
 	}
 	versionID := in.VersionID
 	if versionID == "" {
-		if err := app.db.QueryRow(r.Context(), `SELECT current_version_id FROM files WHERE id=$1`, source.FileID).Scan(&versionID); err != nil {
-			serverError(w, err)
+		if err := app.db.QueryRow(r.Context(), `SELECT v.id FROM files f JOIN file_versions v ON v.id=f.current_version_id
+			WHERE f.id=$1 AND v.security_status='clean' AND v.object_purged_at IS NULL`, source.FileID).Scan(&versionID); err != nil {
+			errorJSON(w, 409, "version_not_ready", "来源附件尚无通过安全检查的版本")
 			return
 		}
 	}
 	var bucket, key, filename, contentType, sourceETag string
 	var size int64
-	err = app.db.QueryRow(r.Context(), `SELECT bucket,object_key,filename,content_type,size_bytes,etag FROM file_versions WHERE id=$1 AND file_id=$2`, versionID, source.FileID).Scan(&bucket, &key, &filename, &contentType, &size, &sourceETag)
+	err = app.db.QueryRow(r.Context(), `SELECT bucket,object_key,filename,content_type,size_bytes,etag FROM file_versions
+		WHERE id=$1 AND file_id=$2 AND security_status='clean' AND object_purged_at IS NULL`, versionID, source.FileID).Scan(&bucket, &key, &filename, &contentType, &size, &sourceETag)
 	if err != nil {
 		errorJSON(w, 404, "version_not_found", "来源版本不存在")
 		return
@@ -350,11 +342,6 @@ func (app *application) copyProductionProgramAttachment(w http.ResponseWriter, r
 		serverError(w, err)
 		return
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE files SET current_version_id=$1 WHERE id=$2`, newVersionID, newFileID)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
 	_, err = tx.Exec(r.Context(), `INSERT INTO file_attachments(id,workspace_id,file_id,file_type_id,security_class,created_by) VALUES($1,$2,$3,$4,$5,$6)`, newAttachmentID, p.WorkspaceID, newFileID, source.FileTypeID, source.SecurityClass, claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
@@ -369,10 +356,15 @@ func (app *application) copyProductionProgramAttachment(w http.ResponseWriter, r
 		serverError(w, err)
 		return
 	}
+	_, err = tx.Exec(r.Context(), `INSERT INTO file_scan_tasks(id,workspace_id,file_id,version_id,idempotency_key) VALUES($1,$2,$3,$4,$5)`, "scan-"+newVersionID, p.WorkspaceID, newFileID, newVersionID, "version:"+newVersionID)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return
 	}
 	committed = true
-	writeJSON(w, 201, map[string]any{"attachment_id": newAttachmentID, "file_id": newFileID, "version_id": newVersionID})
+	writeJSON(w, http.StatusAccepted, map[string]any{"attachment_id": newAttachmentID, "file_id": newFileID, "version_id": newVersionID, "status": "processing"})
 }

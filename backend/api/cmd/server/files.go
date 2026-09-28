@@ -59,9 +59,9 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	if v, e := time.ParseDuration(os.Getenv("S3_UPLOAD_URL_TTL")); e == nil && v > 0 {
 		ttl = v
 	}
-	max := int64(5 << 30)
+	max := int64(2_000_000_000)
 	if v, e := strconv.ParseInt(os.Getenv("FILES_MAX_BYTES"), 10, 64); e == nil && v > 0 {
-		max = v
+		max = min(v, int64(2_000_000_000))
 	}
 	publicURL, err := url.Parse(public)
 	if err != nil || publicURL.Host == "" {
@@ -84,6 +84,7 @@ func registerFileRoutes(app *application, mux *http.ServeMux) {
 	mux.Handle("POST /v1/workspaces/{id}/files/{fileId}/versions", app.auth(http.HandlerFunc(app.startFileVersion)))
 	mux.Handle("GET /v1/workspaces/{id}/files/{fileId}/versions/{versionId}/download", app.auth(http.HandlerFunc(app.downloadFileVersion)))
 	mux.Handle("POST /v1/file-upload-sessions/{uploadId}/complete", app.auth(http.HandlerFunc(app.completeFileUploadSession)))
+	mux.Handle("GET /v1/file-upload-sessions/{uploadId}", app.auth(http.HandlerFunc(app.getFileUploadSessionStatus)))
 	registerFileAttachmentRoutes(app, mux)
 }
 
@@ -143,6 +144,7 @@ type storedFile struct {
 	SizeBytes    int64           `json:"size_bytes"`
 	ETag         string          `json:"etag"`
 	Status       string          `json:"status"`
+	ScanStatus   string          `json:"scan_status"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 	Capabilities map[string]bool `json:"capabilities,omitempty"`
@@ -158,7 +160,7 @@ func (app *application) libraryFileCapabilities(ctx context.Context, userID, wor
 		canWrite = access.Permissions[productionEdit]
 		canDelete = canWrite
 	}
-	return map[string]bool{"can_download": true, "can_upload_version": canWrite, "can_delete": canDelete}
+	return map[string]bool{"can_download": false, "can_upload_version": canWrite, "can_delete": canDelete}
 }
 
 func cleanFilename(name string) string {
@@ -230,7 +232,7 @@ func (app *application) createFile(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, 201, map[string]any{"file": map[string]any{"id": id, "filename": filename, "content_type": contentType, "size_bytes": in.SizeBytes, "status": "pending"}, "upload": map[string]any{"id": uploadID, "url": presigned.String(), "method": "PUT", "expires_in": int64(s.ttl.Seconds())}})
+	writeJSON(w, 201, map[string]any{"file": map[string]any{"id": id, "filename": filename, "content_type": contentType, "size_bytes": in.SizeBytes, "status": "pending"}, "upload": map[string]any{"id": uploadID, "upload_id": uploadID, "url": presigned.String(), "method": "PUT", "expires_in": int64(s.ttl.Seconds())}})
 }
 
 func (app *application) completeFile(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +247,13 @@ func (app *application) completeFile(w http.ResponseWriter, r *http.Request) {
 	if f.CreatedBy != claims(r).Subject {
 		errorJSON(w, http.StatusForbidden, "file_upload_owner_required", "只有原上传者可以完成上传")
 		return
+	}
+	if f.Status == "uploaded" && f.CreatedBy == claims(r).Subject {
+		var versionID string
+		if err := app.db.QueryRow(r.Context(), `SELECT id FROM file_versions WHERE file_id=$1 ORDER BY version_no DESC LIMIT 1`, r.PathValue("fileId")).Scan(&versionID); err == nil {
+			writeJSON(w, http.StatusAccepted, map[string]any{"version_id": versionID, "status": "processing"})
+			return
+		}
 	}
 	if f.Status != "pending" {
 		errorJSON(w, 409, "file_not_pending", "文件状态不可确认")
@@ -273,15 +282,24 @@ func (app *application) completeFile(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusConflict, "file_not_pending", "文件状态已变化，请重新上传")
 		return
 	}
-	app.getFile(w, r)
+	var versionID string
+	if err := app.db.QueryRow(r.Context(), `SELECT id FROM file_versions WHERE file_id=$1 AND version_no=1`, r.PathValue("fileId")).Scan(&versionID); err != nil {
+		serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"file_id": r.PathValue("fileId"), "version_id": versionID, "status": "processing"})
 }
 func (app *application) getFile(w http.ResponseWriter, r *http.Request) {
 	var f storedFile
-	err := app.db.QueryRow(r.Context(), `SELECT id,workspace_id,production_id,filename,content_type,size_bytes,etag,status,created_at,updated_at FROM files WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL AND access_mode='library'`, r.PathValue("fileId"), r.PathValue("id")).Scan(&f.ID, &f.WorkspaceID, &f.ProductionID, &f.Filename, &f.ContentType, &f.SizeBytes, &f.ETag, &f.Status, &f.CreatedAt, &f.UpdatedAt)
+	err := app.db.QueryRow(r.Context(), `SELECT f.id,f.workspace_id,f.production_id,f.filename,f.content_type,f.size_bytes,f.etag,f.status,
+		f.created_at,f.updated_at,COALESCE(latest.security_status,'pending')
+		FROM files f LEFT JOIN LATERAL (SELECT v.security_status FROM file_versions v WHERE v.file_id=f.id ORDER BY v.version_no DESC LIMIT 1) latest ON TRUE
+		WHERE f.id=$1 AND f.workspace_id=$2 AND f.deleted_at IS NULL AND f.access_mode='library'`, r.PathValue("fileId"), r.PathValue("id")).Scan(&f.ID, &f.WorkspaceID, &f.ProductionID, &f.Filename, &f.ContentType, &f.SizeBytes, &f.ETag, &f.Status, &f.CreatedAt, &f.UpdatedAt, &f.ScanStatus)
 	if err != nil {
 		errorJSON(w, 404, "file_not_found", "文件不存在")
 		return
 	}
+	f.ScanStatus = publicScanStatus(f.ScanStatus)
 	writeJSON(w, 200, f)
 }
 func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
@@ -294,15 +312,19 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 	if !app.authorizeFileScope(w, r, workspaceID, productionID, "read") {
 		return
 	}
-	q := `SELECT id,workspace_id,production_id,filename,content_type,size_bytes,etag,status,created_at,updated_at FROM files WHERE workspace_id=$1 AND deleted_at IS NULL AND access_mode='library'`
+	q := `SELECT f.id,f.workspace_id,f.production_id,f.filename,f.content_type,f.size_bytes,f.etag,f.status,f.created_at,f.updated_at,
+		COALESCE(latest.security_status,'pending'),
+		EXISTS(SELECT 1 FROM file_versions current_version WHERE current_version.id=f.current_version_id AND current_version.file_id=f.id AND current_version.security_status='clean' AND current_version.object_purged_at IS NULL)
+		FROM files f LEFT JOIN LATERAL (SELECT v.security_status FROM file_versions v WHERE v.file_id=f.id ORDER BY v.version_no DESC LIMIT 1) latest ON TRUE
+		WHERE f.workspace_id=$1 AND f.deleted_at IS NULL AND f.access_mode='library'`
 	args := []any{workspaceID}
 	if productionID == nil {
-		q += " AND production_id IS NULL"
+		q += " AND f.production_id IS NULL"
 	} else {
-		q += " AND production_id=$2"
+		q += " AND f.production_id=$2"
 		args = append(args, prod)
 	}
-	q += " ORDER BY created_at DESC"
+	q += " ORDER BY f.created_at DESC"
 	rows, err := app.db.Query(r.Context(), q, args...)
 	if err != nil {
 		serverError(w, err)
@@ -312,11 +334,15 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 	items := []storedFile{}
 	for rows.Next() {
 		var f storedFile
-		if err := rows.Scan(&f.ID, &f.WorkspaceID, &f.ProductionID, &f.Filename, &f.ContentType, &f.SizeBytes, &f.ETag, &f.Status, &f.CreatedAt, &f.UpdatedAt); err != nil {
+		var securityStatus string
+		var hasCleanCurrent bool
+		if err := rows.Scan(&f.ID, &f.WorkspaceID, &f.ProductionID, &f.Filename, &f.ContentType, &f.SizeBytes, &f.ETag, &f.Status, &f.CreatedAt, &f.UpdatedAt, &securityStatus, &hasCleanCurrent); err != nil {
 			serverError(w, err)
 			return
 		}
 		f.Capabilities = app.libraryFileCapabilities(r.Context(), claims(r).Subject, workspaceID, f.ProductionID)
+		f.Capabilities["can_download"] = hasCleanCurrent
+		f.ScanStatus = publicScanStatus(securityStatus)
 		items = append(items, f)
 	}
 	capabilities := app.libraryFileCapabilities(r.Context(), claims(r).Subject, workspaceID, productionID)
@@ -339,7 +365,15 @@ func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
 	if s == nil {
 		return
 	}
-	u, err := s.presignClient.PresignedGetObject(r.Context(), f.Bucket, f.ObjectKey, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(f.Filename, `"`, "") + "\""}})
+	var bucket, key, filename string
+	err = app.db.QueryRow(r.Context(), `SELECT v.bucket,v.object_key,v.filename FROM files f
+		JOIN file_versions v ON v.id=f.current_version_id AND v.file_id=f.id
+		WHERE f.id=$1 AND f.workspace_id=$2 AND f.deleted_at IS NULL AND v.security_status='clean' AND v.object_purged_at IS NULL`, r.PathValue("fileId"), r.PathValue("id")).Scan(&bucket, &key, &filename)
+	if err != nil {
+		errorJSON(w, 404, "file_not_ready", "文件尚未通过安全检查")
+		return
+	}
+	u, err := s.presignClient.PresignedGetObject(r.Context(), bucket, key, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""}})
 	if err != nil {
 		serverError(w, err)
 		return

@@ -34,29 +34,24 @@ type fileParent struct {
 }
 
 type attachmentAccess struct {
-	ID            string
-	FileID        string
-	FileTypeID    *string
-	SecurityClass string
-	Parent        fileParent
-	Status        string
-	Deleted       bool
+	ID              string
+	FileID          string
+	FileTypeID      *string
+	SecurityClass   string
+	Parent          fileParent
+	Status          string
+	HasCleanVersion bool
+	Deleted         bool
 }
 
 // resolveFileParent is the allowlisted parent adapter. Neither a request's
 // production_id nor an arbitrary table name can establish file access.
 func (app *application) resolveFileParent(ctx context.Context, parent fileParent) (fileParent, error) {
-	switch parent.Kind {
-	case programFileParent:
-		err := app.db.QueryRow(ctx, `SELECT workspace_id FROM programs WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, parent.ID, parent.WorkspaceID).Scan(&parent.WorkspaceID)
-		return parent, err
-	case productionProgramFileParent:
-		err := app.db.QueryRow(ctx, `SELECT workspace_id,production_id FROM production_programs
-			WHERE id=$1 AND workspace_id=$2 AND production_id=$3`, parent.ID, parent.WorkspaceID, parent.ProductionID).Scan(&parent.WorkspaceID, &parent.ProductionID)
-		return parent, err
-	default:
+	adapter := app.fileParentAdapter(parent.Kind)
+	if adapter == nil {
 		return fileParent{}, pgx.ErrNoRows
 	}
+	return adapter.Resolve(ctx, parent)
 }
 
 func (app *application) workspaceFileRole(ctx context.Context, userID, workspaceID string) (string, error) {
@@ -67,45 +62,25 @@ func (app *application) workspaceFileRole(ctx context.Context, userID, workspace
 }
 
 func (app *application) authorizeFileParent(ctx context.Context, userID string, parent fileParent, securityClass string, action fileAction) bool {
-	write := action == fileAttach || action == fileUploadVersion || action == fileDetach || action == fileDelete
-	switch parent.Kind {
-	case programFileParent:
-		role, err := app.workspaceFileRole(ctx, userID, parent.WorkspaceID)
-		if err != nil {
-			return false
-		}
-		if securityClass == "restricted" || write {
-			return role == workspaceRoleOwner || role == workspaceRoleAdmin
-		}
-		return roleRank[role] >= roleRank[workspaceRoleMember]
-	case productionProgramFileParent:
-		access, err := app.productionAccessFor(ctx, userID, parent.ProductionID)
-		if err != nil || access.WorkspaceID != parent.WorkspaceID {
-			return false
-		}
-		if securityClass == "restricted" {
-			return access.WorkspaceRole == workspaceRoleOwner || access.WorkspaceRole == workspaceRoleAdmin || access.DirectRole == "producer"
-		}
-		if write {
-			return access.Permissions[productionEdit]
-		}
-		return access.Permissions[productionView]
-	default:
+	adapter := app.fileParentAdapter(parent.Kind)
+	if adapter == nil {
 		return false
 	}
+	return adapter.Authorize(ctx, userID, parent, securityClass, action)
 }
 
 func (app *application) loadAttachmentAccess(ctx context.Context, attachmentID string) (attachmentAccess, error) {
 	var a attachmentAccess
 	var programID, productionID, productionProgramID *string
 	err := app.db.QueryRow(ctx, `SELECT a.id,a.file_id,a.file_type_id,a.security_class,f.status,
-		p.program_id,pp.production_id,pp.production_program_id,a.workspace_id
+		p.program_id,pp.production_id,pp.production_program_id,a.workspace_id,
+		EXISTS(SELECT 1 FROM file_versions v WHERE v.id=f.current_version_id AND v.file_id=f.id AND v.security_status='clean' AND v.object_purged_at IS NULL)
 		FROM file_attachments a JOIN files f ON f.id=a.file_id AND f.workspace_id=a.workspace_id
 		LEFT JOIN program_file_attachments p ON p.attachment_id=a.id
 		LEFT JOIN production_program_file_attachments pp ON pp.attachment_id=a.id
 		WHERE a.id=$1 AND a.deleted_at IS NULL AND f.deleted_at IS NULL`, attachmentID).Scan(
 		&a.ID, &a.FileID, &a.FileTypeID, &a.SecurityClass, &a.Status,
-		&programID, &productionID, &productionProgramID, &a.Parent.WorkspaceID)
+		&programID, &productionID, &productionProgramID, &a.Parent.WorkspaceID, &a.HasCleanVersion)
 	if err != nil {
 		return a, err
 	}
@@ -131,8 +106,8 @@ func (app *application) requireAttachmentAction(w http.ResponseWriter, r *http.R
 
 func (app *application) fileCapabilities(ctx context.Context, userID string, a attachmentAccess) map[string]bool {
 	return map[string]bool{
-		"can_download":       app.authorizeFileParent(ctx, userID, a.Parent, a.SecurityClass, fileDownload),
-		"can_upload_version": app.authorizeFileParent(ctx, userID, a.Parent, a.SecurityClass, fileUploadVersion),
+		"can_download":       a.HasCleanVersion && app.authorizeFileParent(ctx, userID, a.Parent, a.SecurityClass, fileDownload),
+		"can_upload_version": a.Status == "uploaded" && app.authorizeFileParent(ctx, userID, a.Parent, a.SecurityClass, fileUploadVersion),
 		"can_detach":         app.authorizeFileParent(ctx, userID, a.Parent, a.SecurityClass, fileDetach),
 	}
 }

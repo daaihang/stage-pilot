@@ -25,6 +25,89 @@ func fileTestID(t *testing.T, response map[string]any) string {
 	return id
 }
 
+func markFileVersionClean(t *testing.T, app *application, fileID, versionID string) {
+	t.Helper()
+	if _, err := app.db.Exec(t.Context(), `UPDATE file_versions SET security_status='clean',sha256=repeat('a',64),scan_engine='test',scan_signature='test',scanned_at=NOW()
+		WHERE id=$1 AND file_id=$2`, versionID, fileID); err != nil {
+		t.Fatalf("mark version clean: %v", err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE files f SET current_version_id=v.id,status='uploaded',bucket=v.bucket,object_key=v.object_key,
+		filename=v.filename,content_type=v.content_type,size_bytes=v.size_bytes,etag=v.etag
+		FROM file_versions v WHERE f.id=$1 AND v.id=$2 AND v.file_id=f.id`, fileID, versionID); err != nil {
+		t.Fatalf("publish test version: %v", err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE file_scan_tasks SET status='completed',outcome='clean',completed_at=NOW(),lease_owner='',lease_until=NULL
+		WHERE version_id=$1`, versionID); err != nil {
+		t.Fatalf("complete test scan job: %v", err)
+	}
+}
+
+func TestFileScanWorkerEndToEnd(t *testing.T) {
+	if os.Getenv("FILE_SCAN_E2E") != "1" || os.Getenv("S3_ENDPOINT") == "" {
+		t.Skip("set FILE_SCAN_E2E=1 with the local Worker, ClamAV, database, and MinIO stack")
+	}
+	app := newIntegrationApp(t)
+	storage, err := newObjectStorage(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.storage = storage
+	owner := createTestUser(t, app, "file-scan-e2e-"+newID()+"@example.test")
+	token := issueTestToken(t, app, owner)
+	workspaceID := createWorkspaceFor(t, app, token, "文件扫描端到端")["id"].(string)
+	base := "/v1/workspaces/" + workspaceID + "/files"
+	const eicar = `X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*`
+	for _, sample := range []struct {
+		name, content, want string
+	}{
+		{name: "clean", content: "stagepilot harmless file", want: "ready"},
+		{name: "eicar", content: eicar, want: "rejected"},
+	} {
+		t.Run(sample.name, func(t *testing.T) {
+			created := authedRequest(t, app, token, http.MethodPost, base, map[string]any{
+				"filename": sample.name + ".txt", "content_type": "application/octet-stream",
+				"size_bytes": len(sample.content),
+			})
+			if created.Code != http.StatusCreated {
+				t.Fatalf("create upload = %d: %s", created.Code, created.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(created.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			fileID := fileTestID(t, body)
+			upload := body["upload"].(map[string]any)
+			signedFilePut(t, upload["url"].(string), sample.content)
+			completed := authedRequest(t, app, token, http.MethodPost, base+"/"+fileID+"/complete", nil)
+			if completed.Code != http.StatusAccepted {
+				t.Fatalf("complete upload = %d: %s", completed.Code, completed.Body.String())
+			}
+			uploadID := upload["upload_id"].(string)
+			deadline := time.Now().Add(90 * time.Second)
+			for time.Now().Before(deadline) {
+				statusResponse := authedRequest(t, app, token, http.MethodGet, "/v1/file-upload-sessions/"+uploadID, nil)
+				if statusResponse.Code != http.StatusOK {
+					t.Fatalf("read upload status = %d: %s", statusResponse.Code, statusResponse.Body.String())
+				}
+				var status struct {
+					Status string `json:"status"`
+				}
+				if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
+					t.Fatal(err)
+				}
+				if status.Status != "processing" {
+					if status.Status != sample.want {
+						t.Fatalf("scan status = %q, want %q", status.Status, sample.want)
+					}
+					return
+				}
+				time.Sleep(time.Second)
+			}
+			t.Fatal("Worker did not finish the file scan within 90 seconds")
+		})
+	}
+}
+
 func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	if os.Getenv("S3_ENDPOINT") == "" {
 		t.Skip("S3_ENDPOINT not set; skipping file storage integration test")
@@ -159,20 +242,34 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	if putResponse.StatusCode != 200 {
 		t.Fatalf("signed upload = %d", putResponse.StatusCode)
 	}
-	if response := authedRequest(t, app, editorToken, http.MethodPost, base+"/"+productionFileID+"/complete", nil); response.Code != 200 {
-		t.Fatalf("editor complete = %d: %s", response.Code, response.Body.String())
+	completed := authedRequest(t, app, editorToken, http.MethodPost, base+"/"+productionFileID+"/complete", nil)
+	if completed.Code != http.StatusAccepted {
+		t.Fatalf("editor complete = %d: %s", completed.Code, completed.Body.String())
 	}
-	var originalKey, committedKey, firstVersionID string
-	if err := app.db.QueryRow(t.Context(), `SELECT object_key,current_version_id FROM files WHERE id=$1`, productionFileID).Scan(&committedKey, &firstVersionID); err != nil {
+	completedBody := attachmentResponse(t, completed.Body.Bytes())
+	firstVersionID := completedBody["version_id"].(string)
+	var originalKey, committedKey string
+	var currentVersion *string
+	if err := app.db.QueryRow(t.Context(), `SELECT object_key,current_version_id FROM files WHERE id=$1`, productionFileID).Scan(&committedKey, &currentVersion); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.db.QueryRow(t.Context(), `SELECT object_key FROM file_versions WHERE id=$1 AND file_id=$2 AND version_no=1`, firstVersionID, productionFileID).Scan(&originalKey); err != nil {
 		t.Fatal(err)
 	}
-	if committedKey != originalKey || committedKey == "" {
-		t.Fatalf("legacy completion did not publish v1 immutable object: %q %q", committedKey, originalKey)
+	if committedKey != originalKey || committedKey == "" || currentVersion != nil {
+		t.Fatalf("unscanned v1 was published or not made immutable: key=%q version=%v", committedKey, currentVersion)
+	}
+	if response := authedRequest(t, app, editorToken, http.MethodGet, "/v1/file-upload-sessions/"+upload["id"].(string), nil); response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"status":"processing"`)) {
+		t.Fatalf("upload scan status = %d %s", response.Code, response.Body.String())
+	}
+	if response := authedRequest(t, app, ownerToken, http.MethodGet, "/v1/file-upload-sessions/"+upload["id"].(string), nil); response.Code != 404 {
+		t.Fatalf("non-uploader read scan status = %d", response.Code)
+	}
+	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/download", nil); response.Code != 404 {
+		t.Fatalf("unscanned file download = %d, want 404", response.Code)
 	}
 	signedFilePut(t, upload["url"].(string), "later")
+	markFileVersionClean(t, app, productionFileID, firstVersionID)
 	versionDownload := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/versions/"+firstVersionID+"/download", nil)
 	if versionDownload.Code != 200 {
 		t.Fatalf("direct viewer v1 download = %d", versionDownload.Code)
@@ -186,9 +283,18 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	}
 	versionUpload := attachmentResponse(t, versionStart.Body.Bytes())["upload"].(map[string]any)
 	signedFilePut(t, versionUpload["url"].(string), "second")
-	if response := authedRequest(t, app, editorToken, http.MethodPost, "/v1/file-upload-sessions/"+versionUpload["upload_id"].(string)+"/complete", nil); response.Code != 200 {
-		t.Fatalf("complete library v2 = %d: %s", response.Code, response.Body.String())
+	versionComplete := authedRequest(t, app, editorToken, http.MethodPost, "/v1/file-upload-sessions/"+versionUpload["upload_id"].(string)+"/complete", nil)
+	if versionComplete.Code != http.StatusAccepted {
+		t.Fatalf("complete library v2 = %d: %s", versionComplete.Code, versionComplete.Body.String())
 	}
+	v2 := attachmentResponse(t, versionComplete.Body.Bytes())["version_id"].(string)
+	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/download", nil); response.Code != 200 {
+		t.Fatalf("previous clean version unavailable during new scan = %d", response.Code)
+	}
+	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/versions/"+v2+"/download", nil); response.Code != 404 {
+		t.Fatalf("unscanned new version download = %d", response.Code)
+	}
+	markFileVersionClean(t, app, productionFileID, v2)
 	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/versions", nil); response.Code != 200 || !bytes.Contains(response.Body.Bytes(), []byte(`"version_no":2`)) {
 		t.Fatalf("library version history = %d %s", response.Code, response.Body.String())
 	}

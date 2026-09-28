@@ -19,6 +19,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks: [app]
 
   postgres:
     image: postgres:17-alpine
@@ -36,6 +37,7 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks: [app]
 
   migrate:
     image: migrate/migrate:v4.18.3
@@ -49,6 +51,7 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    networks: [app]
 
   api:
     build:
@@ -70,7 +73,7 @@ services:
       S3_USE_SSL: ${S3_USE_SSL:-false}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
       S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
-      FILES_MAX_BYTES: ${FILES_MAX_BYTES:-5368709120}
+      FILES_MAX_BYTES: ${FILES_MAX_BYTES:-2000000000}
     ports:
       - "${STAGEPILOT_API_PORT:-18080}:8080"
     depends_on:
@@ -82,6 +85,7 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
+    networks: [app]
 
   worker:
     build:
@@ -98,11 +102,38 @@ services:
       S3_USE_SSL: ${S3_USE_SSL:-false}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
       S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
+      FILES_MAX_BYTES: ${FILES_MAX_BYTES:-2000000000}
+      CLAMD_ADDRESS: clamav:3310
     depends_on:
       migrate:
         condition: service_completed_successfully
+      clamav:
+        condition: service_started
     restart: unless-stopped
+    networks: [app, scanner]
+
+  clamav:
+    image: clamav/clamav:1.5.4_base
+    volumes:
+      - clamav-db:/var/lib/clamav
+      - ./clamd.conf:/etc/clamav/clamd.conf:ro
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "clamdscan", "--stream", "--ping=1:1", "/etc/hostname"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10m
+    restart: unless-stopped
+    networks: [scanner]
 
 volumes:
   postgres-data:
   minio-data:
+  clamav-db:
+
+networks:
+  app:
+    driver: bridge
+  scanner:
+    driver: bridge

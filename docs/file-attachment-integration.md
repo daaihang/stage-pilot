@@ -97,11 +97,13 @@ DELETE   /v1/attachments/{attachmentId}
 
 ## 上传、版本和安全扫描
 
-正常成员附件沿用现有流程：创建上传会话、直传临时对象、服务端完成时复验上传者与权限和对象大小、服务端复制到版本专属对象键、事务写入版本并切换当前版本。版本发布后不可由原预签名 PUT 覆盖。
+正常成员附件沿用现有流程：创建上传会话、直传临时对象、服务端完成时复验上传者与权限和对象大小、服务端复制到版本专属对象键，再创建持久化扫描任务。完成接口返回 `202 processing`；Worker 扫描通过后才将版本发布为当前版。新版本扫描时上一版 clean 版本继续可用。原预签名 PUT 不能覆盖版本对象；附件历史下载和跨活动复制也只接受 clean 版本。
 
-本仓库目前没有病毒扫描器容器、扫描服务或扫描状态工作流。接入模块不能把“对象上传完成”描述成“内容安全”。扫描器应作为后台处理器调用的独立接口，例如 `Scan(objectRef) -> clean | infected | unsupported | error`；ClamAV 将来可以是一个实现，不能成为 Program、Person 或表单模块的直接依赖。扫描任务应可重试、幂等，失败或不支持的文件不能默认为 clean。对象存储事件也可能重复或乱序，后台处理应以持久化任务状态和对象版本标识去重。[AWS S3 事件通知说明](https://docs.aws.amazon.com/AmazonS3/latest/userguide/notification-how-to-event-types-and-destinations.html)
+扫描由 Worker 内的通用 `Scanner` 接口隔离；ClamAV adapter 使用私有 Worker 专用网络上的 clamd `INSTREAM`，API、Program、Person、表单和附件适配器都不连接 ClamAV。Compose 使用固定版本 `_base` 镜像与持久签名库卷，且不发布 clamd 宿主机端口。任务具备幂等键、租约、尝试次数与退避；扫描器断连保持 processing。通过 `docker compose exec worker stagepilot-worker scanner-check` 可验证 PING/PONG、正常样本和 EICAR 测试签名。扫描限额、未知格式或类型冲突均不得默认为 clean。
 
-在实际扫描服务与发布状态接通前，不开放匿名公开上传、身份证明/健康材料等高敏附件，也不提供可内嵌执行主动内容的预览。普通内部文件目前仍按既有成员文件流程运行；这是现状，不代表它们已经扫描。上传文件还应校验实际内容类型和签名，不能只信客户端 `Content-Type`；[OWASP 文件上传指南](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html)对此有明确建议。
+要验证 API → MinIO → 持久扫描队列 → Worker → ClamAV 的完整链路，启动本地 Compose 栈并让 API 集成测试能连接本地 PostgreSQL/MinIO，然后设置 `FILE_SCAN_E2E=1` 运行 `go test -count=1 -run '^TestFileScanWorkerEndToEnd$' ./cmd/server`。此用例分别上传普通文本和 EICAR 测试签名，检查最终状态为 `ready` 与 `rejected`；EICAR 是无害的防病毒测试样本，不是可执行恶意软件。
+
+匿名公开上传仍关闭，身份证明/健康材料的专用高敏工作流、格式专用解析、CDR 和可内嵌执行主动内容的预览也尚未接入。普通内部文件会在后台 ClamAV 与通用内容签名校验通过后才可下载。头像继续使用静态图像解码重编码，不依赖 ClamAV。上传文件还应校验实际内容类型和签名，不能只信客户端 `Content-Type`；[OWASP 文件上传指南](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html)对此有明确建议。
 
 公开 Campaign/Entry 上传必须使用独立的公开上传凭证，绑定 Campaign、Entry 草稿、字段、大小和过期时间，并在扫描通过前保持隔离。不得把匿名请求接到 Workspace 成员文件 API。当前表单文件字段仍不可提交，含文件字段的公开版本也不可发布，见[Campaign 契约](domain/campaign-contract-v1.md)。
 

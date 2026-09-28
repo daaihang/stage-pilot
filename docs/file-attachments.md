@@ -27,18 +27,22 @@
 
 迁移 42 将原有 `uploaded` 文件按同一 `file_id` 回填为 v1，不移动旧对象；后续 Worker 在旧预签名 URL 过期后将旧 v1 固化为服务端专用对象键。已有 `pending / abandoned` 记录继续沿用原清理路径。迁移 43 约束一个附件文件只能绑定一个父对象。
 
-新上传先使用短期预签名 URL 写临时键。完成时原上传者必须仍有写权限，服务端检查大小并条件复制到从未签发 PUT URL 的版本专属键，再事务性记录版本和切换当前指针。已完成的上传会话重复完成返回同一版本；并发完成只提交一个版本。未完成会话、预签名链接过期后的已完成会话临时键，以及未提交的复制尝试由 Worker 重试回收；正式文件及其历史版本不做物理清理。单次 S3 Copy 超过 5 GB 时使用分段服务端复制。
+新上传先使用短期预签名 URL 写临时键。完成时原上传者必须仍有写权限，服务端检查大小并条件复制到从未签发 PUT URL 的版本专属键，再事务性记录待扫描版本和幂等扫描任务；接口返回 `202 processing`，此时不发布当前版本。后台 Worker 从私有对象读取不可变字节，先校验文件签名／MIME，再通过通用 `Scanner` 接口扫描。ClamAV 是首个 adapter，只有 Worker 能访问它；Program、ProductionProgram 和 API handler 不接触 ClamAV。只有结果为 clean 才更新当前版本指针。新版本扫描期间保留上一版 clean 当前版本；感染、格式冲突和扫描限额命中都不能下载或发布。`GET /v1/file-upload-sessions/{uploadId}` 仅原上传者可查询，结果只暴露 `processing / ready / rejected`。
+
+全文件入口统一限制为十进制 `2,000,000,000` 字节。服务端同时核对声明／实际对象大小并检测内容签名；客户端 MIME 不作为事实来源。未知签名使用 `application/octet-stream` 且只作为附件下载，不启用内嵌预览。ClamAV 的流大小、单文件大小、归档展开总量、递归深度、文件数和扫描时间均有界，任何限额命中均拒绝发布。头像仍走单独的静态图像解码重编码管线，不进入文件库或 ClamAV。
+
+ClamAV 暂时不可用时扫描任务保持处理中，并按退避策略重试；绝不降级为 clean。扫描任务记录 SHA-256、引擎与签名库版本和安全结果。历史 v1 回填默认 pending；Worker 等旧预签名 PUT 到期并将对象固化后才扫描，未通过前新下载请求一律拒绝。感染对象隔离 30 天后由 Worker 清除对象字节，文件、附件关联、SHA-256 和扫描审计记录保留。未完成上传与未提交复制仍由 Worker 幂等清理。
 
 活动节目从来源节目复制时指定 `attachment_id` 与可选 `version_id`；服务端建立独立 `file_id` 和 v1，记录 `source_file_id/source_version_id`。活动 A、B 各有自己的文件与版本链，来源新版本不会自动同步。已签发的下载 URL 仍按现有五分钟到期，新请求总是重新授权。
 
 ## API
 
 - 旧 `/v1/workspaces/{id}/files` 保留。新增 `GET/POST .../{fileId}/versions`、`GET .../{fileId}/versions/{versionId}/download`。
-- `POST /v1/file-upload-sessions/{uploadId}/complete` 确认新版本或附件上传。
+- `POST /v1/file-upload-sessions/{uploadId}/complete` 提交新版本或附件并返回 `202 processing`；`GET /v1/file-upload-sessions/{uploadId}` 由原上传者查询扫描状态。
 - `GET/POST /v1/workspaces/{id}/programs/{programId}/attachments` 管理 Workspace 节目附件。
 - `GET/POST /v1/productions/{productionId}/programs/{programId}/attachments` 管理活动节目附件；`POST .../attachments/copy` 复制固定来源版本。
 - `GET/POST /v1/attachments/{attachmentId}/versions`、`GET /v1/attachments/{attachmentId}/download?version_id=...`、`DELETE /v1/attachments/{attachmentId}` 作用于持久化关联而非客户端声明的父对象。
 
-公开 Campaign/Entry 文件字段、预览、全文搜索、病毒扫描工作流和可配置 ACL 不在本期；公开上传不能复用这些成员 API。
+公开 Campaign/Entry 文件字段、预览、全文搜索和可配置 ACL 不在本期；公开上传不能复用这些成员 API。
 
 其他纵向领域的附件父对象、类型化关联、权限和接入验收契约见[文件与附件模块接入契约](file-attachment-integration.md)。

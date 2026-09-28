@@ -12,6 +12,7 @@ import {
   completeUploadSession, copyProductionProgramAttachment, createProductionProgramAttachment,
   createProgramAttachment, detachAttachment, downloadAttachment, listAttachmentVersions,
   listProductionProgramAttachments, listProgramAttachments, startAttachmentVersion, uploadToPresignedUrl,
+  waitForUploadSession,
 } from "@/lib/file-api";
 
 export function FileAttachmentsSection({ workspace, production, programId, sourceProgramId }) {
@@ -58,8 +59,11 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
       const result = await start({ filename: file.name, content_type: file.type || "application/octet-stream", size_bytes: file.size });
       await uploadToPresignedUrl(result.upload.url, file);
       await completeUploadSession(result.upload.upload_id);
+      const scan = await waitForUploadSession(result.upload.upload_id);
       await reload();
-      notify.success("附件上传完成", { id: toast });
+      if (scan.status === "rejected") throw new Error("安全检查未通过；该版本不会提供下载。");
+      if (scan.status === "processing") notify.info("附件仍在安全检查中", { id: toast });
+      else notify.success("安全检查通过，附件已可用", { id: toast });
     } catch (error) {
       notify.error("附件上传失败", { id: toast, description: error?.message || String(error) });
     } finally { setBusy(false); }
@@ -110,7 +114,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
     try {
       await copyProductionProgramAttachment(production.id, programId, { attachment_id: source.id, version_id: versionId });
       await reload();
-      notify.success("已复制到本活动，来源后续版本不会自动同步", { id: toast });
+      notify.info("已提交固定版本复制；安全检查通过后可用，来源后续版本不会自动同步", { id: toast });
     } catch (error) { notify.error("复制附件失败", { id: toast, description: error?.message || String(error) }); }
   };
 
@@ -123,15 +127,15 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
         <label><Button asChild disabled={busy}><span><FileUp />上传附件</span></Button><input type="file" className="hidden" onChange={uploadNew} disabled={busy} /></label>
       </div>}
       {items.length ? items.map((item) => <div key={item.id} className="border-b pb-3">
-        <div className="flex flex-wrap items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{item.filename}</span><Badge variant="outline">v{item.version_no}</Badge>{item.security_class === "restricted" && <Badge variant="secondary">敏感</Badge>}
-          <Button size="icon-sm" variant="ghost" aria-label="下载附件" onClick={() => download(item)}><Download /></Button>
+        <div className="flex flex-wrap items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{item.filename}</span><Badge variant="outline">v{item.version_no}</Badge><Badge variant={item.scan_status === "rejected" ? "destructive" : item.scan_status === "processing" ? "outline" : "secondary"}>{item.scan_status === "processing" ? (item.capabilities?.can_download ? "新版检查中 · 当前版可用" : "安全检查中") : item.scan_status === "rejected" ? (item.capabilities?.can_download ? "新版未通过 · 当前版可用" : "安全检查未通过") : "可用"}</Badge>{item.security_class === "restricted" && <Badge variant="secondary">敏感</Badge>}
+          <Button size="icon-sm" variant="ghost" aria-label="下载附件" onClick={() => download(item)} disabled={!item.capabilities?.can_download}><Download /></Button>
           <Button size="icon-sm" variant="ghost" aria-label="查看版本历史" onClick={() => showVersions(item)}><Clock3 /></Button>
           {item.capabilities?.can_detach && <Button size="icon-sm" variant="ghost" aria-label="解除附件关联" onClick={() => setConfirmDetach(item)}><Trash2 /></Button>}
         </div>
         {item.capabilities?.can_upload_version && <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-primary"><FileUp className="size-3.5" />上传新版<input type="file" className="hidden" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void executeUpload(file, (payload) => startAttachmentVersion(item.id, payload)); }} /></label>}
-        {versionItems[item.id]?.map((version) => <div key={version.id} className="mt-2 flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="flex-1 truncate">v{version.version_no} · {version.filename}</span><Button size="sm" variant="ghost" onClick={() => download(item, version.id)}>下载</Button></div>)}
+        {versionItems[item.id]?.map((version) => <div key={version.id} className="mt-2 flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "processing" ? "检查中" : version.scan_status === "rejected" ? "未通过" : "可用"}</span><Button size="sm" variant="ghost" disabled={version.scan_status !== "ready"} onClick={() => download(item, version.id)}>下载</Button></div>)}
       </div>) : <p className="text-sm text-muted-foreground">暂无附件</p>}
-      {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="space-y-1"><div className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="ghost" onClick={() => showVersions(source)}><Clock3 />历史版本</Button><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy}><Copy />复制当前版</Button></div>{versionItems[source.id]?.map((version) => <div key={version.id} className="flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">v{version.version_no} · {version.filename}</span><Button size="sm" variant="outline" onClick={() => copy(source, version.id)} disabled={busy}>复制此版本</Button></div>)}</div>)}</div>}
+      {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="space-y-1"><div className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="ghost" onClick={() => showVersions(source)}><Clock3 />历史版本</Button><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy || !source.capabilities?.can_download}><Copy />复制当前版</Button></div>{versionItems[source.id]?.map((version) => <div key={version.id} className="flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "ready" ? "可用" : version.scan_status === "processing" ? "检查中" : "未通过"}</span><Button size="sm" variant="outline" onClick={() => copy(source, version.id)} disabled={busy || version.scan_status !== "ready"}>复制此版本</Button></div>)}</div>)}</div>}
       {confirmDetach && <div role="alertdialog" aria-label="确认解除附件关联" className="space-y-2 rounded-md border p-3 text-sm"><p>解除“{confirmDetach.filename}”的关联？文件和历史版本仍会保留。</p><div className="flex gap-2"><Button size="sm" variant="destructive" onClick={detach}>确认解除</Button><Button size="sm" variant="outline" onClick={() => setConfirmDetach(null)}>取消</Button></div></div>}
     </CardContent>
   </Card>;

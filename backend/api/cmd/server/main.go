@@ -836,7 +836,8 @@ func errorJSONWithFields(w http.ResponseWriter, status int, code, message string
 	}
 	writeJSON(w, status, map[string]any{"error": error})
 }
-func serverError(w http.ResponseWriter, _ error) {
+func serverError(w http.ResponseWriter, err error) {
+	slog.Default().Error("request failed", "error", err)
 	errorJSON(w, 500, "internal_error", "服务器暂时无法处理请求")
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {

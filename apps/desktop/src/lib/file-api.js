@@ -18,6 +18,17 @@ export const copyProductionProgramAttachment = (productionId, programId, payload
 export const listAttachmentVersions = (attachmentId) => request(`${attachmentBase(attachmentId)}/versions`);
 export const startAttachmentVersion = (attachmentId, payload) => request(`${attachmentBase(attachmentId)}/versions`, { method: "POST", body: JSON.stringify(payload) });
 export const completeUploadSession = (uploadId) => request(`/v1/file-upload-sessions/${uploadId}/complete`, { method: "POST" });
+export const getUploadSessionStatus = (uploadId) => request(`/v1/file-upload-sessions/${uploadId}`);
+export async function waitForUploadSession(uploadId, { timeoutMs = 120_000, intervalMs = 2_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let status = { status: "processing" };
+  while (Date.now() < deadline) {
+    status = await getUploadSessionStatus(uploadId);
+    if (status.status !== "processing") return status;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return status;
+}
 export const downloadAttachment = (attachmentId, versionId) => request(`${attachmentBase(attachmentId)}/download${versionId ? `?version_id=${encodeURIComponent(versionId)}` : ""}`);
 export const detachAttachment = (attachmentId) => request(attachmentBase(attachmentId), { method: "DELETE" });
 export const listFileVersions = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}/versions`));

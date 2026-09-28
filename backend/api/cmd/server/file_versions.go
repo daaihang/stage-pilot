@@ -21,6 +21,7 @@ type fileVersion struct {
 	SizeBytes     int64     `json:"size_bytes"`
 	CreatedBy     string    `json:"created_by"`
 	CreatedAt     time.Time `json:"created_at"`
+	ScanStatus    string    `json:"scan_status"`
 	SourceFileID  *string   `json:"source_file_id,omitempty"`
 	SourceVersion *string   `json:"source_version_id,omitempty"`
 }
@@ -125,7 +126,11 @@ func (app *application) finalizeLegacyFile(ctx context.Context, s *objectStorage
 	if err != nil {
 		return false, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE files SET status='uploaded',bucket=$1,object_key=$2,etag=$3,current_version_id=$4,updated_at=NOW() WHERE id=$5`, s.bucket, key, etag, versionID, fileID)
+	_, err = tx.Exec(ctx, `UPDATE files SET status='uploaded',bucket=$1,object_key=$2,etag=$3,updated_at=NOW() WHERE id=$4`, s.bucket, key, etag, fileID)
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO file_scan_tasks(id,workspace_id,file_id,version_id,idempotency_key) VALUES($1,$2,$3,$4,$5)`, "scan-"+versionID, workspaceID, fileID, versionID, "version:"+versionID)
 	if err != nil {
 		return false, err
 	}
@@ -144,7 +149,7 @@ func (app *application) finalizeLegacyFile(ctx context.Context, s *objectStorage
 }
 
 func (app *application) listVersionsForFile(ctx context.Context, fileID string) ([]fileVersion, error) {
-	rows, err := app.db.Query(ctx, `SELECT id,file_id,version_no,filename,content_type,size_bytes,created_by,created_at,source_file_id,source_version_id
+	rows, err := app.db.Query(ctx, `SELECT id,file_id,version_no,filename,content_type,size_bytes,created_by,created_at,source_file_id,source_version_id,security_status
 		FROM file_versions WHERE file_id=$1 ORDER BY version_no DESC`, fileID)
 	if err != nil {
 		return nil, err
@@ -153,9 +158,11 @@ func (app *application) listVersionsForFile(ctx context.Context, fileID string) 
 	items := []fileVersion{}
 	for rows.Next() {
 		var v fileVersion
-		if err := rows.Scan(&v.ID, &v.FileID, &v.VersionNo, &v.Filename, &v.ContentType, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt, &v.SourceFileID, &v.SourceVersion); err != nil {
+		var securityStatus string
+		if err := rows.Scan(&v.ID, &v.FileID, &v.VersionNo, &v.Filename, &v.ContentType, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt, &v.SourceFileID, &v.SourceVersion, &securityStatus); err != nil {
 			return nil, err
 		}
+		v.ScanStatus = publicScanStatus(securityStatus)
 		items = append(items, v)
 	}
 	return items, rows.Err()
@@ -251,7 +258,7 @@ func (app *application) downloadFileVersion(w http.ResponseWriter, r *http.Reque
 
 func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, fileID, versionID string) {
 	var bucket, key, filename string
-	err := app.db.QueryRow(r.Context(), `SELECT bucket,object_key,filename FROM file_versions WHERE id=$1 AND file_id=$2`, versionID, fileID).Scan(&bucket, &key, &filename)
+	err := app.db.QueryRow(r.Context(), `SELECT bucket,object_key,filename FROM file_versions WHERE id=$1 AND file_id=$2 AND security_status='clean' AND object_purged_at IS NULL`, versionID, fileID).Scan(&bucket, &key, &filename)
 	if err != nil {
 		errorJSON(w, 404, "version_not_found", "文件版本不存在")
 		return
@@ -266,6 +273,39 @@ func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, f
 		return
 	}
 	writeJSON(w, 200, map[string]any{"url": u.String(), "expires_in": 300})
+}
+
+func publicScanStatus(status string) string {
+	switch status {
+	case "clean":
+		return "ready"
+	case "pending", "":
+		return "processing"
+	default:
+		return "rejected"
+	}
+}
+
+func (app *application) getFileUploadSessionStatus(w http.ResponseWriter, r *http.Request) {
+	var owner, sessionStatus string
+	var versionID *string
+	err := app.db.QueryRow(r.Context(), `SELECT created_by,status,resulting_version_id FROM file_upload_sessions WHERE id=$1`, r.PathValue("uploadId")).Scan(&owner, &sessionStatus, &versionID)
+	if err != nil || owner != claims(r).Subject {
+		errorJSON(w, 404, "upload_not_found", "上传任务不存在")
+		return
+	}
+	status := "processing"
+	if sessionStatus == "abandoned" {
+		status = "rejected"
+	} else if sessionStatus == "completed" && versionID != nil {
+		var securityStatus string
+		if err := app.db.QueryRow(r.Context(), `SELECT security_status FROM file_versions WHERE id=$1`, *versionID).Scan(&securityStatus); err != nil {
+			errorJSON(w, 404, "upload_not_found", "上传任务不存在")
+			return
+		}
+		status = publicScanStatus(securityStatus)
+	}
+	writeJSON(w, 200, map[string]any{"upload_id": r.PathValue("uploadId"), "status": status})
 }
 
 func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http.Request) {
@@ -311,7 +351,12 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 		}
 	}
 	if status == "completed" && completedVersion != nil {
-		writeJSON(w, 200, map[string]any{"version_id": *completedVersion})
+		var securityStatus string
+		if err := app.db.QueryRow(r.Context(), `SELECT security_status FROM file_versions WHERE id=$1`, *completedVersion).Scan(&securityStatus); err != nil {
+			serverError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"version_id": *completedVersion, "status": publicScanStatus(securityStatus)})
 		return
 	}
 	if status != "pending" {
@@ -323,7 +368,7 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 		return
 	}
 	info, err := s.client.StatObject(r.Context(), bucket, key, minio.StatObjectOptions{})
-	if err != nil || info.Size != expected {
+	if err != nil || info.Size != expected || info.Size > s.maxBytes {
 		errorJSON(w, 400, "upload_missing", "上传对象不存在或大小不匹配")
 		return
 	}
@@ -346,7 +391,7 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 	}()
 	tx, err := app.db.Begin(r.Context())
 	if err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("begin upload completion: %w", err))
 		return
 	}
 	defer tx.Rollback(r.Context())
@@ -354,11 +399,16 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 	var txVersion *string
 	err = tx.QueryRow(r.Context(), `SELECT status,resulting_version_id FROM file_upload_sessions WHERE id=$1 FOR UPDATE`, id).Scan(&txStatus, &txVersion)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("lock upload session: %w", err))
 		return
 	}
 	if txStatus == "completed" && txVersion != nil {
-		writeJSON(w, 200, map[string]any{"version_id": *txVersion})
+		var securityStatus string
+		if err := tx.QueryRow(r.Context(), `SELECT security_status FROM file_versions WHERE id=$1`, *txVersion).Scan(&securityStatus); err != nil {
+			serverError(w, fmt.Errorf("read completed upload status: %w", err))
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"version_id": *txVersion, "status": publicScanStatus(securityStatus)})
 		return
 	}
 	if txStatus != "pending" {
@@ -375,33 +425,44 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 	var nextNo int
 	err = tx.QueryRow(r.Context(), `SELECT COALESCE(MAX(version_no),0)+1 FROM file_versions WHERE file_id=$1`, fileID).Scan(&nextNo)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("allocate file version number: %w", err))
 		return
 	}
 	_, err = tx.Exec(r.Context(), `INSERT INTO file_versions(id,workspace_id,file_id,version_no,bucket,object_key,filename,content_type,size_bytes,etag,created_by,frozen_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())`, versionID, workspaceID, fileID, nextNo, s.bucket, finalKey, filename, contentType, expected, etag, uploader)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("insert file version: %w", err))
 		return
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE files SET status='uploaded',current_version_id=$1,bucket=$2,object_key=$3,filename=$4,content_type=$5,size_bytes=$6,etag=$7,updated_at=NOW() WHERE id=$8`, versionID, s.bucket, finalKey, filename, contentType, expected, etag, fileID)
+	_, err = tx.Exec(r.Context(), `UPDATE files SET status='uploaded',
+		bucket=CASE WHEN current_version_id IS NULL THEN $1 ELSE bucket END,
+		object_key=CASE WHEN current_version_id IS NULL THEN $2 ELSE object_key END,
+		filename=CASE WHEN current_version_id IS NULL THEN $3 ELSE filename END,
+		content_type=CASE WHEN current_version_id IS NULL THEN $4 ELSE content_type END,
+		size_bytes=CASE WHEN current_version_id IS NULL THEN $5 ELSE size_bytes END,
+		etag=CASE WHEN current_version_id IS NULL THEN $6 ELSE etag END,updated_at=NOW() WHERE id=$7`, s.bucket, finalKey, filename, contentType, expected, etag, fileID)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("update file after upload: %w", err))
+		return
+	}
+	_, err = tx.Exec(r.Context(), `INSERT INTO file_scan_tasks(id,workspace_id,file_id,version_id,idempotency_key) VALUES($1,$2,$3,$4,$5)`, "scan-"+versionID, workspaceID, fileID, versionID, "version:"+versionID)
+	if err != nil {
+		serverError(w, fmt.Errorf("enqueue file scan: %w", err))
 		return
 	}
 	_, err = tx.Exec(r.Context(), `UPDATE file_upload_sessions SET status='completed',resulting_version_id=$1 WHERE id=$2`, versionID, id)
 	if err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("complete upload session: %w", err))
 		return
 	}
 	if err = commitCopyAttempt(r.Context(), tx, versionID); err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("commit immutable object record: %w", err))
 		return
 	}
 	if err = tx.Commit(r.Context()); err != nil {
-		serverError(w, err)
+		serverError(w, fmt.Errorf("commit upload completion: %w", err))
 		return
 	}
 	committed = true
-	writeJSON(w, 200, map[string]any{"version_id": versionID, "version_no": nextNo})
+	writeJSON(w, http.StatusAccepted, map[string]any{"version_id": versionID, "version_no": nextNo, "status": "processing"})
 }

@@ -183,15 +183,23 @@ func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 		if ctx.Err() != nil {
 			return
 		}
+		stat, err := client.StatObject(ctx, item.bucket, item.key, minio.StatObjectOptions{})
+		if err != nil {
+			if isMissingObject(err) {
+				rejectLegacyFileVersion(ctx, logger, db, item.id, "object_missing")
+			} else {
+				logger.Warn("stat legacy version", "version_id", item.id, "error", err)
+			}
+			continue
+		}
+		if stat.Size != item.size {
+			rejectLegacyFileVersion(ctx, logger, db, item.id, "size_mismatch")
+			continue
+		}
 		attemptID := fmt.Sprintf("freeze-%d-%s", time.Now().UnixNano(), item.id)
 		key := "ws/" + item.workspace + "/versions/" + attemptID
 		if _, err := db.Exec(ctx, `INSERT INTO file_copy_attempts(id,workspace_id,bucket,object_key) VALUES($1,$2,$3,$4)`, attemptID, item.workspace, item.bucket, key); err != nil {
-			logger.Warn("record legacy freeze attempt", "error", err)
-			continue
-		}
-		stat, err := client.StatObject(ctx, item.bucket, item.key, minio.StatObjectOptions{})
-		if err != nil || stat.Size != item.size {
-			logger.Warn("stat legacy version", "version_id", item.id, "error", err)
+			logger.Warn("record legacy freeze attempt", "version_id", item.id, "error", err)
 			continue
 		}
 		src := minio.CopySrcOptions{Bucket: item.bucket, Object: item.key, MatchETag: strings.Trim(stat.ETag, `"`)}
@@ -252,6 +260,7 @@ func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 }
 
 func cleanupFilesWithClient(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover, staleAfter time.Duration) {
+	purgeQuarantinedVersions(ctx, logger, db, client)
 	// Claim before removing the object. The API can only complete a pending file,
 	// so a concurrent completion and cleanup cannot both succeed.
 	_, err := db.Exec(ctx, `WITH stale AS (
@@ -300,6 +309,64 @@ func cleanupFilesWithClient(ctx context.Context, logger *slog.Logger, db *pgxpoo
 		if _, err := db.Exec(ctx, `UPDATE files SET object_purged_at=NOW(),updated_at=NOW()
 			WHERE id=$1 AND status='abandoned' AND object_purged_at IS NULL`, file.id); err != nil {
 			logger.Warn("record abandoned object cleanup", "file_id", file.id, "error", err)
+		}
+	}
+}
+
+func purgeQuarantinedVersions(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover) {
+	rows, err := db.Query(ctx, `SELECT id FROM file_versions WHERE security_status='infected'
+		AND quarantine_until <= NOW() AND object_purged_at IS NULL
+		ORDER BY object_cleanup_attempted_at NULLS FIRST,quarantine_until,id LIMIT 100`)
+	if err != nil {
+		logger.Warn("list expired quarantined versions", "error", err)
+		return
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			logger.Warn("scan expired quarantined version", "error", err)
+			return
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		logger.Warn("read expired quarantined versions", "error", err)
+		return
+	}
+	for _, id := range ids {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			logger.Warn("begin quarantined object cleanup", "error", err)
+			continue
+		}
+		var bucket, key string
+		err = tx.QueryRow(ctx, `SELECT bucket,object_key FROM file_versions WHERE id=$1 AND security_status='infected'
+			AND quarantine_until <= NOW() AND object_purged_at IS NULL FOR UPDATE SKIP LOCKED`, id).Scan(&bucket, &key)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if _, err = tx.Exec(ctx, `UPDATE file_versions SET object_cleanup_attempted_at=NOW() WHERE id=$1`, id); err != nil {
+			_ = tx.Rollback(ctx)
+			logger.Warn("mark quarantine cleanup attempt", "version_id", id, "error", err)
+			continue
+		}
+		if err = client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+			_ = tx.Commit(ctx)
+			logger.Warn("purge expired quarantined object", "version_id", id, "error", err)
+			continue
+		}
+		if _, err = tx.Exec(ctx, `UPDATE file_versions SET object_purged_at=NOW() WHERE id=$1 AND object_purged_at IS NULL`, id); err != nil {
+			_ = tx.Rollback(ctx)
+			logger.Warn("record quarantined object purge", "version_id", id, "error", err)
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			logger.Warn("commit quarantined object purge", "version_id", id, "error", err)
 		}
 	}
 }
