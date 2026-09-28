@@ -11,6 +11,7 @@ import { listReviewRecipes, listReviewRecipeVersions } from "@/lib/campaign-api"
 import { listProductionMembers } from "@/lib/production-api";
 import { useCampaignRevisionDraft } from "@/components/campaign-revision-draft-context";
 import { isExecutableSingleRoundWorkflow, publishedExecutableRecipes, reviewWorkflowCustomized } from "@/lib/review-workflow-options";
+import { resolveSelectItems } from "@/lib/select-options";
 
 const roles = { producer: "Producer", editor: "Editor", stage_manager: "Stage Manager", contributor: "Contributor", viewer: "Viewer" };
 
@@ -96,6 +97,11 @@ export function CampaignReviewEditor() {
   }
 
   const completionValue = round.completion.mode === "all" ? "all" : "at_least_n";
+  const recipeOptions = [...recipes.map((recipe) => ({ value: recipe.id, label: `${recipe.name} · v${recipe.publishedVersion}` })), { value: "custom", label: "未关联可用来源" }];
+  const recipeValue = selectedRecipe?.id || (draft.reviewRecipeVersionId ? String(draft.reviewRecipeVersionId) : "custom");
+  const recipeSelect = resolveSelectItems(recipeOptions, { value: recipeValue, loading: recipesLoading });
+  const completionOptions = [{ value: "all", label: "所有已分配审核人完成" }, { value: "at_least_n", label: "至少 N 人完成" }];
+  const reviewerSourceOptions = [{ value: "explicit_members", label: "指定有效成员" }, { value: "production_roles", label: "按 Production 角色" }];
   const toggleReviewer = (key, selected, values, setter) => setter(selected ? [...values, key] : values.filter((value) => value !== key));
 
   return <Card>
@@ -103,22 +109,22 @@ export function CampaignReviewEditor() {
     <CardContent className="space-y-4">
       <Field>
         <FieldLabel htmlFor="review-recipe">审核方案来源</FieldLabel>
-        <Select value={selectedRecipe?.id} disabled={recipesLoading} onValueChange={selectRecipe}>
+        <Select items={recipeSelect.items} value={recipeValue} disabled={draft.readOnly || recipesLoading} onValueChange={(id) => { if (id !== "custom" && !recipeSelect.missingOption) selectRecipe(id); }}>
           <SelectTrigger id="review-recipe"><SelectValue placeholder="选择已发布方案" /></SelectTrigger>
-          <SelectContent>{recipes.map((recipe) => <SelectItem key={recipe.id} value={recipe.id}>{recipe.name} · v{recipe.publishedVersion}</SelectItem>)}</SelectContent>
+          <SelectContent>{recipeSelect.missingOption ? <SelectItem value={recipeSelect.missingOption.value} disabled>{recipeSelect.missingOption.label}</SelectItem> : null}{recipes.map((recipe) => <SelectItem key={recipe.id} value={recipe.id}>{recipe.name} · v{recipe.publishedVersion}</SelectItem>)}<SelectItem value="custom" disabled>未关联可用来源</SelectItem></SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">{selectedRecipe ? `来源：${selectedRecipe.name} v${selectedRecipe.publishedVersion}；${customized ? "活动内已定制" : "尚未定制"}。` : "请先选择可运行的系统方案。"}来源版本只记录出处，当前活动 Revision 独立保存完整审核快照。</p>
       </Field>
       <div className="flex flex-wrap items-center gap-2"><Badge>MANUAL_DECISION</Badge><Badge variant="outline">并行单轮</Badge><Badge variant="outline">文字反馈</Badge><Badge variant="outline">人工最终决定</Badge></div>
       <div className="grid gap-4 rounded-md border p-3">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field><FieldLabel htmlFor="review-completion">反馈完成门槛</FieldLabel><Select value={completionValue} onValueChange={(mode) => update({ ...round, completion: mode === "all" ? { mode: "all" } : { mode: "at_least_n", n: Math.max(1, Number(round.completion?.n) || 1) } })}><SelectTrigger id="review-completion"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">所有已分配审核人完成</SelectItem><SelectItem value="at_least_n">至少 N 人完成</SelectItem></SelectContent></Select></Field>
+          <Field><FieldLabel htmlFor="review-completion">反馈完成门槛</FieldLabel><Select items={completionOptions} value={completionValue} onValueChange={(mode) => update({ ...round, completion: mode === "all" ? { mode: "all" } : { mode: "at_least_n", n: Math.max(1, Number(round.completion?.n) || 1) } })}><SelectTrigger id="review-completion"><SelectValue /></SelectTrigger><SelectContent>{completionOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></Field>
           {completionValue === "at_least_n" ? <Field><FieldLabel htmlFor="review-completion-count">至少完成数 N</FieldLabel><Input id="review-completion-count" type="number" min="1" step="1" value={round.completion?.mode === "any" ? 1 : round.completion?.n || 1} onChange={(event) => update({ ...round, completion: { mode: "at_least_n", n: Math.max(1, Number(event.target.value) || 1) } })} /></Field> : <p className="self-end pb-2 text-xs text-muted-foreground">全部完成门槛会随任务补充分配而增加。</p>}
         </div>
         <Field>
           <FieldLabel htmlFor="reviewer-source">审核人配置</FieldLabel>
-          <Select value={round.reviewer_policy?.source || "explicit_members"} onValueChange={(sourceType) => updatePolicy({ source: sourceType, member_ids: sourceType === "explicit_members" ? round.reviewer_policy?.member_ids || [] : [], role_keys: sourceType === "production_roles" ? round.reviewer_policy?.role_keys || [] : [] })}>
-            <SelectTrigger id="reviewer-source"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="explicit_members">指定有效成员</SelectItem><SelectItem value="production_roles">按 Production 角色</SelectItem></SelectContent>
+          <Select items={reviewerSourceOptions} value={round.reviewer_policy?.source || "explicit_members"} onValueChange={(sourceType) => updatePolicy({ source: sourceType, member_ids: sourceType === "explicit_members" ? round.reviewer_policy?.member_ids || [] : [], role_keys: sourceType === "production_roles" ? round.reviewer_policy?.role_keys || [] : [] })}>
+            <SelectTrigger id="reviewer-source"><SelectValue /></SelectTrigger><SelectContent>{reviewerSourceOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
           </Select>
         </Field>
         {round.reviewer_policy?.source === "explicit_members" ? <div className="space-y-2"><p className="text-xs font-medium">选择审核成员</p><div className="grid max-h-56 gap-2 overflow-y-auto rounded-md border p-3 sm:grid-cols-2">{members.map((member) => <label key={member.id} className="flex items-center gap-2 text-sm"><Checkbox checked={reviewerSet.has(member.id)} onCheckedChange={(checked) => toggleReviewer(member.id, checked === true, round.reviewer_policy?.member_ids || [], (member_ids) => updatePolicy({ member_ids }))} />{member.name}</label>)}</div>{members.length === 0 ? <p className="text-xs text-muted-foreground">当前没有可选成员；请先在活动成员管理中添加有效 Production 成员。</p> : null}</div> : <div className="space-y-2"><p className="text-xs font-medium">选择 Production 角色</p><div className="flex flex-wrap gap-x-4 gap-y-2 rounded-md border p-3">{Object.entries(roles).map(([key, label]) => <label key={key} className="flex items-center gap-2 text-sm"><Checkbox checked={reviewerSet.has(key)} onCheckedChange={(checked) => toggleReviewer(key, checked === true, round.reviewer_policy?.role_keys || [], (role_keys) => updatePolicy({ role_keys }))} />{label}</label>)}</div></div>}

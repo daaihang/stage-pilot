@@ -21,6 +21,7 @@ import { resourcePath, resourceTypePanelPath, workspacePath } from "@/lib/naviga
 import { DetailFormLayout } from "@/components/detail-form-layout";
 import { FormActionBar } from "@/components/form-action-bar";
 import { FileAttachmentsSection } from "@/components/file-attachments-section";
+import { resolveSelectItems } from "@/lib/select-options";
 
 const configs = {
   programs: { icon: FileMusic, primary: "name", kind: "program_type_id", label: "节目类型", defaults: [], fields: ["name", "program_type_id", "default_duration_seconds", "tags", "description", "technical_notes", "status"] },
@@ -44,27 +45,33 @@ function defaultTypeID(types) { return types.find((item) => item.system_key === 
 function resourceTypeFor(type, item, types) { return types.find((entry) => entry.id === item[configs[type].kind]) || null; }
 function subtitle(type, item, types) { const resourceType = resourceTypeFor(type, item, types); const kind = resourceType?.name || "其他"; if (type === "equipment") return `${kind} · ${item.quantity_total} ${item.unit} · ${labels[item.ownership]}`; if (type === "people") return `${kind} · ${item.primary_email || item.primary_phone || "联系方式待补充"}`; return `${kind} · ${item.city || (item.default_duration_seconds ? `${Math.round(item.default_duration_seconds / 60)} 分钟` : "资料待补充")}`; }
 
-function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTypes, onCreated }) {
+function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTypes, resourceTypesLoading, onCreated }) {
   const cfg = configs[type];
   const [name, setName] = useState("");
   const [typeId, setTypeId] = useState("");
   const [busy, setBusy] = useState(false);
   const options = selectOptions(type, resourceTypes);
+  const selectedType = resourceTypes.find((item) => item.id === typeId);
+  const resolvedTypeOptions = resolveSelectItems(options.map(([value, label]) => ({ value, label })), {
+    value: typeId,
+    loading: resourceTypesLoading,
+    selectedLabel: selectedType?.name,
+  });
 
   useEffect(() => {
     if (!open) return;
     setName("");
-    setTypeId(defaultTypeID(resourceTypes));
+    setTypeId(resourceTypesLoading ? "" : defaultTypeID(resourceTypes));
   }, [open, type]);
 
   useEffect(() => {
-    if (open && (!typeId || !resourceTypes.some((item) => item.id === typeId && item.is_active))) setTypeId(defaultTypeID(resourceTypes));
-  }, [open, resourceTypes, typeId]);
+    if (open && !resourceTypesLoading && !typeId) setTypeId(defaultTypeID(resourceTypes));
+  }, [open, resourceTypes, resourceTypesLoading, typeId]);
 
   const submit = async (event) => {
     event.preventDefault();
     if (!name.trim()) return notify.error(`请输入${resourceDefinitions[type].singular}名称`);
-    if (!typeId) return notify.error(`请先启用至少一个${cfg.label}`);
+    if (!typeId || !resourceTypes.some((item) => item.id === typeId && item.is_active)) return notify.error(`请选择一个已启用的${cfg.label}`);
     const body = type === "equipment"
       ? { name: name.trim(), equipment_type_id: typeId, quantity_total: 1, ownership: "owned" }
       : { [cfg.primary]: name.trim(), [cfg.kind]: typeId };
@@ -82,7 +89,7 @@ function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTyp
     }
   };
 
-  return <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}><DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-md flex-col"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><DetailFormLayout className="min-h-0 flex-1" scrollBoundary="self" onSubmit={submit} busy={busy} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={() => onOpenChange(false)} busy={busy} disabled={busy || !typeId} submitLabel="创建" busyLabel="创建中…" />}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={options.map(([value, label]) => ({ value, label }))} value={typeId} onValueChange={setTypeId}><SelectTrigger className="h-9 w-full"><SelectValue placeholder={options.length ? `选择${cfg.label}` : `请先启用${cfg.label}`} /></SelectTrigger><SelectContent>{options.map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>{options.length === 0 && <p className="text-xs text-destructive">没有启用的{cfg.label}，请先在类型管理中启用一个类型。</p>}</div></DetailFormLayout></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}><DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-md flex-col"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><DetailFormLayout className="min-h-0 flex-1" scrollBoundary="self" onSubmit={submit} busy={busy} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={() => onOpenChange(false)} busy={busy} disabled={busy || resourceTypesLoading || !typeId || !resourceTypes.some((item) => item.id === typeId && item.is_active)} submitLabel="创建" busyLabel="创建中…" />}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={resolvedTypeOptions.items} value={typeId} onValueChange={setTypeId}><SelectTrigger className="h-9 w-full" disabled={resourceTypesLoading}><SelectValue placeholder={resourceTypesLoading ? "正在加载类型…" : options.length ? `选择${cfg.label}` : `请先启用${cfg.label}`} /></SelectTrigger><SelectContent>{resolvedTypeOptions.items.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent></Select>{!resourceTypesLoading && options.length === 0 && <p className="text-xs text-destructive">没有启用的{cfg.label}，请先在类型管理中启用一个类型。</p>}</div></DetailFormLayout></DialogContent></Dialog>;
 }
 
 export function WorkspaceResourcePage({ workspace, resourceType, selectedResourceId, panel }) {
@@ -98,6 +105,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   const [error, setError] = useState(null);
   const [open, setOpen] = useState(false);
   const [types, setTypes] = useState([]);
+  const [typesLoading, setTypesLoading] = useState(true);
   const requestSequence = useRef(0);
   const triggerRefs = useRef(new Map());
   const typePanelTriggerRef = useRef(null);
@@ -147,6 +155,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
     setItems([]);
     setTotal(0);
     setTypes([]);
+    setTypesLoading(true);
     setError(null);
     setLoading(true);
     requestSequence.current += 1;
@@ -168,11 +177,12 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
   useEffect(() => {
     if (!ResourceTypeDefinition[type]) return undefined;
     let active = true;
+    setTypesLoading(true);
     listResourceTypes(workspace.id, type).then((result) => {
       if (active) setTypes(result.items);
     }).catch((nextError) => {
       if (active) notify.error(`无法加载${configs[type].label}`, { description: nextError?.message || String(nextError) });
-    });
+    }).finally(() => { if (active) setTypesLoading(false); });
     return () => { active = false; };
   }, [type, workspace.id]);
 
@@ -212,7 +222,7 @@ export function WorkspaceResourcePage({ workspace, resourceType, selectedResourc
     <ResourcePage back={{ to: workspacePath(workspace.id, "home"), label: workspace.name }} title={resourceDefinitions[type].title} description={resourceDefinitions[type].description} count={total} search={{ value: search, onChange: setSearch }} filters={<ResourceFilters fields={filterFields(type, types)} value={query} onChange={setQuery} onClear={() => setQuery(createFilterQuery())} />} view={view} onViewChange={(next) => { setView(next); appStore.set(`resourceView:${workspace.id}:${type}`, next).catch(() => {}); }} actions={{ primary: canCreate ? createAction : null, secondary: resourceTypeAction ? [resourceTypeAction] : [] }} floatingPrimary={canCreate ? createAction : null} loading={loading} empty={empty}>
       {view === "grid" ? <div className={resourceGridClassName}>{items.map((item) => <Item key={item.id} item={item} />)}</div> : <ListSurface>{items.map((item) => <Item key={item.id} item={item} />)}</ListSurface>}
     </ResourcePage>
-    <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} resourceTypes={types} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />
+    <CreateResourceDialog workspace={workspace} type={type} open={open} onOpenChange={setOpen} resourceTypes={types} resourceTypesLoading={typesLoading} onCreated={async (item) => { await reload().catch(() => {}); navigate(resourcePath(workspace.id, type, item.id)); }} />
   </>;
 }
 
@@ -343,6 +353,7 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
   const cfg = configs[type];
   const [item, setItem] = useState(null);
   const [types, setTypes] = useState([]);
+  const [typesLoading, setTypesLoading] = useState(Boolean(ResourceTypeDefinition[type]));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -363,11 +374,13 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
       })
       .finally(() => { if (active) setLoading(false); });
     if (!ResourceTypeDefinition[type]) return () => { active = false; };
+    setTypesLoading(true);
     listResourceTypes(workspace.id, type)
       .then((result) => { if (active) setTypes(result.items); })
       .catch((error) => {
         if (active) notify.error(`无法加载${cfg.label}`, { description: error?.message || String(error) });
-      });
+      })
+      .finally(() => { if (active) setTypesLoading(false); });
     return () => { active = false; };
   }, [workspace.id, type, resourceId]);
 
@@ -416,22 +429,31 @@ export function ResourceDetailPanel({ workspace, resourceType, resourceId, onClo
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">基本资料</h2>
         <div className="grid gap-4 @min-[36rem]/resource-detail:grid-cols-2">
-          {cfg.fields.map((key) => <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 @min-[36rem]/resource-detail:col-span-2" : "space-y-1"}>
-            <span className="text-sm font-medium">{fieldLabels[key]}</span>
-            {["ownership", "status", ...typeFields].includes(key)
-              ? <Select
-                items={detailSelectOptions(key, cfg, types).map(([value, label]) => ({ value, label }))}
-                value={typeFields.has(key) ? (item[key] || defaultTypeID(types)) : (item[key] || "")}
-                disabled={!canManage(workspace)}
-                onValueChange={(value) => save(key, value)}
-              >
-                <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>{detailSelectOptions(key, cfg, types).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent>
-              </Select>
-              : ["description", "bio", "technical_notes"].includes(key)
-                ? <textarea className="min-h-24 w-full border bg-background p-2 text-sm" defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />
-                : <Input type={["default_duration_seconds", "quantity_total"].includes(key) ? "number" : "text"} defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />}
-          </label>)}
+          {cfg.fields.map((key) => {
+            const isTypeField = typeFields.has(key);
+            const value = isTypeField ? (item[key] || defaultTypeID(types)) : (item[key] || "");
+            const options = detailSelectOptions(key, cfg, types).map(([optionValue, label]) => ({
+              value: optionValue,
+              label,
+              ...(isTypeField && !types.find((typeOption) => typeOption.id === optionValue)?.is_active ? { disabled: true } : {}),
+            }));
+            const resolvedOptions = resolveSelectItems(options, {
+              value,
+              loading: isTypeField && typesLoading,
+              selectedLabel: item[`${key.replace(/_id$/, "_name")}`],
+            });
+            return <label key={key} className={["description", "bio", "technical_notes"].includes(key) ? "space-y-1 @min-[36rem]/resource-detail:col-span-2" : "space-y-1"}>
+              <span className="text-sm font-medium">{fieldLabels[key]}</span>
+              {["ownership", "status", ...typeFields].includes(key)
+                ? <Select items={resolvedOptions.items} value={value} disabled={!canManage(workspace) || (isTypeField && typesLoading)} onValueChange={(nextValue) => save(key, nextValue)}>
+                  <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>{resolvedOptions.items.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent>
+                </Select>
+                : ["description", "bio", "technical_notes"].includes(key)
+                  ? <textarea className="min-h-24 w-full border bg-background p-2 text-sm" defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />
+                  : <Input type={["default_duration_seconds", "quantity_total"].includes(key) ? "number" : "text"} defaultValue={textValue(item, key)} disabled={!canManage(workspace)} onBlur={(event) => event.target.value !== textValue(item, key) && save(key, event.target.value)} />}
+            </label>;
+          })}
         </div>
       </section>
       {["venues", "organizations"].includes(type) && <ResourceRelations workspace={workspace} type={type} resourceId={resourceId} />}

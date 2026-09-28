@@ -18,6 +18,7 @@ import { createResourceType, deleteResourceType, listResourceTypes, reorderResou
 import { roleAtLeast } from "@/lib/workspace-api";
 import { useUserPreferences } from "@/components/user-preferences-provider";
 import { formatInstantInTimeZone } from "@/lib/timezone";
+import { resolveSelectItems } from "@/lib/select-options";
 
 export const ResourceTypeDefinition = Object.freeze({
   programs: {
@@ -202,7 +203,9 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
   const systemDefault = Boolean(item?.is_system_default);
   const otherType = availableTypes.find((type) => type.system_key === "other" && type.id !== item?.id) || null;
   const targets = availableTypes.filter((type) => type.id !== item?.id && type.is_active && type.system_key !== "other");
-  const canSubmit = Boolean(item) && !systemDefault && !loadingTargets && !(strategy === "move" && !replacementTypeId) && !(strategy === "delete" && usageCount > 0);
+  const replacementOptions = availableTypes.filter((type) => type.id !== item?.id && type.system_key !== "other").map((type) => ({ value: type.id, label: type.is_active ? type.name : `${type.name}（已停用）`, disabled: !type.is_active }));
+  const resolvedReplacementOptions = resolveSelectItems(replacementOptions, { value: replacementTypeId, loading: loadingTargets, selectedLabel: availableTypes.find((type) => type.id === replacementTypeId)?.name });
+  const canSubmit = Boolean(item) && !systemDefault && !loadingTargets && !(strategy === "move" && !targets.some((type) => type.id === replacementTypeId)) && !(strategy === "delete" && usageCount > 0);
 
   useEffect(() => {
     if (!open) return;
@@ -219,7 +222,7 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
         const replacement = result.items.find((type) => type.id !== item.id && type.is_active && type.system_key !== "other");
         const other = result.items.find((type) => type.id !== item.id && type.system_key === "other");
         setStrategy(usageCount > 0 ? (replacement ? "move" : other ? "other" : "deactivate") : "delete");
-        setReplacementTypeId(replacement?.id || "");
+        setReplacementTypeId((current) => current && result.items.some((type) => type.id === current) ? current : replacement?.id || "");
       })
       .catch((error) => { if (active) { setStrategy("deactivate"); notify.error(`无法加载${definition.title}`, { description: error?.message || String(error) }); } })
       .finally(() => { if (active) setLoadingTargets(false); });
@@ -248,7 +251,7 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>处理“{item?.name || definition.title}”</DialogTitle><DialogDescription>{systemDefault ? `系统默认${definition.title}只能在列表中启用或停用。` : usageCount > 0 ? `“${item?.name}”当前被 ${usageCount} 个${definition.resourceLabel}使用。请选择处理方式。` : `选择如何处理“${item?.name}”。直接删除会软删除类型记录。`}</DialogDescription></DialogHeader>
         {systemDefault ? <DialogFooter><Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>关闭</Button></DialogFooter> : <form className="space-y-3" onSubmit={submit}><RadioGroup value={strategy} onValueChange={setStrategy} className="gap-2">
-          {targets.length > 0 && <label className="block cursor-pointer border p-3"><span className="flex items-start gap-2"><RadioGroupItem value="move" className="mt-0.5" /><span><span className="block text-sm font-medium">移动到其他启用类型</span><span className="text-xs text-muted-foreground">现有{definition.resourceLabel}会迁移到所选类型，并删除当前类型。</span></span></span>{strategy === "move" && <Select items={targets.map((type) => ({ value: type.id, label: type.name }))} value={replacementTypeId} onValueChange={setReplacementTypeId}><SelectTrigger className="mt-3 w-full" disabled={loadingTargets}><SelectValue placeholder={`选择目标${definition.title}`} /></SelectTrigger><SelectContent>{targets.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select>}</label>}
+          {targets.length > 0 && <label className="block cursor-pointer border p-3"><span className="flex items-start gap-2"><RadioGroupItem value="move" className="mt-0.5" /><span><span className="block text-sm font-medium">移动到其他启用类型</span><span className="text-xs text-muted-foreground">现有{definition.resourceLabel}会迁移到所选类型，并删除当前类型。</span></span></span>{strategy === "move" && <Select items={resolvedReplacementOptions.items} value={replacementTypeId} onValueChange={setReplacementTypeId}><SelectTrigger className="mt-3 w-full" disabled={loadingTargets}><SelectValue placeholder={`选择目标${definition.title}`} /></SelectTrigger><SelectContent>{resolvedReplacementOptions.items.map((type) => <SelectItem key={type.value} value={type.value} disabled={type.disabled}>{type.label}</SelectItem>)}</SelectContent></Select>}</label>}
           {otherType && <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="other" className="mt-0.5" /><span><span className="block text-sm font-medium">改为“其他”</span><span className="text-xs text-muted-foreground">现有{definition.resourceLabel}会归入系统默认的“其他”类型，并删除当前类型。</span></span></label>}
           <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="deactivate" className="mt-0.5" /><span><span className="block text-sm font-medium">仅停用</span><span className="text-xs text-muted-foreground">保留当前类型和已有{definition.resourceLabel}引用，不再用于新建资源。</span></span></label>
           <label className={`flex items-start gap-2 border p-3 ${usageCount > 0 ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}><RadioGroupItem value="delete" disabled={usageCount > 0} className="mt-0.5" /><span><span className="block text-sm font-medium">直接删除</span><span className="text-xs text-muted-foreground">{usageCount > 0 ? `仍有 ${usageCount} 个${definition.resourceLabel}使用，不能直接删除。` : "没有资源使用时可直接软删除。"}</span></span></label>

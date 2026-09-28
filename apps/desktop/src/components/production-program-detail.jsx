@@ -24,6 +24,7 @@ import {
   productionProgramSourceLabels,
   productionProgramStatusLabels,
 } from "@/lib/production-program-store";
+import { resolveSelectItems } from "@/lib/select-options";
 
 function draftFrom(program) {
   return {
@@ -55,6 +56,7 @@ export function ProductionProgramDetail({
   workspace,
   production,
   programTypes = [],
+  programTypesLoading = false,
   canWrite,
   onSave,
   onDuplicate,
@@ -72,6 +74,11 @@ export function ProductionProgramDetail({
     () => getProductionProgramMissingInfo(program),
     [program],
   );
+  const programTypeOptions = [{ value: "none", label: "未设置" }, ...programTypes.map((item) => ({ value: item.id, label: `${item.name || "未命名类型"}${item.is_active === false ? "（已停用）" : ""}`, disabled: item.is_active === false }))];
+  const selectedProgramType = programTypes.find((item) => item.id === draft.programTypeId);
+  const programTypeSelect = resolveSelectItems(programTypeOptions, { value: draft.programTypeId || "none", loading: programTypesLoading, selectedLabel: selectedProgramType?.name || program?.programTypeName });
+  const programStatusOptions = Object.entries(productionProgramStatusLabels).map(([value, label]) => ({ value, label, ...(value === "archived" ? { disabled: true } : {}) }));
+  const statusSelect = resolveSelectItems(programStatusOptions, { value: draft.status });
   const editable = canWrite && program?.status !== "archived";
   const set = (key, value) => {
     setDirty(true);
@@ -180,23 +187,19 @@ export function ProductionProgramDetail({
           <label className="space-y-1">
             <span className="text-sm font-medium">节目类型</span>
             <Select
+              items={programTypeSelect.items}
               value={draft.programTypeId || "none"}
-              disabled={!editable}
+              disabled={!editable || programTypesLoading}
               onValueChange={(value) =>
                 set("programTypeId", value === "none" ? "" : value)
               }
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="未设置" />
+                <SelectValue placeholder={programTypesLoading ? "正在加载节目类型…" : "未设置"} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">未设置</SelectItem>
-                {programTypes.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.name}
-                    {item.is_active === false ? "（已停用）" : ""}
-                  </SelectItem>
-                ))}
+                {programTypeSelect.missingOption ? <SelectItem value={programTypeSelect.missingOption.value} disabled>{programTypeSelect.missingOption.label}</SelectItem> : null}
+                {programTypeOptions.map((item) => <SelectItem key={item.value} value={item.value} disabled={item.disabled}>{item.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </label>
@@ -240,6 +243,7 @@ export function ProductionProgramDetail({
           <label className="space-y-1">
             <span className="text-sm font-medium">准备状态</span>
             <Select
+              items={statusSelect.items}
               value={draft.status}
               disabled={!editable}
               onValueChange={(value) => set("status", value)}
@@ -248,13 +252,8 @@ export function ProductionProgramDetail({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(productionProgramStatusLabels)
-                  .filter(([value]) => value !== "archived")
-                  .map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
+                {statusSelect.missingOption ? <SelectItem value={statusSelect.missingOption.value} disabled>{statusSelect.missingOption.label}</SelectItem> : null}
+                {programStatusOptions.map((item) => <SelectItem key={item.value} value={item.value} disabled={item.disabled}>{item.label}</SelectItem>)}
               </SelectContent>
             </Select>
           </label>

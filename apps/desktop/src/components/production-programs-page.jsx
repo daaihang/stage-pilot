@@ -55,6 +55,7 @@ import {
   productionProgramSourceLabels,
   productionProgramStatusLabels,
 } from "@/lib/production-program-utils";
+import { resolveSelectItems } from "@/lib/select-options";
 import { AddProgramToSheetsDialog, ProductionProgramPickerDialog } from "@/components/production-program-dialogs";
 import { ProductionProgramDetail } from "@/components/production-program-detail";
 import { ProductionProgramCreateDetail } from "@/components/production-program-create-detail";
@@ -253,6 +254,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
         <ProductionProgramCreateDetail
           workspacePrograms={workspacePrograms}
           programTypes={programTypes}
+          programTypesLoading={loading}
           existingPrograms={programs}
           mode={creationContext.mode}
           sourceProgram={creationContext.sourceProgram}
@@ -297,6 +299,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
           workspace={workspace}
           production={production}
           programTypes={programTypes}
+          programTypesLoading={loading}
           canWrite={canWrite}
           onSave={async (patch) => {
             try {
@@ -379,6 +382,12 @@ export function ProductionProgramsPage({ route, workspace, production }) {
       })
       .sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
   }, [programs, query, source, status, typeId]);
+  const statusFilterOptions = [{ value: "all", label: "全部状态" }, ...Object.entries(productionProgramStatusLabels).map(([value, label]) => ({ value, label }))];
+  const sourceFilterOptions = [{ value: "all", label: "全部来源" }, ...Object.entries(productionProgramSourceLabels).map(([value, label]) => ({ value, label }))];
+  const typeFilterOptions = [{ value: "all", label: "全部类型" }, ...programTypes.map((item) => ({ value: item.id, label: `${item.name || "未命名类型"}${item.is_active === false ? "（已停用）" : ""}` }))];
+  const statusFilterSelect = resolveSelectItems(statusFilterOptions, { value: status });
+  const sourceFilterSelect = resolveSelectItems(sourceFilterOptions, { value: source });
+  const typeFilterSelect = resolveSelectItems(typeFilterOptions, { value: typeId, loading });
 
   const duplicateProgram = async (program) => {
     try {
@@ -488,47 +497,31 @@ export function ProductionProgramsPage({ route, workspace, production }) {
         }}
         filters={
           <>
-            <Select value={status} onValueChange={setStatus}>
+            <Select items={statusFilterSelect.items} value={status} onValueChange={setStatus}>
               <SelectTrigger className="w-28">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部状态</SelectItem>
-                {Object.entries(productionProgramStatusLabels).map(
-                  ([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ),
-                )}
+                {statusFilterSelect.missingOption ? <SelectItem value={statusFilterSelect.missingOption.value} disabled>{statusFilterSelect.missingOption.label}</SelectItem> : null}
+                {statusFilterOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={source} onValueChange={setSource}>
+            <Select items={sourceFilterSelect.items} value={source} onValueChange={setSource}>
               <SelectTrigger className="w-32">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部来源</SelectItem>
-                {Object.entries(productionProgramSourceLabels).map(
-                  ([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ),
-                )}
+                {sourceFilterSelect.missingOption ? <SelectItem value={sourceFilterSelect.missingOption.value} disabled>{sourceFilterSelect.missingOption.label}</SelectItem> : null}
+                {sourceFilterOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={typeId} onValueChange={setTypeId}>
+            <Select items={typeFilterSelect.items} value={typeId} onValueChange={setTypeId} disabled={loading}>
               <SelectTrigger className="w-32">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">全部类型</SelectItem>
-                {programTypes.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.name}
-                  </SelectItem>
-                ))}
+                {typeFilterSelect.missingOption ? <SelectItem value={typeFilterSelect.missingOption.value} disabled>{typeFilterSelect.missingOption.label}</SelectItem> : null}
+                {typeFilterOptions.map(({ value, label }) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
               </SelectContent>
             </Select>
           </>
@@ -611,6 +604,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
         productionPrograms={programs}
         workspacePrograms={workspacePrograms}
         programTypes={programTypes}
+        programTypesLoading={loading}
         onSelectExisting={(values) => {
           const first = values[0];
           if (!first) return;

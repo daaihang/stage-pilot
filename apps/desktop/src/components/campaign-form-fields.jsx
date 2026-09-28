@@ -8,6 +8,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { localDateTimeToUtc, utcToLocalDateTime } from "@/lib/campaign-form-runtime";
+import { resolveSelectItems } from "@/lib/select-options";
 
 function optionValue(option) {
   return typeof option === "string" ? option : option?.value || option?.label || "";
@@ -50,7 +51,11 @@ function MultiSelectField({ field, value, onValueChange, disabled, triggerId, de
 function FieldControl({ field, value, onValueChange, readOnly, mode, timezone, controlId, descriptionId, errorId, invalid }) {
   const description = describedBy(descriptionId, errorId, Boolean(field.helpText), invalid);
   const options = Array.isArray(field.options) ? field.options : [];
-  if (field.type === "select") return <Select value={value || null} onValueChange={(next) => onValueChange(next || "")} disabled={readOnly}><SelectTrigger id={controlId} className="w-full" aria-invalid={invalid || undefined} aria-describedby={description}><SelectValue placeholder="请选择" /></SelectTrigger><SelectContent>{options.map((option, index) => <SelectItem key={optionValue(option) || index} value={optionValue(option)}>{optionLabel(option)}</SelectItem>)}</SelectContent></Select>;
+  if (field.type === "select") {
+    const selectOptions = options.map((option, index) => ({ value: optionValue(option) || `option-${index}`, label: optionLabel(option) || "未命名选项" }));
+    const select = resolveSelectItems(selectOptions, { value: value || null });
+    return <Select items={select.items} value={value || null} onValueChange={(next) => onValueChange(next || "")} disabled={readOnly}><SelectTrigger id={controlId} className="w-full" aria-invalid={invalid || undefined} aria-describedby={description}><SelectValue placeholder="请选择" /></SelectTrigger><SelectContent>{select.missingOption ? <SelectItem value={select.missingOption.value} disabled>{select.missingOption.label}</SelectItem> : null}{selectOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>;
+  }
   if (field.type === "multiselect") return <MultiSelectField field={field} value={value} onValueChange={onValueChange} disabled={readOnly} triggerId={controlId} descriptionId={descriptionId} errorId={errorId} invalid={invalid} />;
   if (field.type === "radio") return <RadioGroup value={value || null} onValueChange={(next) => onValueChange(next || "")} aria-labelledby={`${controlId}-label`} aria-describedby={description} aria-invalid={invalid || undefined} className="gap-2">{options.map((option, index) => {
     const optionId = `${controlId}-option-${index}`;

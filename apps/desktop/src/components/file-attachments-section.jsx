@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { notify } from "@/components/ui/sonner";
 import { listFileTypes } from "@/lib/resource-api";
+import { resolveSelectItems } from "@/lib/select-options";
 import {
   completeUploadSession, copyProductionProgramAttachment, createProductionProgramAttachment,
   createProgramAttachment, detachAttachment, downloadAttachment, listAttachmentVersions,
@@ -21,6 +22,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
   const [capabilities, setCapabilities] = useState({});
   const [sourceItems, setSourceItems] = useState([]);
   const [types, setTypes] = useState([]);
+  const [typesLoading, setTypesLoading] = useState(false);
   const [selectedType, setSelectedType] = useState("none");
   const [restricted, setRestricted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -40,9 +42,11 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
   }, [reload]);
   useEffect(() => {
     if (isProduction || !workspace?.id) return;
+    setTypesLoading(true);
     listFileTypes(workspace.id, { scope: "program" })
       .then((result) => setTypes((result.items || []).filter((item) => item.is_active)))
-      .catch((error) => notify.error("无法加载文件类型", { description: error?.message || String(error) }));
+      .catch((error) => notify.error("无法加载文件类型", { description: error?.message || String(error) }))
+      .finally(() => setTypesLoading(false));
   }, [isProduction, workspace?.id]);
   useEffect(() => {
     if (!isProduction || !sourceProgramId || !workspace?.role) return;
@@ -122,7 +126,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
     <CardHeader className="border-b"><CardTitle>附件与版本</CardTitle><CardDescription>附件按所属节目授权；历史版本可单独下载。</CardDescription></CardHeader>
     <CardContent className="space-y-4 p-4">
       {capabilities.can_attach && <div className="flex flex-wrap items-center gap-3">
-        {!isProduction && <Select value={selectedType} onValueChange={setSelectedType}><SelectTrigger className="w-48"><SelectValue placeholder="文件类型" /></SelectTrigger><SelectContent><SelectItem value="none">未分类</SelectItem>{types.map((type) => <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>)}</SelectContent></Select>}
+        {!isProduction && (() => { const options = [{ value: "none", label: "未分类" }, ...types.map((type) => ({ value: type.id, label: type.name || "未命名文件类型" }))]; const select = resolveSelectItems(options, { value: selectedType, loading: typesLoading }); return <Select items={select.items} value={selectedType} onValueChange={setSelectedType} disabled={typesLoading}><SelectTrigger className="w-48"><SelectValue placeholder={typesLoading ? "正在加载文件类型…" : "文件类型"} /></SelectTrigger><SelectContent>{select.missingOption ? <SelectItem value={select.missingOption.value} disabled>{select.missingOption.label}</SelectItem> : null}{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>; })()}
         {capabilities.can_attach_restricted && <label className="flex items-center gap-2 text-sm"><Switch checked={restricted} onCheckedChange={setRestricted} />敏感资料</label>}
         <label><Button asChild disabled={busy}><span><FileUp />上传附件</span></Button><input type="file" className="hidden" onChange={uploadNew} disabled={busy} /></label>
       </div>}

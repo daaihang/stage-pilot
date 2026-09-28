@@ -191,6 +191,7 @@ export function ProgramSheetDetail({
   productionPrograms,
   workspacePrograms,
   programTypes = [],
+  programTypesLoading = false,
   segmentTypes = [],
   segmentTypeLoading = false,
   segmentTypeError = null,
@@ -367,6 +368,7 @@ export function ProgramSheetDetail({
           <div className="flex flex-wrap items-center justify-end gap-2">
             {sheet.status === "draft" || sheet.status === "review" ? (
               <Select
+                items={[{ value: "draft", label: "草稿" }, { value: "review", label: "待审核" }]}
                 value={sheet.status}
                 onValueChange={(status) => update({ status })}
                 disabled={!canWrite}
@@ -688,6 +690,7 @@ export function ProgramSheetDetail({
         productionPrograms={productionPrograms}
         workspacePrograms={workspacePrograms}
         programTypes={programTypes}
+        programTypesLoading={programTypesLoading}
         onAddExisting={onAddExistingPrograms}
         onCopyWorkspace={onCopyWorkspacePrograms}
         onCreateCustom={onCreateCustomProgram}
@@ -697,6 +700,7 @@ export function ProgramSheetDetail({
         item={itemDialog?.item}
         kind={itemDialog?.kind}
         segmentTypes={segmentTypes}
+        segmentTypeLoading={segmentTypeLoading}
         onOpenChange={(open) => !open && setItemDialog(null)}
         onSave={(patch) =>
           itemDialog?.item
@@ -713,7 +717,7 @@ export function ProgramSheetDetail({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <Select value={shareScope} onValueChange={setShareScope}>
+            <Select items={[{ value: "link", label: "持有链接的任何人" }, { value: "members", label: "仅活动成员" }]} value={shareScope} onValueChange={setShareScope}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>

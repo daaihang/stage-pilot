@@ -15,6 +15,7 @@ import { notify } from "@/components/ui/sonner";
 import { assignEntryReviewTask, createEntryDecision, getEntry, listCampaignEntries, listEntryRevisions, updateEntryInboxState } from "@/lib/campaign-api";
 import { getEntryReviewDecisionState } from "@/lib/campaign-review-ui-state";
 import { listProductionMembers } from "@/lib/production-api";
+import { resolveSelectItems } from "@/lib/select-options";
 
 const STATUS_LABELS = {
   draft: "草稿", submitted: "已提交", in_review: "审核中", needs_changes: "待补件",
@@ -97,6 +98,17 @@ function ReviewRunCard({ detail, members, onAssign, assignmentBusy }) {
   const runLabels = { awaiting_assignment: "待补足审核人", collecting_feedback: "收集审核意见中", ready_for_decision: "已达到决定门槛", decided: "已完成决定", blocked_unsupported: "存量审核配置不兼容", legacy_override_decided: "已通过遗留流程覆盖" };
   const pendingTasks = run.tasks.filter((task) => task.status === "pending");
   const currentTask = run.tasks.find((task) => task.id === taskId);
+  const taskOptions = [
+    { value: "__new__", label: "新增审核任务" },
+    ...pendingTasks.map((task, index) => ({ value: task.id, label: `改派待反馈任务 ${index + 1}` })),
+  ];
+  const selectedTask = run.tasks.find((task) => task.id === taskId);
+  const taskSelect = resolveSelectItems(taskOptions, {
+    value: taskId || "__new__",
+    selectedLabel: selectedTask ? `审核任务 ${run.tasks.indexOf(selectedTask) + 1}` : undefined,
+  });
+  const reviewerOptions = activeReviewers.map((member) => ({ value: member.userId, label: member.name || member.email || "未命名成员" }));
+  const reviewerSelect = resolveSelectItems(reviewerOptions, { value: reviewerId });
   const submitAssignment = async (event) => {
     event.preventDefault();
     if (!reviewerId || !reason.trim()) return;
@@ -123,12 +135,12 @@ function ReviewRunCard({ detail, members, onAssign, assignmentBusy }) {
         <p className="text-xs font-medium sm:col-span-2">补充或改派审核人</p>
         <Field>
           <FieldLabel htmlFor="review-assignment-task">任务</FieldLabel>
-          <Select value={taskId || "__new__"} onValueChange={(value) => setTaskId(value === "__new__" ? "" : value)}><SelectTrigger id="review-assignment-task" aria-describedby="review-assignment-task-description"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__new__">新增审核任务</SelectItem>{pendingTasks.map((task, index) => <SelectItem key={task.id} value={task.id}>改派待反馈任务 {index + 1}</SelectItem>)}</SelectContent></Select>
+          <Select items={taskSelect.items} value={taskId || "__new__"} onValueChange={(value) => setTaskId(value === "__new__" ? "" : value)}><SelectTrigger id="review-assignment-task" aria-describedby="review-assignment-task-description"><SelectValue /></SelectTrigger><SelectContent>{taskSelect.missingOption ? <SelectItem value={taskSelect.missingOption.value} disabled>{taskSelect.missingOption.label}</SelectItem> : null}{taskOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
           <FieldDescription id="review-assignment-task-description">选择一个待反馈任务进行改派，或新增一项审核任务。</FieldDescription>
         </Field>
         <Field>
           <FieldLabel htmlFor="review-assignment-reviewer">有效审核人</FieldLabel>
-          <Select value={reviewerId} onValueChange={setReviewerId}><SelectTrigger id="review-assignment-reviewer" aria-describedby="review-assignment-reviewer-description"><SelectValue placeholder="选择有效审核人" /></SelectTrigger><SelectContent>{activeReviewers.map((member) => <SelectItem key={member.userId} value={member.userId}>{member.name}</SelectItem>)}</SelectContent></Select>
+          <Select items={reviewerSelect.items} value={reviewerId} onValueChange={setReviewerId}><SelectTrigger id="review-assignment-reviewer" aria-describedby="review-assignment-reviewer-description"><SelectValue placeholder="选择有效审核人" /></SelectTrigger><SelectContent>{reviewerSelect.missingOption ? <SelectItem value={reviewerSelect.missingOption.value} disabled>{reviewerSelect.missingOption.label}</SelectItem> : null}{reviewerOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>
           <FieldDescription id="review-assignment-reviewer-description">只显示当前有效的 Production 成员。</FieldDescription>
         </Field>
         <Field className="sm:col-span-2">
@@ -408,9 +420,9 @@ export function CampaignEntryInbox({ campaignId }) {
         </div>
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_8rem_8rem]">
           <div className="relative"><Search className="pointer-events-none absolute left-2 top-2.5 size-4 text-muted-foreground" /><Input className="pl-8" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Entry、邮箱或答案" /></div>
-          <Select value={status} onValueChange={setStatus}><SelectTrigger><SelectValue placeholder="状态" /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
-          <Select value={isUnread} onValueChange={setIsUnread}><SelectTrigger><SelectValue placeholder="已读状态" /></SelectTrigger><SelectContent><SelectItem value="all">全部已读状态</SelectItem><SelectItem value="true">未读</SelectItem><SelectItem value="false">已读</SelectItem></SelectContent></Select>
-          <Select value={isStarred} onValueChange={setIsStarred}><SelectTrigger><SelectValue placeholder="星标" /></SelectTrigger><SelectContent><SelectItem value="all">全部星标</SelectItem><SelectItem value="true">已标星</SelectItem><SelectItem value="false">未标星</SelectItem></SelectContent></Select>
+          <Select items={[{ value: "all", label: "全部状态" }, ...Object.entries(STATUS_LABELS).map(([value, label]) => ({ value, label }))]} value={status} onValueChange={setStatus}><SelectTrigger><SelectValue placeholder="状态" /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(STATUS_LABELS).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select>
+          <Select items={[{ value: "all", label: "全部已读状态" }, { value: "true", label: "未读" }, { value: "false", label: "已读" }]} value={isUnread} onValueChange={setIsUnread}><SelectTrigger><SelectValue placeholder="已读状态" /></SelectTrigger><SelectContent><SelectItem value="all">全部已读状态</SelectItem><SelectItem value="true">未读</SelectItem><SelectItem value="false">已读</SelectItem></SelectContent></Select>
+          <Select items={[{ value: "all", label: "全部星标" }, { value: "true", label: "已标星" }, { value: "false", label: "未标星" }]} value={isStarred} onValueChange={setIsStarred}><SelectTrigger><SelectValue placeholder="星标" /></SelectTrigger><SelectContent><SelectItem value="all">全部星标</SelectItem><SelectItem value="true">已标星</SelectItem><SelectItem value="false">未标星</SelectItem></SelectContent></Select>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">

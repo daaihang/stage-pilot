@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, GripVertical, MapPin, Pencil, Plus, Trash2 } from "@/components/ui/icons";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { listResource, listVenueSpaces } from "@/lib/resource-api";
 import { createProductionLocation, deleteProductionLocation, listProductionLocations, reorderProductionLocations, updateProductionLocation } from "@/lib/production-api";
 import { DetailFormLayout } from "@/components/detail-form-layout";
 import { FormActionBar } from "@/components/form-action-bar";
+import { resolveSelectItems } from "@/lib/select-options";
 
 export const productionLocationPurposes = [["performance", "演出"], ["rehearsal", "排练"], ["office", "办公"], ["other", "其他"]];
 const purposeLabel = (value) => value === "primary" ? "其他" : productionLocationPurposes.find(([key]) => key === value)?.[1] || value || "其他";
@@ -38,24 +39,42 @@ function LocationDetail({ workspace, production, location, venues, locationCount
   const [form, setForm] = useState(() => initialForm(location));
   const [spaces, setSpaces] = useState([]);
   const [loadingSpaces, setLoadingSpaces] = useState(false);
+  const spacesRequest = useRef(0);
   const [error, setError] = useState("");
   const canWrite = canManageLocations(workspace, production);
   const venueOptions = useMemo(() => venues.map((venue) => ({ value: venue.id, label: venue.name })), [venues]);
   const venueIds = useMemo(() => venueOptions.map((venue) => venue.value), [venueOptions]);
   const venueLabel = useCallback((value) => venueOptions.find((venue) => venue.value === value)?.label || "", [venueOptions]);
-  const spaceOptions = useMemo(() => [{ value: "none", label: "整个场地" }, ...spaces.filter((space) => space.status !== "archived").map((space) => ({ value: space.id, label: space.name }))], [spaces]);
+  const spaceOptions = useMemo(() => [{ value: "none", label: "整个场地" }, ...spaces.map((space) => ({ value: space.id, label: space.status === "archived" ? `${space.name}（已停用）` : space.name, disabled: space.status === "archived" }))], [spaces]);
+  const resolvedSpaceOptions = resolveSelectItems(spaceOptions, {
+    value: form.venueSpaceId || "none",
+    loading: loadingSpaces,
+    selectedLabel: location?.venueSpaceId === form.venueSpaceId ? location?.spaceName : undefined,
+  });
   const purposeOptions = useMemo(() => productionLocationPurposes.map(([value, label]) => ({ value, label })), []);
   const loadSpaces = useCallback(async (venueId) => {
-    if (!venueId) { setSpaces([]); return; }
+    const requestId = ++spacesRequest.current;
+    if (!venueId) { setSpaces([]); setLoadingSpaces(false); return; }
     setLoadingSpaces(true);
-    try { setSpaces(await listVenueSpaces(workspace.id, venueId)); }
-    catch (nextError) { setSpaces([]); notify.error("无法加载场地空间", { description: nextError?.message || String(nextError) }); }
-    finally { setLoadingSpaces(false); }
+    setSpaces([]);
+    try {
+      const result = await listVenueSpaces(workspace.id, venueId);
+      if (requestId === spacesRequest.current) setSpaces(result);
+    } catch (nextError) {
+      if (requestId === spacesRequest.current) { setSpaces([]); notify.error("无法加载场地空间", { description: nextError?.message || String(nextError) }); }
+    } finally {
+      if (requestId === spacesRequest.current) setLoadingSpaces(false);
+    }
   }, [workspace.id]);
-  useEffect(() => { loadSpaces(form.venueId); }, [form.venueId, loadSpaces]);
+  useEffect(() => { loadSpaces(form.venueId); return () => { spacesRequest.current += 1; }; }, [form.venueId, loadSpaces]);
   const submit = async (event) => {
     event.preventDefault();
     if (!canWrite || !form.venueId || busy) return;
+    const selectedSpace = resolvedSpaceOptions.items.find((space) => space.value === form.venueSpaceId);
+    if (form.venueSpaceId && (loadingSpaces || !selectedSpace || selectedSpace.disabled)) {
+      notify.error(loadingSpaces ? "空间选项仍在加载，请稍后再保存" : "所选空间已不可用，请重新选择或改为整个场地");
+      return;
+    }
     setError("");
     const toast = notify.loading(form.id ? "正在保存活动地点…" : "正在添加活动地点…");
     const payload = { venue_id: form.venueId, venue_space_id: form.venueSpaceId || null, purpose: form.purpose, is_primary: form.isPrimary, notes: form.notes.trim() };
@@ -71,7 +90,7 @@ function LocationDetail({ workspace, production, location, venues, locationCount
   };
   return <DetailFormLayout scrollBoundary="self" error={error} busy={busy} onSubmit={submit} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={onCancel} busy={busy} disabled={!canWrite || !form.venueId} submitLabel={form.id ? "保存" : "添加"} busyLabel="保存中…" />}>
     <label className="space-y-1.5"><span className="text-sm font-medium">场地</span><Combobox items={venueIds} value={form.venueId || null} onValueChange={(value) => setForm((current) => ({ ...current, venueId: value || "", venueSpaceId: "" }))} itemToStringValue={(value) => value || ""} itemToStringLabel={venueLabel}><ComboboxInput className="w-full" placeholder="搜索并选择场地" /><ComboboxContent><ComboboxEmpty>没有匹配的场地</ComboboxEmpty><ComboboxList>{venueOptions.map((venue) => <ComboboxItem key={venue.value} value={venue.value}>{venue.label}</ComboboxItem>)}</ComboboxList></ComboboxContent></Combobox></label>
-    <label className="space-y-1.5"><span className="text-sm font-medium">空间</span><Select items={spaceOptions} value={form.venueSpaceId || "none"} onValueChange={(value) => setForm((current) => ({ ...current, venueSpaceId: value === "none" ? "" : value }))} disabled={!form.venueId || loadingSpaces}><SelectTrigger className="w-full"><SelectValue placeholder={loadingSpaces ? "空间加载中…" : "整个场地"} /></SelectTrigger><SelectContent><SelectItem value="none">整个场地</SelectItem>{spaceOptions.slice(1).map((space) => <SelectItem key={space.value} value={space.value}>{space.label}</SelectItem>)}</SelectContent></Select><p className="mt-1 text-xs text-muted-foreground">选择具体空间后，只约束该空间；留空表示整个场地。</p></label>
+    <label className="space-y-1.5"><span className="text-sm font-medium">空间</span><Select items={resolvedSpaceOptions.items} value={form.venueSpaceId || "none"} onValueChange={(value) => setForm((current) => ({ ...current, venueSpaceId: value === "none" ? "" : value }))} disabled={!form.venueId || loadingSpaces}><SelectTrigger className="w-full"><SelectValue placeholder={loadingSpaces ? "空间加载中…" : "整个场地"} /></SelectTrigger><SelectContent>{resolvedSpaceOptions.items.map((space) => <SelectItem key={space.value} value={space.value} disabled={space.disabled}>{space.label}</SelectItem>)}</SelectContent></Select><p className="mt-1 text-xs text-muted-foreground">选择具体空间后，只约束该空间；留空表示整个场地。</p></label>
     <label className="space-y-1.5"><span className="text-sm font-medium">使用场景</span><Select items={purposeOptions} value={form.purpose} onValueChange={(value) => setForm((current) => ({ ...current, purpose: value }))}><SelectTrigger className="w-full"><SelectValue placeholder="选择使用场景" /></SelectTrigger><SelectContent>{purposeOptions.map((purposeOption) => <SelectItem key={purposeOption.value} value={purposeOption.value}>{purposeOption.label}</SelectItem>)}</SelectContent></Select><p className="mt-1 text-xs text-muted-foreground">描述这个地点在活动中的实际用途，与默认地点设置相互独立。</p></label>
     <div className="flex items-center justify-between gap-3 border-y py-3"><div><p className="text-sm font-medium">是否是默认地点</p><p className="mt-1 text-xs text-muted-foreground">一个活动只能有一个默认地点；设置后会替换当前默认地点。</p></div><Switch checked={form.isPrimary} onCheckedChange={(checked) => setForm((current) => ({ ...current, isPrimary: checked }))} aria-label="是否是默认地点" /></div>
     <label className="space-y-1.5"><span className="text-sm font-medium">备注</span><Input value={form.notes} maxLength={500} placeholder="备注（可选）" onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} /></label>
