@@ -47,6 +47,7 @@ export const accountPages = {
   preferences: { title: "偏好与通知", description: "控制 StagePilot 的外观和通知体验。" },
   security: { title: "登录与安全", description: "保护账号、密码和登录安全。" },
   billing: { title: "方案与账单", description: "查看当前方案和可用能力。" },
+  storage: { title: "存储用量", description: "查看工作空间的文件额度、临时预留和实际对象存储占用。" },
   developer: { title: "开发工具", description: "验证桌面能力和 UI 组件（仅开发构建）。", devOnly: true },
 };
 

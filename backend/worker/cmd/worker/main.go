@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -43,10 +44,26 @@ func main() {
 		logger.Warn("file scanning storage unavailable; scan tasks will remain queued", "error", storageErr)
 	}
 	scanner := newClamAVScanner(os.Getenv("CLAMD_ADDRESS"), durationOrDefault("CLAMD_TIMEOUT", 15*time.Minute))
+	physicalLimit := int64(0)
+	if value, parseErr := strconv.ParseInt(os.Getenv("FILES_WORKSPACE_PHYSICAL_MAX_BYTES"), 10, 64); parseErr == nil && value > 0 {
+		physicalLimit = value
+	}
+	bucket := envOrDefault("S3_BUCKET", "stagepilot")
+	stagingBucket := envOrDefault("S3_STAGING_BUCKET", bucket+"-staging")
+	if storage != nil && stagingBucket != bucket {
+		if err := storage.MakeBucket(ctx, stagingBucket, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil && minio.ToErrorResponse(err).Code != "BucketAlreadyOwnedByYou" {
+			logger.Warn("ensure temporary upload bucket", "bucket", stagingBucket, "error", err)
+		}
+	}
+	storageBuckets := []string{bucket}
+	if stagingBucket != bucket {
+		storageBuckets = append(storageBuckets, stagingBucket)
+	}
 
 	logger.Info("worker started", "interval", interval)
 	go cleanupTicker(ctx, logger, pool, interval)
 	go fileScanTicker(ctx, logger, pool, storage, scanner, interval, maxFileBytesFromEnv())
+	go storageReconcileTicker(ctx, logger, pool, storage, storageBuckets, physicalLimit, durationOrDefault("STORAGE_RECONCILE_INTERVAL", 6*time.Hour))
 	run(ctx, logger, pool, interval)
 	logger.Info("worker stopped")
 }

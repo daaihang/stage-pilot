@@ -17,6 +17,16 @@ type fileObjectRemover interface {
 	RemoveObject(context.Context, string, string, minio.RemoveObjectOptions) error
 }
 
+type fileMultipartUploadAborter interface {
+	AbortMultipartUpload(context.Context, string, string, string) error
+}
+
+type minioFileCleanupClient struct{ *minio.Client }
+
+func (c minioFileCleanupClient) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
+	return (minio.Core{Client: c.Client}).AbortMultipartUpload(ctx, bucket, key, uploadID)
+}
+
 // cleanupFiles only reclaims unfinished uploads. Soft-deleted uploaded files
 // retain their object until a separate retention policy is established.
 func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool) {
@@ -38,35 +48,85 @@ func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool) {
 	if uploadTTL+time.Hour > staleAfter {
 		staleAfter = uploadTTL + time.Hour
 	}
-	cleanupFilesWithClient(ctx, logger, db, client, staleAfter)
-	cleanupUploadSessionsWithClient(ctx, logger, db, client, staleAfter)
+	cleaner := minioFileCleanupClient{Client: client}
+	cleanupFilesWithClient(ctx, logger, db, cleaner, staleAfter)
+	cleanupUploadSessionsWithClient(ctx, logger, db, cleaner, staleAfter)
 	cleanupCopyAttemptsWithClient(ctx, logger, db, client, staleAfter)
 	freezeLegacyFileVersions(ctx, logger, db, client, uploadTTL+time.Hour)
+	cleanupExpiredFileVersions(ctx, logger, db, client)
 }
 
 func cleanupUploadSessionsWithClient(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover, staleAfter time.Duration) {
-	_, err := db.Exec(ctx, `WITH stale AS (
-		SELECT id FROM file_upload_sessions WHERE status='pending' AND created_at < $1
-		ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED
-	) UPDATE file_upload_sessions s SET status='abandoned' FROM stale WHERE s.id=stale.id`, time.Now().Add(-staleAfter))
-	if err != nil {
-		logger.Warn("claim expired file upload sessions", "error", err)
-		return
-	}
-	rows, err := db.Query(ctx, `SELECT id,staging_bucket,staging_key FROM file_upload_sessions
-		WHERE object_purged_at IS NULL AND (status='abandoned' OR (status='completed' AND created_at < $1 AND expires_at < NOW()-INTERVAL '1 hour'))
-		ORDER BY object_cleanup_attempted_at NULLS FIRST,created_at,id LIMIT 100`, time.Now().Add(-staleAfter))
+	// Expire at the session deadline, release its product quota immediately, but
+	// retain physical headroom until every signed URL and temporary object is gone.
+	expiredRows, err := db.Query(ctx, `SELECT id,workspace_id FROM file_upload_sessions
+		WHERE status='pending' AND expires_at<=NOW() ORDER BY expires_at,id LIMIT 100`)
 	if err != nil {
 		logger.Warn("list expired file upload sessions", "error", err)
 		return
 	}
-	type upload struct{ id, bucket, key string }
+	type uploadRef struct{ id, workspaceID string }
+	expired := []uploadRef{}
+	for expiredRows.Next() {
+		var item uploadRef
+		if err := expiredRows.Scan(&item.id, &item.workspaceID); err != nil {
+			expiredRows.Close()
+			logger.Warn("scan upload session", "error", err)
+			return
+		}
+		expired = append(expired, item)
+	}
+	err = expiredRows.Err()
+	expiredRows.Close()
+	if err != nil {
+		logger.Warn("read expired upload sessions", "error", err)
+		return
+	}
+	for _, item := range expired {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			logger.Warn("begin upload expiry", "error", err)
+			continue
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO workspace_storage_accounts(workspace_id) VALUES($1) ON CONFLICT DO NOTHING`, item.workspaceID); err == nil {
+			_, err = tx.Exec(ctx, `SELECT 1 FROM workspace_storage_accounts WHERE workspace_id=$1 FOR UPDATE`, item.workspaceID)
+		}
+		if err == nil {
+			var status string
+			err = tx.QueryRow(ctx, `UPDATE file_upload_sessions SET status='abandoned' WHERE id=$1 AND workspace_id=$2
+				AND status='pending' AND expires_at<=NOW() RETURNING status`, item.id, item.workspaceID).Scan(&status)
+		}
+		if err == nil {
+			err = settleWorkerReservationTx(ctx, tx, item.workspaceID, item.id, true, false, "upload_expired")
+		}
+		if err == nil {
+			err = tx.Commit(ctx)
+		} else {
+			_ = tx.Rollback(ctx)
+		}
+		if err != nil {
+			logger.Warn("expire upload session", "upload_id", item.id, "error", err)
+		}
+	}
+	rows, err := db.Query(ctx, `SELECT id,workspace_id,staging_bucket,staging_key,multipart_upload_id,upload_url_expires_at
+		FROM file_upload_sessions WHERE object_purged_at IS NULL AND status IN ('abandoned','cancelled','completed')
+		AND COALESCE(upload_url_expires_at,expires_at)<=NOW()-INTERVAL '1 hour'
+		ORDER BY object_cleanup_attempted_at NULLS FIRST,created_at,id LIMIT 100`)
+	if err != nil {
+		logger.Warn("list staging objects for cleanup", "error", err)
+		return
+	}
+	type upload struct {
+		id, workspaceID, bucket, key string
+		multipartID                  *string
+	}
 	items := []upload{}
 	for rows.Next() {
 		var item upload
-		if err := rows.Scan(&item.id, &item.bucket, &item.key); err != nil {
+		var urlExpired *time.Time
+		if err := rows.Scan(&item.id, &item.workspaceID, &item.bucket, &item.key, &item.multipartID, &urlExpired); err != nil {
 			rows.Close()
-			logger.Warn("scan upload session", "error", err)
+			logger.Warn("scan upload staging cleanup", "error", err)
 			return
 		}
 		items = append(items, item)
@@ -74,37 +134,74 @@ func cleanupUploadSessionsWithClient(ctx context.Context, logger *slog.Logger, d
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		logger.Warn("read upload sessions", "error", err)
+		logger.Warn("read staging cleanup list", "error", err)
 		return
 	}
 	for _, item := range items {
-		if _, err := db.Exec(ctx, `UPDATE file_upload_sessions SET object_cleanup_attempted_at=NOW() WHERE id=$1 AND status IN ('abandoned','completed') AND object_purged_at IS NULL`, item.id); err != nil {
-			logger.Warn("mark upload cleanup attempt", "error", err)
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			logger.Warn("begin staging cleanup", "error", err)
 			continue
+		}
+		if _, err = tx.Exec(ctx, `SELECT 1 FROM workspace_storage_accounts WHERE workspace_id=$1 FOR UPDATE`, item.workspaceID); err != nil {
+			_ = tx.Rollback(ctx)
+			logger.Warn("lock storage account for upload cleanup", "upload_id", item.id, "error", err)
+			continue
+		}
+		var lockID string
+		err = tx.QueryRow(ctx, `UPDATE file_upload_sessions SET object_cleanup_attempted_at=NOW()
+			WHERE id=$1 AND workspace_id=$2 AND status IN ('abandoned','cancelled','completed') AND object_purged_at IS NULL
+			RETURNING id`, item.id, item.workspaceID).Scan(&lockID)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			continue
+		}
+		if item.multipartID != nil {
+			if aborter, ok := client.(fileMultipartUploadAborter); ok {
+				if err := aborter.AbortMultipartUpload(ctx, item.bucket, item.key, *item.multipartID); err != nil && minio.ToErrorResponse(err).Code != "NoSuchUpload" {
+					_ = tx.Commit(ctx)
+					logger.Warn("abort incomplete multipart upload", "upload_id", item.id, "error", err)
+					continue
+				}
+			}
 		}
 		if err := client.RemoveObject(ctx, item.bucket, item.key, minio.RemoveObjectOptions{}); err != nil {
-			logger.Warn("remove abandoned staging object", "upload_id", item.id, "error", err)
+			_ = tx.Commit(ctx)
+			logger.Warn("remove expired staging object", "upload_id", item.id, "error", err)
 			continue
 		}
-		if _, err := db.Exec(ctx, `UPDATE file_upload_sessions SET object_purged_at=NOW() WHERE id=$1 AND status IN ('abandoned','completed')`, item.id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE file_upload_sessions SET object_purged_at=NOW() WHERE id=$1 AND object_purged_at IS NULL`, item.id); err != nil {
+			_ = tx.Rollback(ctx)
 			logger.Warn("mark staging object purged", "error", err)
+			continue
+		}
+		if err := settleWorkerReservationTx(ctx, tx, item.workspaceID, item.id, false, true, "upload_staging_reclaimed"); err != nil {
+			_ = tx.Rollback(ctx)
+			logger.Warn("release staging reservation", "upload_id", item.id, "error", err)
+			continue
+		}
+		if err := tx.Commit(ctx); err != nil {
+			logger.Warn("commit staging cleanup", "upload_id", item.id, "error", err)
 		}
 	}
 }
 
 func cleanupCopyAttemptsWithClient(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover, staleAfter time.Duration) {
-	rows, err := db.Query(ctx, `SELECT id,bucket,object_key FROM file_copy_attempts
+	rows, err := db.Query(ctx, `SELECT id,workspace_id,bucket,object_key,storage_reservation_id FROM file_copy_attempts
 		WHERE status='pending' AND object_purged_at IS NULL AND created_at < $1
 		ORDER BY object_cleanup_attempted_at NULLS FIRST,created_at,id LIMIT 100`, time.Now().Add(-staleAfter))
 	if err != nil {
 		logger.Warn("list uncommitted file copies", "error", err)
 		return
 	}
-	type copyAttempt struct{ id, bucket, key string }
+	type copyAttempt struct {
+		id, workspaceID, bucket, key string
+		reservationID                *string
+	}
 	items := []copyAttempt{}
 	for rows.Next() {
 		var item copyAttempt
-		if err := rows.Scan(&item.id, &item.bucket, &item.key); err != nil {
+		if err := rows.Scan(&item.id, &item.workspaceID, &item.bucket, &item.key, &item.reservationID); err != nil {
 			rows.Close()
 			logger.Warn("scan copy attempt", "error", err)
 			return
@@ -123,16 +220,22 @@ func cleanupCopyAttemptsWithClient(ctx context.Context, logger *slog.Logger, db 
 			logger.Warn("begin copy cleanup", "error", err)
 			continue
 		}
-		// Keep the row lock until the object removal finishes. A publishing
-		// transaction must not mark this copy committed while cleanup deletes it.
-		tag, err := tx.Exec(ctx, `UPDATE file_copy_attempts SET object_cleanup_attempted_at=NOW()
-			WHERE id=$1 AND status='pending' AND object_purged_at IS NULL`, item.id)
-		if err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO workspace_storage_accounts(workspace_id) VALUES($1) ON CONFLICT DO NOTHING`, item.workspaceID); err != nil {
 			_ = tx.Rollback(ctx)
-			logger.Warn("mark copy cleanup attempt", "error", err)
+			logger.Warn("ensure copy cleanup storage account", "copy_id", item.id, "error", err)
 			continue
 		}
-		if tag.RowsAffected() != 1 {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM workspace_storage_accounts WHERE workspace_id=$1 FOR UPDATE`, item.workspaceID); err != nil {
+			_ = tx.Rollback(ctx)
+			logger.Warn("lock copy cleanup storage account", "copy_id", item.id, "error", err)
+			continue
+		}
+		// Keep the row lock until the object removal finishes. A publishing
+		// transaction must not mark this copy committed while cleanup deletes it.
+		var lockID string
+		err = tx.QueryRow(ctx, `UPDATE file_copy_attempts SET object_cleanup_attempted_at=NOW()
+			WHERE id=$1 AND status='pending' AND object_purged_at IS NULL RETURNING id`, item.id).Scan(&lockID)
+		if err != nil {
 			_ = tx.Rollback(ctx)
 			continue
 		}
@@ -145,6 +248,13 @@ func cleanupCopyAttemptsWithClient(ctx context.Context, logger *slog.Logger, db 
 			_ = tx.Rollback(ctx)
 			logger.Warn("mark uncommitted copy purged", "error", err)
 			continue
+		}
+		if item.reservationID != nil {
+			if err := settleWorkerReservationTx(ctx, tx, item.workspaceID, *item.reservationID, true, true, "copy_object_reclaimed"); err != nil {
+				_ = tx.Rollback(ctx)
+				logger.Warn("release copy reservation", "copy_id", item.id, "error", err)
+				continue
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			logger.Warn("commit uncommitted copy cleanup", "error", err)
@@ -260,7 +370,7 @@ func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 }
 
 func cleanupFilesWithClient(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client fileObjectRemover, staleAfter time.Duration) {
-	purgeQuarantinedVersions(ctx, logger, db, client)
+	purgeQuarantinedVersionsWithAccounting(ctx, logger, db, client)
 	// Claim before removing the object. The API can only complete a pending file,
 	// so a concurrent completion and cleanup cannot both succeed.
 	_, err := db.Exec(ctx, `WITH stale AS (

@@ -3,9 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -77,7 +80,7 @@ func TestFileScanWorkerEndToEnd(t *testing.T) {
 			}
 			fileID := fileTestID(t, body)
 			upload := body["upload"].(map[string]any)
-			signedFilePut(t, upload["url"].(string), sample.content)
+			signedFilePut(t, upload, sample.content)
 			completed := authedRequest(t, app, token, http.MethodPost, base+"/"+fileID+"/complete", nil)
 			if completed.Code != http.StatusAccepted {
 				t.Fatalf("complete upload = %d: %s", completed.Code, completed.Body.String())
@@ -149,6 +152,14 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	}
 
 	base := "/v1/workspaces/" + workspaceID + "/files"
+	memberStorage := authedRequest(t, app, memberToken, http.MethodGet, "/v1/me/workspace-storage", nil)
+	if memberStorage.Code != http.StatusOK || !bytes.Contains(memberStorage.Body.Bytes(), []byte(workspaceID)) || bytes.Contains(memberStorage.Body.Bytes(), []byte("filename")) {
+		t.Fatalf("workspace member storage summary = %d: %s", memberStorage.Code, memberStorage.Body.String())
+	}
+	directProductionStorage := authedRequest(t, app, editorToken, http.MethodGet, "/v1/me/workspace-storage", nil)
+	if directProductionStorage.Code != http.StatusOK || !bytes.Contains(directProductionStorage.Body.Bytes(), []byte(`"total":0`)) {
+		t.Fatalf("direct Production member appeared in Workspace storage summary = %d: %s", directProductionStorage.Code, directProductionStorage.Body.String())
+	}
 	workspaceFile := map[string]any{"filename": "workspace.txt", "content_type": "text/plain", "size_bytes": 5}
 	productionFile := map[string]any{"filename": "production.txt", "content_type": "text/plain", "size_bytes": 5, "production_id": productionID}
 	if response := authedRequest(t, app, viewerToken, http.MethodPost, base, workspaceFile); response.Code != 403 {
@@ -170,6 +181,41 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	var workspaceBody map[string]any
 	_ = json.Unmarshal(workspaceCreated.Body.Bytes(), &workspaceBody)
 	workspaceFileID := fileTestID(t, workspaceBody)
+	workspaceUpload := workspaceBody["upload"].(map[string]any)
+	if workspaceUpload["transport"] != "post" {
+		t.Fatalf("small upload transport = %v, want post", workspaceUpload["transport"])
+	}
+	signedFilePut(t, workspaceUpload, "hello")
+	var workspaceUploadID string
+	if err := app.db.QueryRow(t.Context(), `SELECT id FROM file_upload_sessions WHERE file_id=$1`, workspaceFileID).Scan(&workspaceUploadID); err != nil {
+		t.Fatalf("read Workspace upload session: %v", err)
+	}
+	var reservationStatus string
+	var reservedBytes, reservedPhysical int64
+	if err := app.db.QueryRow(t.Context(), `SELECT status,quota_reserved_bytes,physical_reserved_bytes FROM workspace_storage_reservations WHERE upload_session_id=$1`, workspaceUploadID).
+		Scan(&reservationStatus, &reservedBytes, &reservedPhysical); err != nil || reservationStatus != "reserved" || reservedBytes != 5 || reservedPhysical != 10 {
+		t.Fatalf("upload reservation = (%q,%d,%d), error=%v", reservationStatus, reservedBytes, reservedPhysical, err)
+	}
+	completeWorkspaceSession := authedRequest(t, app, memberToken, http.MethodPost, "/v1/file-upload-sessions/"+workspaceUploadID+"/complete", nil)
+	if completeWorkspaceSession.Code != http.StatusAccepted {
+		t.Fatalf("complete Workspace upload session = %d: %s", completeWorkspaceSession.Code, completeWorkspaceSession.Body.String())
+	}
+	var committedQuota, committedPhysical int64
+	if err := app.db.QueryRow(t.Context(), `SELECT status,quota_reserved_bytes,quota_committed_bytes,physical_reserved_bytes
+		FROM workspace_storage_reservations WHERE upload_session_id=$1`, workspaceUploadID).
+		Scan(&reservationStatus, &reservedBytes, &committedQuota, &committedPhysical); err != nil || reservationStatus != "committed" || reservedBytes != 0 || committedQuota != 5 || committedPhysical != 5 {
+		t.Fatalf("committed upload ledger = (%q,%d,%d,%d), error=%v", reservationStatus, reservedBytes, committedQuota, committedPhysical, err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE workspace_storage_accounts SET quota_limit_bytes=quota_used_bytes+quota_reserved_bytes WHERE workspace_id=$1`, workspaceID); err != nil {
+		t.Fatalf("set tight Workspace quota: %v", err)
+	}
+	quotaDenied := authedRequest(t, app, memberToken, http.MethodPost, base, map[string]any{"filename": "quota.txt", "content_type": "text/plain", "size_bytes": 1})
+	if quotaDenied.Code != http.StatusConflict || !bytes.Contains(quotaDenied.Body.Bytes(), []byte("workspace_quota_exceeded")) {
+		t.Fatalf("upload beyond Workspace quota = %d: %s", quotaDenied.Code, quotaDenied.Body.String())
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE workspace_storage_accounts SET quota_limit_bytes=NULL WHERE workspace_id=$1`, workspaceID); err != nil {
+		t.Fatalf("restore unlimited Workspace quota: %v", err)
+	}
 	productionCreated := authedRequest(t, app, editorToken, http.MethodPost, base, productionFile)
 	if productionCreated.Code != 201 {
 		t.Fatalf("direct editor production upload = %d: %s", productionCreated.Code, productionCreated.Body.String())
@@ -227,21 +273,38 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	if response := authedRequest(t, app, adminToken, http.MethodDelete, base+"/"+workspaceFileID, nil); response.Code != 200 {
 		t.Fatalf("admin workspace delete = %d", response.Code)
 	}
+	var workspaceQuotaUsed int64
+	if err := app.db.QueryRow(t.Context(), `SELECT quota_used_bytes FROM workspace_storage_accounts WHERE workspace_id=$1`, workspaceID).Scan(&workspaceQuotaUsed); err != nil || workspaceQuotaUsed != 0 {
+		t.Fatalf("soft delete did not release quota: used=%d err=%v", workspaceQuotaUsed, err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE workspace_storage_accounts SET quota_limit_bytes=0 WHERE workspace_id=$1`, workspaceID); err != nil {
+		t.Fatalf("set zero Workspace quota: %v", err)
+	}
+	if response := authedRequest(t, app, adminToken, http.MethodPost, base+"/"+workspaceFileID+"/restore", nil); response.Code != http.StatusConflict || !bytes.Contains(response.Body.Bytes(), []byte("restore_quota_exceeded")) {
+		t.Fatalf("restore beyond Workspace quota = %d: %s", response.Code, response.Body.String())
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE workspace_storage_accounts SET quota_limit_bytes=NULL WHERE workspace_id=$1`, workspaceID); err != nil {
+		t.Fatalf("clear Workspace quota: %v", err)
+	}
+	if response := authedRequest(t, app, adminToken, http.MethodPost, base+"/"+workspaceFileID+"/restore", nil); response.Code != http.StatusOK {
+		t.Fatalf("restore Workspace file = %d: %s", response.Code, response.Body.String())
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT quota_used_bytes FROM workspace_storage_accounts WHERE workspace_id=$1`, workspaceID).Scan(&workspaceQuotaUsed); err != nil || workspaceQuotaUsed != 5 {
+		t.Fatalf("restore did not recharge quota: used=%d err=%v", workspaceQuotaUsed, err)
+	}
+	if response := authedRequest(t, app, adminToken, http.MethodDelete, base+"/"+workspaceFileID, nil); response.Code != http.StatusOK {
+		t.Fatalf("re-delete Workspace file = %d: %s", response.Code, response.Body.String())
+	}
+	if response := authedRequest(t, app, memberToken, http.MethodGet, base+"/trash?production_id=workspace", nil); response.Code != http.StatusForbidden {
+		t.Fatalf("member workspace trash = %d, want 403", response.Code)
+	}
+	workspaceTrash := authedRequest(t, app, adminToken, http.MethodGet, base+"/trash?production_id=workspace", nil)
+	if workspaceTrash.Code != http.StatusOK || !bytes.Contains(workspaceTrash.Body.Bytes(), []byte(workspaceFileID)) {
+		t.Fatalf("admin workspace trash = %d: %s", workspaceTrash.Code, workspaceTrash.Body.String())
+	}
 
 	upload := productionBody["upload"].(map[string]any)
-	put, err := http.NewRequestWithContext(t.Context(), http.MethodPut, upload["url"].(string), bytes.NewBufferString("hello"))
-	if err != nil {
-		t.Fatalf("build signed upload: %v", err)
-	}
-	put.Header.Set("Content-Type", "text/plain")
-	putResponse, err := http.DefaultClient.Do(put)
-	if err != nil {
-		t.Fatalf("send signed upload: %v", err)
-	}
-	putResponse.Body.Close()
-	if putResponse.StatusCode != 200 {
-		t.Fatalf("signed upload = %d", putResponse.StatusCode)
-	}
+	signedFilePut(t, upload, "hello")
 	completed := authedRequest(t, app, editorToken, http.MethodPost, base+"/"+productionFileID+"/complete", nil)
 	if completed.Code != http.StatusAccepted {
 		t.Fatalf("editor complete = %d: %s", completed.Code, completed.Body.String())
@@ -268,7 +331,7 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/download", nil); response.Code != 404 {
 		t.Fatalf("unscanned file download = %d, want 404", response.Code)
 	}
-	signedFilePut(t, upload["url"].(string), "later")
+	signedFilePut(t, upload, "later")
 	markFileVersionClean(t, app, productionFileID, firstVersionID)
 	versionDownload := authedRequest(t, app, viewerToken, http.MethodGet, base+"/"+productionFileID+"/versions/"+firstVersionID+"/download", nil)
 	if versionDownload.Code != 200 {
@@ -282,7 +345,7 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 		t.Fatalf("start library v2 = %d: %s", versionStart.Code, versionStart.Body.String())
 	}
 	versionUpload := attachmentResponse(t, versionStart.Body.Bytes())["upload"].(map[string]any)
-	signedFilePut(t, versionUpload["url"].(string), "second")
+	signedFilePut(t, versionUpload, "second")
 	versionComplete := authedRequest(t, app, editorToken, http.MethodPost, "/v1/file-upload-sessions/"+versionUpload["upload_id"].(string)+"/complete", nil)
 	if versionComplete.Code != http.StatusAccepted {
 		t.Fatalf("complete library v2 = %d: %s", versionComplete.Code, versionComplete.Body.String())
@@ -326,6 +389,16 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	t.Cleanup(func() {
 		_ = storage.client.RemoveObject(context.Background(), storage.bucket, objectKey, minio.RemoveObjectOptions{})
 	})
+	productionTrash := authedRequest(t, app, editorToken, http.MethodGet, base+"/trash?production_id="+productionID, nil)
+	if productionTrash.Code != http.StatusOK || !bytes.Contains(productionTrash.Body.Bytes(), []byte(productionFileID)) {
+		t.Fatalf("editor production trash = %d: %s", productionTrash.Code, productionTrash.Body.String())
+	}
+	if restored := authedRequest(t, app, editorToken, http.MethodPost, base+"/"+productionFileID+"/restore", nil); restored.Code != http.StatusOK {
+		t.Fatalf("editor restore production file = %d: %s", restored.Code, restored.Body.String())
+	}
+	if deletedAgain := authedRequest(t, app, editorToken, http.MethodDelete, base+"/"+productionFileID, nil); deletedAgain.Code != http.StatusOK {
+		t.Fatalf("editor re-delete production file = %d: %s", deletedAgain.Code, deletedAgain.Body.String())
+	}
 	if _, err := app.db.Exec(t.Context(), `UPDATE production_memberships SET status='suspended' WHERE production_id=$1 AND user_id=$2`, productionID, viewer); err != nil {
 		t.Fatalf("suspend viewer: %v", err)
 	}
@@ -343,5 +416,136 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	}
 	if response := authedRequest(t, app, viewerToken, http.MethodGet, base+"?production_id="+productionID, nil); response.Code != 404 {
 		t.Fatalf("revoked direct viewer list = %d, want 404", response.Code)
+	}
+}
+
+func TestMultipartUploadMinIOEnforcesPartChecksumsAndSettlesLedger(t *testing.T) {
+	if os.Getenv("S3_ENDPOINT") == "" {
+		t.Skip("S3_ENDPOINT not set; skipping MinIO multipart integration test")
+	}
+	app := newIntegrationApp(t)
+	storage, err := newObjectStorage(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.storage = storage
+	owner := createTestUser(t, app, "multipart-e2e-"+newID()+"@example.test")
+	token := issueTestToken(t, app, owner)
+	workspaceID := createWorkspaceFor(t, app, token, "分段上传集成测试")["id"].(string)
+	base := "/v1/workspaces/" + workspaceID + "/files"
+	const fileSize = 100_000_001
+	created := authedRequest(t, app, token, http.MethodPost, base, map[string]any{
+		"filename": "multipart.bin", "content_type": "application/octet-stream", "size_bytes": fileSize,
+	})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create multipart session = %d: %s", created.Code, created.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(created.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	fileID := fileTestID(t, body)
+	upload := body["upload"].(map[string]any)
+	if upload["transport"] != "multipart" {
+		t.Fatalf("upload transport = %v, want multipart", upload["transport"])
+	}
+	uploadID := upload["upload_id"].(string)
+	var versionID string
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_scan_tasks SET status='completed',lease_owner='',lease_until=NULL,
+			outcome='test_cleanup',completed_at=NOW(),updated_at=NOW() WHERE version_id IN (SELECT id FROM file_versions WHERE file_id=$1)`, fileID)
+		for _, bucket := range []string{storage.bucket, storage.stagingBucket} {
+			rows := storage.client.ListObjects(cleanupCtx, bucket, minio.ListObjectsOptions{Prefix: "ws/" + workspaceID + "/", Recursive: true})
+			for object := range rows {
+				if object.Err == nil {
+					_ = storage.client.RemoveObject(cleanupCtx, bucket, object.Key, minio.RemoveObjectOptions{})
+				}
+			}
+		}
+		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_versions SET object_purged_at=COALESCE(object_purged_at,NOW()),quota_charged=FALSE WHERE file_id=$1`, fileID)
+		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_upload_sessions SET object_purged_at=COALESCE(object_purged_at,NOW()) WHERE id=$1`, uploadID)
+		_, _ = app.db.Exec(cleanupCtx, `UPDATE workspace_storage_reservations SET status='released',quota_reserved_bytes=0,quota_committed_bytes=0,physical_reserved_bytes=0 WHERE workspace_id=$1`, workspaceID)
+		_, _ = app.db.Exec(cleanupCtx, `UPDATE workspace_storage_accounts SET quota_used_bytes=0,quota_reserved_bytes=0,physical_used_bytes=0,physical_reserved_bytes=0,physical_observed_bytes=NULL,physical_observed_at=NULL WHERE workspace_id=$1`, workspaceID)
+	})
+	partSize := int(upload["part_size"].(float64))
+	payload := bytes.Repeat([]byte("A"), fileSize)
+	shortPayload := []byte("too short")
+	shortDigest := sha256.Sum256(shortPayload)
+	shortSigned := authedRequest(t, app, token, http.MethodPost,
+		"/v1/file-upload-sessions/"+uploadID+"/parts/1/url", map[string]any{"sha256": base64.StdEncoding.EncodeToString(shortDigest[:])})
+	if shortSigned.Code != http.StatusOK {
+		t.Fatalf("sign undersized part = %d: %s", shortSigned.Code, shortSigned.Body.String())
+	}
+	var shortDescriptor map[string]any
+	if err := json.Unmarshal(shortSigned.Body.Bytes(), &shortDescriptor); err != nil {
+		t.Fatal(err)
+	}
+	shortRequest, err := http.NewRequestWithContext(t.Context(), http.MethodPut, shortDescriptor["url"].(string), bytes.NewReader(shortPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range shortDescriptor["headers"].(map[string]any) {
+		shortRequest.Header.Set(name, value.(string))
+	}
+	shortResponse, err := http.DefaultClient.Do(shortRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shortResponse.Body.Close()
+	if shortResponse.StatusCode >= 200 && shortResponse.StatusCode < 300 {
+		t.Fatalf("undersized signed part unexpectedly accepted: %d", shortResponse.StatusCode)
+	}
+	for partNumber, start := 1, 0; start < len(payload); partNumber, start = partNumber+1, start+partSize {
+		end := min(start+partSize, len(payload))
+		chunk := payload[start:end]
+		digest := sha256.Sum256(chunk)
+		checksum := base64.StdEncoding.EncodeToString(digest[:])
+		signed := authedRequest(t, app, token, http.MethodPost,
+			"/v1/file-upload-sessions/"+uploadID+"/parts/"+strconv.Itoa(partNumber)+"/url", map[string]any{"sha256": checksum})
+		if signed.Code != http.StatusOK {
+			t.Fatalf("sign part %d = %d: %s", partNumber, signed.Code, signed.Body.String())
+		}
+		var descriptor map[string]any
+		if err := json.Unmarshal(signed.Body.Bytes(), &descriptor); err != nil {
+			t.Fatal(err)
+		}
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, descriptor["url"].(string), bytes.NewReader(chunk))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for name, value := range descriptor["headers"].(map[string]any) {
+			req.Header.Set(name, value.(string))
+		}
+		req.Header.Set("Content-Type", "application/octet-stream")
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("upload part %d: %v", partNumber, err)
+		}
+		response.Body.Close()
+		if response.StatusCode < 200 || response.StatusCode >= 300 {
+			t.Fatalf("upload part %d = %d", partNumber, response.StatusCode)
+		}
+	}
+	parts := authedRequest(t, app, token, http.MethodGet, "/v1/file-upload-sessions/"+uploadID+"/parts", nil)
+	if parts.Code != http.StatusOK || !bytes.Contains(parts.Body.Bytes(), []byte(`"total":2`)) {
+		t.Fatalf("verified multipart parts = %d: %s", parts.Code, parts.Body.String())
+	}
+	completed := authedRequest(t, app, token, http.MethodPost, "/v1/file-upload-sessions/"+uploadID+"/complete", nil)
+	if completed.Code != http.StatusAccepted {
+		t.Fatalf("complete multipart upload = %d: %s", completed.Code, completed.Body.String())
+	}
+	versionID = attachmentResponse(t, completed.Body.Bytes())["version_id"].(string)
+	var committedSize int64
+	if err := app.db.QueryRow(t.Context(), `SELECT size_bytes FROM file_versions WHERE id=$1`, versionID).Scan(&committedSize); err != nil {
+		t.Fatal(err)
+	}
+	var used, reserved, physicalReserved int64
+	if err := app.db.QueryRow(t.Context(), `SELECT a.quota_used_bytes,a.quota_reserved_bytes,a.physical_reserved_bytes
+		FROM workspace_storage_accounts a WHERE a.workspace_id=$1`, workspaceID).Scan(&used, &reserved, &physicalReserved); err != nil {
+		t.Fatal(err)
+	}
+	if committedSize != fileSize || used != fileSize || reserved != 0 || physicalReserved != fileSize {
+		t.Fatalf("settled storage ledger = used %d, quota reserved %d, physical reserved %d", used, reserved, physicalReserved)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ const defaultMaxFileBytes int64 = 2_000_000_000
 type scanTask struct {
 	ID, WorkspaceID, FileID, VersionID, Bucket, ObjectKey, Filename, DeclaredType string
 	SizeBytes                                                                     int64
+	PolicyMaxBytes                                                                int64
+	AllowedContentTypes                                                           []string
 	Attempts                                                                      int
 }
 
@@ -54,6 +57,7 @@ func maxFileBytesFromEnv() int64 {
 
 func claimFileScanTask(ctx context.Context, db *pgxpool.Pool, owner string) (scanTask, error) {
 	var task scanTask
+	var allowedTypes []byte
 	err := db.QueryRow(ctx, `WITH candidate AS (
 		SELECT t.id FROM file_scan_tasks t
 		JOIN file_versions v ON v.id=t.version_id AND v.workspace_id=t.workspace_id
@@ -67,9 +71,15 @@ func claimFileScanTask(ctx context.Context, db *pgxpool.Pool, owner string) (sca
 		FROM candidate c WHERE t.id=c.id
 		RETURNING t.id,t.workspace_id,t.file_id,t.version_id,t.attempts
 	)
-	SELECT c.id,c.workspace_id,c.file_id,c.version_id,v.bucket,v.object_key,v.filename,v.content_type,v.size_bytes,c.attempts
+	SELECT c.id,c.workspace_id,c.file_id,c.version_id,v.bucket,v.object_key,v.filename,v.content_type,v.size_bytes,
+		v.policy_max_bytes,v.allowed_content_types,c.attempts
 	FROM claimed c JOIN file_versions v ON v.id=c.version_id`, owner).Scan(
-		&task.ID, &task.WorkspaceID, &task.FileID, &task.VersionID, &task.Bucket, &task.ObjectKey, &task.Filename, &task.DeclaredType, &task.SizeBytes, &task.Attempts)
+		&task.ID, &task.WorkspaceID, &task.FileID, &task.VersionID, &task.Bucket, &task.ObjectKey, &task.Filename, &task.DeclaredType, &task.SizeBytes, &task.PolicyMaxBytes, &allowedTypes, &task.Attempts)
+	if err == nil && len(allowedTypes) > 0 {
+		if unmarshalErr := json.Unmarshal(allowedTypes, &task.AllowedContentTypes); unmarshalErr != nil {
+			return scanTask{}, unmarshalErr
+		}
+	}
 	return task, err
 }
 
@@ -164,6 +174,9 @@ func inspectContentType(filename, declared string, header []byte) (string, error
 }
 
 func scanContent(ctx context.Context, scanner fileScanner, source io.Reader, task scanTask, maxBytes int64) (scanResult, string, string, error) {
+	if task.PolicyMaxBytes > 0 {
+		maxBytes = min(maxBytes, task.PolicyMaxBytes)
+	}
 	if task.SizeBytes <= 0 || task.SizeBytes > maxBytes {
 		return scanResult{Verdict: scanUnsupported, Reason: "size_limit"}, "", "application/octet-stream", nil
 	}
@@ -174,6 +187,18 @@ func scanContent(ctx context.Context, scanner fileScanner, source io.Reader, tas
 	}
 	prefix = prefix[:n]
 	contentType, validationErr := inspectContentType(task.Filename, task.DeclaredType, prefix)
+	if validationErr == nil && len(task.AllowedContentTypes) > 0 {
+		allowed := false
+		for _, candidate := range task.AllowedContentTypes {
+			if mediaType(candidate) == contentType {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			validationErr = fmt.Errorf("content type is not allowed for this file purpose")
+		}
+	}
 	hasher := sha256.New()
 	stream := io.TeeReader(io.MultiReader(bytes.NewReader(prefix), source), hasher)
 	version, err := scanner.Version(ctx)
@@ -281,21 +306,43 @@ func commitScanResult(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool
 		return
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM workspace_storage_accounts WHERE workspace_id=$1 FOR UPDATE`, task.WorkspaceID); err != nil {
+		logger.Warn("lock workspace storage for scan result", "version_id", task.VersionID, "error", err)
+		return
+	}
 	var leaseID string
 	err = tx.QueryRow(ctx, `SELECT id FROM file_scan_tasks WHERE id=$1 AND status='leased' AND lease_owner=$2 FOR UPDATE`, task.ID, owner).Scan(&leaseID)
 	if err != nil {
 		return
 	}
 	var versionNo int
+	var size int64
+	var quotaCharged bool
 	err = tx.QueryRow(ctx, `UPDATE file_versions SET security_status=$1,sha256=$2,scan_engine=$3,scan_signature=$4,
-		scanned_at=NOW(),security_reason=$5,quarantine_until=CASE WHEN $1='infected' THEN NOW()+INTERVAL '30 days' ELSE NULL END,
+		scanned_at=NOW(),security_reason=$5,quarantine_until=CASE WHEN $1 IN ('infected','unsupported') THEN NOW()+INTERVAL '30 days' ELSE NULL END,
 		content_type=CASE WHEN $1='clean' THEN $6 ELSE content_type END
-		WHERE id=$7 AND security_status='pending' RETURNING version_no`, result.Verdict, hash, result.Engine, result.Sigs, securityReasonCode(result), contentType, task.VersionID).Scan(&versionNo)
+		WHERE id=$7 AND security_status='pending' RETURNING version_no,size_bytes,quota_charged`, result.Verdict, hash, result.Engine, result.Sigs, securityReasonCode(result), contentType, task.VersionID).Scan(&versionNo, &size, &quotaCharged)
 	if err != nil {
 		if !errors.Is(err, pgx.ErrNoRows) {
 			logger.Warn("store file scan result", "version_id", task.VersionID, "error", err)
 		}
 		return
+	}
+	if result.Verdict != scanClean && quotaCharged {
+		if _, err = tx.Exec(ctx, `UPDATE file_versions SET quota_charged=FALSE WHERE id=$1`, task.VersionID); err != nil {
+			logger.Warn("release rejected file version charge", "version_id", task.VersionID, "error", err)
+			return
+		}
+		if _, err = tx.Exec(ctx, `UPDATE workspace_storage_accounts SET quota_used_bytes=GREATEST(0,quota_used_bytes-$2),updated_at=NOW()
+			WHERE workspace_id=$1`, task.WorkspaceID, size); err != nil {
+			logger.Warn("decrement workspace quota after scan rejection", "version_id", task.VersionID, "error", err)
+			return
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO workspace_storage_events(workspace_id,event_type,quota_used_delta,reference_type,reference_id)
+			VALUES($1,'scan_rejected',-($2::bigint),'file_version',$3)`, task.WorkspaceID, size, task.VersionID); err != nil {
+			logger.Warn("record scan quota release", "version_id", task.VersionID, "error", err)
+			return
+		}
 	}
 	if result.Verdict == scanClean {
 		_, err = tx.Exec(ctx, `UPDATE files f SET current_version_id=v.id,status='uploaded',bucket=v.bucket,object_key=v.object_key,

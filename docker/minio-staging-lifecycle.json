@@ -1,0 +1,17 @@
+{
+  "Rules": [
+    {
+      "ID": "stagepilot-staging-expire-after-two-days",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": ""
+      },
+      "Expiration": {
+        "Days": 2
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 2
+      }
+    }
+  ]
+}

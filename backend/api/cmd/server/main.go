@@ -127,6 +127,7 @@ func (app *application) routes() http.Handler {
 	mux.Handle("PUT /v1/me/avatar", app.auth(http.HandlerFunc(app.updateMyAvatar)))
 	mux.Handle("DELETE /v1/me/avatar", app.auth(http.HandlerFunc(app.deleteMyAvatar)))
 	mux.Handle("GET /v1/users/{userId}/avatar", app.auth(http.HandlerFunc(app.getUserAvatar)))
+	mux.Handle("GET /v1/me/workspace-storage", app.auth(http.HandlerFunc(app.listMyWorkspaceStorage)))
 	mux.Handle("PATCH /me/password", app.auth(http.HandlerFunc(app.changePassword)))
 	mux.Handle("GET /me/preferences", app.auth(http.HandlerFunc(app.preferences)))
 	mux.Handle("PATCH /me/preferences", app.auth(http.HandlerFunc(app.updatePreferences)))

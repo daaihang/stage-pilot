@@ -21,6 +21,26 @@ services:
     restart: unless-stopped
     networks: [app]
 
+  minio-staging-setup:
+    image: minio/mc:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set stagepilot http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing "stagepilot/$${S3_STAGING_BUCKET}" &&
+        mc ilm rule import "stagepilot/$${S3_STAGING_BUCKET}" < /config/staging-lifecycle.json
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-stagepilot}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-stagepilot-secret}
+      S3_STAGING_BUCKET: ${S3_STAGING_BUCKET:-stagepilot-staging}
+    volumes:
+      - ./minio-staging-lifecycle.json:/config/staging-lifecycle.json:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    networks: [app]
+
   postgres:
     image: postgres:17-alpine
     environment:
@@ -68,16 +88,20 @@ services:
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:19000}
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-stagepilot}
+      S3_STAGING_BUCKET: ${S3_STAGING_BUCKET:-stagepilot-staging}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-stagepilot}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-stagepilot-secret}
       S3_USE_SSL: ${S3_USE_SSL:-false}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
       S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
       FILES_MAX_BYTES: ${FILES_MAX_BYTES:-2000000000}
+      FILES_WORKSPACE_PHYSICAL_MAX_BYTES: ${FILES_WORKSPACE_PHYSICAL_MAX_BYTES:-100000000000}
     ports:
       - "${STAGEPILOT_API_PORT:-18080}:8080"
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      minio-staging-setup:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/readyz"]
@@ -97,15 +121,20 @@ services:
       S3_ENDPOINT: http://minio:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-stagepilot}
+      S3_STAGING_BUCKET: ${S3_STAGING_BUCKET:-stagepilot-staging}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-stagepilot}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-stagepilot-secret}
       S3_USE_SSL: ${S3_USE_SSL:-false}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
       S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
       FILES_MAX_BYTES: ${FILES_MAX_BYTES:-2000000000}
+      FILES_WORKSPACE_PHYSICAL_MAX_BYTES: ${FILES_WORKSPACE_PHYSICAL_MAX_BYTES:-100000000000}
+      STORAGE_RECONCILE_INTERVAL: ${STORAGE_RECONCILE_INTERVAL:-6h}
       CLAMD_ADDRESS: clamav:3310
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      minio-staging-setup:
         condition: service_completed_successfully
       clamav:
         condition: service_started

@@ -8,11 +8,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { notify } from "@/components/ui/sonner";
 import { deleteMyAvatar, updateMe, updateMyAvatar, updatePassword } from "@/lib/auth";
 import { DeveloperTools } from "@/components/developer-tools";
-import { CreditCard, LockKeyhole, RiDeleteBinLine, RiUpload2Line, ShieldCheck } from "@/components/ui/icons";
+import { CreditCard, Database, LockKeyhole, RefreshCw, RiDeleteBinLine, RiUpload2Line, ShieldCheck } from "@/components/ui/icons";
 import { useUserPreferences } from "@/components/user-preferences-provider";
 import { TimezoneCombobox } from "@/components/timezone-combobox";
 import { AppBackLink } from "@/components/app-back-link";
 import { PageHeader } from "@/components/page-header";
+import { getMyWorkspaceStorage } from "@/lib/file-api";
 
 function AccountProfile({ user, onUserUpdate }) {
   const [displayName, setDisplayName] = useState(user?.display_name || user?.name || "");
@@ -122,8 +123,59 @@ function BillingView({ subscription }) {
   return <div className="space-y-4"><Card><CardHeader><CardDescription>当前方案来自本地订阅状态，支付服务接入后将自动同步。</CardDescription></CardHeader><CardContent className="space-y-4"><div className="flex items-center justify-between gap-4 border p-4"><div className="flex items-center gap-3"><div className="flex size-9 items-center justify-center bg-primary/10 text-primary"><CreditCard className="size-4" /></div><div><p className="font-medium">{isPro ? "Pro 方案" : "免费方案"}</p><p className="text-sm text-muted-foreground">{isPro ? "已启用 Pro 能力" : "适合本地体验和基础功能"}</p></div></div><Badge variant={isPro ? "default" : "secondary"}>{isPro ? "PRO" : "FREE"}</Badge></div><div className="grid gap-3 text-sm @min-[48rem]/account-center:grid-cols-3"><div className="border p-3">工作空间：{isPro ? "不限" : "基础额度"}</div><div className="border p-3">活动与资源：{isPro ? "完整能力" : "本地体验"}</div><div className="border p-3">团队协作：{isPro ? "可用" : "即将开放"}</div></div><Button className="w-full" variant={isPro ? "outline" : "default"} onClick={() => notify.message(isPro ? "订阅管理将在接入支付服务后开放" : "升级功能将在接入支付服务后开放", { description: "当前为前端预览模式。" })}>{isPro ? "管理订阅" : "升级到 Pro"}</Button></CardContent></Card><Card><CardContent className="p-4 text-sm text-muted-foreground">账单、发票和付款方式将在计费服务接入后显示。</CardContent></Card></div>;
 }
 
+const formatStorageBytes = (value) => {
+  const bytes = Number(value || 0);
+  if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(bytes < 10_000 ? 1 : 0)} KB`;
+  if (bytes < 1_000_000_000) return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)} MB`;
+  return `${(bytes / 1_000_000_000).toFixed(2)} GB`;
+};
+
+function WorkspaceStorageView() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const load = async ({ feedback = false } = {}) => {
+    setLoading(true);
+    const toast = feedback ? notify.loading("正在刷新工作空间存储用量…") : null;
+    try {
+      const result = await getMyWorkspaceStorage();
+      setItems(result.items || []);
+      if (feedback) notify.success("存储用量已刷新", { id: toast });
+    } catch (error) {
+      if (feedback) notify.error("刷新存储用量失败", { id: toast, description: error?.message || String(error) });
+      else notify.error("无法加载存储用量", { description: error?.message || String(error) });
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { void load(); }, []);
+  return <div className="space-y-4">
+    <Card><CardHeader className="flex flex-row items-start justify-between gap-3"><div><CardDescription>只显示你当前仍可访问的工作空间汇总，不包含文件名或附件信息。</CardDescription></div><Button type="button" variant="outline" size="sm" disabled={loading} onClick={() => load({ feedback: true })}><RefreshCw className={loading ? "animate-spin" : ""} />刷新</Button></CardHeader>
+      <CardContent className="space-y-3">
+        {items.map((item) => {
+          const quota = item.quota_limit_bytes == null ? "未设限" : formatStorageBytes(item.quota_limit_bytes);
+          const observed = item.physical_observed_bytes == null ? "尚未完成首次核对" : formatStorageBytes(item.physical_observed_bytes);
+          const checkedAt = item.physical_observed_at ? new Date(item.physical_observed_at).toLocaleString() : "暂无核对时间";
+          return <section key={item.workspace_id} className="space-y-3 border p-4">
+            <div className="flex items-center gap-2"><Database className="size-4 text-primary" /><h2 className="font-medium">{item.workspace_name}</h2></div>
+            <div className="grid gap-3 @min-[48rem]/account-center:grid-cols-2">
+              <div className="border p-3"><p className="text-xs text-muted-foreground">配额用量</p><p className="mt-1 text-sm font-medium">{formatStorageBytes(item.quota_used_bytes)} / {quota}</p><p className="mt-1 text-xs text-muted-foreground">已上传且仍保留的文件版本；活动副本单独计入。</p></div>
+              <div className="border p-3"><p className="text-xs text-muted-foreground">上传预留</p><p className="mt-1 text-sm font-medium">{formatStorageBytes(item.quota_reserved_bytes)}</p><p className="mt-1 text-xs text-muted-foreground">正在上传的文件会先占用预留额度，取消或超时后释放。</p></div>
+              <div className="border p-3"><p className="text-xs text-muted-foreground">对象真实占用（最近核对）</p><p className="mt-1 text-sm font-medium">{observed}{item.physical_limit_bytes ? ` / ${formatStorageBytes(item.physical_limit_bytes)}` : ""}</p><p className="mt-1 text-xs text-muted-foreground">包含回收期文件、隔离内容和临时上传；核对时间：{checkedAt}。</p></div>
+              <div className="border p-3"><p className="text-xs text-muted-foreground">物理安全空间预留</p><p className="mt-1 text-sm font-medium">{formatStorageBytes(item.physical_reserved_bytes)}</p><p className="mt-1 text-xs text-muted-foreground">为正在上传、版本固化或复制预留的峰值空间，不计入产品配额用量。</p></div>
+              <div className="border p-3"><p className="text-xs text-muted-foreground">当前上传状态</p><p className="mt-1 text-sm font-medium">{item.uploads_blocked ? "已暂停新上传" : "可上传"}</p><p className="mt-1 text-xs text-muted-foreground">工作空间物理安全上限始终生效，与产品配额分开。</p></div>
+            </div>
+          </section>;
+        })}
+        {!items.length && !loading && <p className="py-10 text-center text-sm text-muted-foreground">当前没有可显示的工作空间存储用量。</p>}
+        {loading && !items.length && <p className="py-10 text-center text-sm text-muted-foreground">正在读取存储用量…</p>}
+      </CardContent>
+    </Card>
+    <Card><CardContent className="p-4 text-sm text-muted-foreground">删除或解除关联会立即释放产品配额，但对象内容会保留 30 天供恢复，因此“配额用量”和“对象真实占用”可能暂时不同。存储用量只表示对象内容字节，不等于存储供应商账单或底层磁盘占用。</CardContent></Card>
+  </div>;
+}
+
 export function AccountCenter({ page = "profile", user, workspace, onUserUpdate, subscription, devtools, onDevtoolsChange, initialAction, backTo, backLabel }) {
-  const titles = { profile: ["个人资料", "管理你的个人身份信息和邮箱。"], preferences: ["偏好与通知", "控制 StagePilot 的外观和通知体验。"], security: ["登录与安全", "保护账号、密码和登录安全。"], billing: ["方案与账单", "查看当前方案和可用能力。"], developer: ["开发工具", "验证桌面能力和 UI 组件。"] };
+  const titles = { profile: ["个人资料", "管理你的个人身份信息和邮箱。"], preferences: ["偏好与通知", "控制 StagePilot 的外观和通知体验。"], security: ["登录与安全", "保护账号、密码和登录安全。"], billing: ["方案与账单", "查看当前方案和可用能力。"], storage: ["存储用量", "查看工作空间的文件额度和实际存储占用。"], developer: ["开发工具", "验证桌面能力和 UI 组件。"] };
   const [title, description] = titles[page] || titles.profile;
-  return <div className="@container/account-center min-w-0 space-y-5"><PageHeader back={backTo ? <AppBackLink to={backTo} label={backLabel || "返回"} /> : null} title={title} description={description} />{page === "profile" && <AccountProfile user={user} onUserUpdate={onUserUpdate} />}{page === "preferences" && <PreferencesView />}{page === "security" && <SecurityView />}{page === "billing" && <BillingView subscription={subscription} />}{page === "developer" && import.meta.env.DEV && <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} initialAction={initialAction} />}</div>;
+  return <div className="@container/account-center min-w-0 space-y-5"><PageHeader back={backTo ? <AppBackLink to={backTo} label={backLabel || "返回"} /> : null} title={title} description={description} />{page === "profile" && <AccountProfile user={user} onUserUpdate={onUserUpdate} />}{page === "preferences" && <PreferencesView />}{page === "security" && <SecurityView />}{page === "billing" && <BillingView subscription={subscription} />}{page === "storage" && <WorkspaceStorageView />}{page === "developer" && import.meta.env.DEV && <DeveloperTools workspace={workspace} devtools={devtools} onDevtoolsChange={onDevtoolsChange} initialAction={initialAction} />}</div>;
 }

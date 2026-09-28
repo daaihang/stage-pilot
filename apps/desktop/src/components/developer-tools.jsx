@@ -179,7 +179,7 @@ export function DeveloperTools({ workspace, devtools, onDevtoolsChange, initialA
     setUploadTest({ status: "uploading", name: file.name, progress: 0, detail: "正在创建上传任务" });
     try {
       const created = await createFileUpload(workspace.id, { filename: file.name, content_type: file.type, size_bytes: file.size, production_id: null });
-      await uploadToPresignedUrl(created.upload.url, file, (progress) => setUploadTest({ status: "uploading", name: file.name, progress, detail: "正在直传 MinIO / S3" }));
+      await uploadToPresignedUrl(created.upload, file, (progress) => setUploadTest({ status: "uploading", name: file.name, progress, detail: "正在安全上传到对象存储" }));
       const completed = await completeFileUpload(workspace.id, created.file.id);
       setUploadTest({ status: "success", name: file.name, progress: 1, detail: `上传成功，状态：${completed.status}` });
       notify.success("文件上传测试成功", { id: toast });

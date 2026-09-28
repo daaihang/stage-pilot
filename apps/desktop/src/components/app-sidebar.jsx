@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   ArrowLeft, Building2, CalendarDays, CalendarRange, ClipboardCheck, ClipboardList, ContactRound, FileCog, FileText, FolderKanban,
   Gauge, KeyRound, LayoutTemplate, ListMusic, ListTree, MapPin, Mic2, MonitorCog, Package, Plus,
-  Settings, Sparkles, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal, Link2,
+  Settings, Sparkles, Database, Theater, UsersRound, Workflow, Check, ChevronsUpDown, Bell, CreditCard, LockKeyhole, UserRound, Terminal, Link2,
 } from "@/components/ui/icons";
 import { NavLink } from "react-router-dom";
 import {
@@ -35,7 +35,7 @@ const productionGroups = [
 ];
 
 const accountGroups = [
-  { label: "账户", items: [["profile", "个人资料", UserRound], ["preferences", "偏好与通知", Bell], ["security", "登录与安全", LockKeyhole], ["billing", "方案与账单", CreditCard]] },
+  { label: "账户", items: [["profile", "个人资料", UserRound], ["preferences", "偏好与通知", Bell], ["security", "登录与安全", LockKeyhole], ["storage", "存储用量", Database], ["billing", "方案与账单", CreditCard]] },
   ...(import.meta.env.DEV ? [{ label: "开发", items: [["developer", "开发工具", Terminal]] }] : []),
 ];
 

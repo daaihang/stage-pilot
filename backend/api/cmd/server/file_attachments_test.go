@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"testing"
@@ -19,20 +21,46 @@ func attachmentResponse(t *testing.T, body []byte) map[string]any {
 	return result
 }
 
-func signedFilePut(t *testing.T, rawURL, contents string) {
+func signedFilePut(t *testing.T, upload map[string]any, contents string) {
 	t.Helper()
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPut, rawURL, bytes.NewBufferString(contents))
+	transport, _ := upload["transport"].(string)
+	rawURL, _ := upload["url"].(string)
+	method := http.MethodPut
+	body := bytes.NewBufferString(contents)
+	contentType := "text/plain"
+	if transport == "post" {
+		body = &bytes.Buffer{}
+		writer := multipart.NewWriter(body)
+		fields, _ := upload["fields"].(map[string]any)
+		for name, value := range fields {
+			if err := writer.WriteField(name, fmt.Sprint(value)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		filePart, err := writer.CreateFormFile("file", "test-upload.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(filePart, contents); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		method, contentType = http.MethodPost, writer.FormDataContentType()
+	}
+	req, err := http.NewRequestWithContext(t.Context(), method, rawURL, body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", contentType)
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	if response.StatusCode != 200 {
-		t.Fatalf("signed PUT = %d", response.StatusCode)
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		t.Fatalf("signed upload = %d", response.StatusCode)
 	}
 }
 
@@ -119,7 +147,7 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 	attachmentID := creation["attachment_id"].(string)
 	fileID := creation["file_id"].(string)
 	upload := creation["upload"].(map[string]any)
-	signedFilePut(t, upload["url"].(string), "first")
+	signedFilePut(t, upload, "first")
 	completeURL := "/v1/file-upload-sessions/" + upload["upload_id"].(string) + "/complete"
 	if response := authedRequest(t, app, memberToken, http.MethodPost, completeURL, nil); response.Code != 404 {
 		t.Fatalf("non-uploader completed upload = %d", response.Code)
@@ -156,7 +184,7 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 		t.Fatalf("version download = %d", firstDownload.Code)
 	}
 	firstURL := attachmentResponse(t, firstDownload.Body.Bytes())["url"].(string)
-	signedFilePut(t, upload["url"].(string), "later")
+	signedFilePut(t, upload, "later")
 	if got := signedFileRead(t, firstURL); got != "first" {
 		t.Fatalf("staging overwrite changed committed version: %q", got)
 	}
@@ -165,7 +193,7 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 		t.Fatalf("start version = %d: %s", newVersion.Code, newVersion.Body.String())
 	}
 	newUpload := attachmentResponse(t, newVersion.Body.Bytes())["upload"].(map[string]any)
-	signedFilePut(t, newUpload["url"].(string), "second")
+	signedFilePut(t, newUpload, "second")
 	v2Complete := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/file-upload-sessions/"+newUpload["upload_id"].(string)+"/complete", nil)
 	if v2Complete.Code != http.StatusAccepted {
 		t.Fatalf("complete v2 = %d: %s", v2Complete.Code, v2Complete.Body.String())
@@ -186,7 +214,7 @@ func TestProgramAttachmentsVersioningAndCopyAuthorization(t *testing.T) {
 		t.Fatalf("create ordinary attachment = %d: %s", standard.Code, standard.Body.String())
 	}
 	standardUpload := attachmentResponse(t, standard.Body.Bytes())["upload"].(map[string]any)
-	signedFilePut(t, standardUpload["url"].(string), "notes")
+	signedFilePut(t, standardUpload, "notes")
 	standardComplete := authedRequest(t, app, ownerToken, http.MethodPost, "/v1/file-upload-sessions/"+standardUpload["upload_id"].(string)+"/complete", nil)
 	if standardComplete.Code != http.StatusAccepted {
 		t.Fatalf("complete ordinary attachment = %d", standardComplete.Code)

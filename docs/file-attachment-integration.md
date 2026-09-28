@@ -101,6 +101,16 @@ DELETE   /v1/attachments/{attachmentId}
 
 扫描由 Worker 内的通用 `Scanner` 接口隔离；ClamAV adapter 使用私有 Worker 专用网络上的 clamd `INSTREAM`，API、Program、Person、表单和附件适配器都不连接 ClamAV。Compose 使用固定版本 `_base` 镜像与持久签名库卷，且不发布 clamd 宿主机端口。任务具备幂等键、租约、尝试次数与退避；扫描器断连保持 processing。通过 `docker compose exec worker stagepilot-worker scanner-check` 可验证 PING/PONG、正常样本和 EICAR 测试签名。扫描限额、未知格式或类型冲突均不得默认为 clean。
 
+### 大小策略、Workspace 配额与物理占用
+
+- 全系统单件硬上限为十进制 `2,000,000,000` 字节；父对象适配器通过 `UploadPolicy` 只可进一步收紧单件大小及允许的实际内容类型。没有已确认的业务数值时继承系统上限，不自行猜测。
+- 创建上传会话时在 Workspace 账本事务内预留用户配额和物理峰值空间，并执行每用户/Workspace 并发会话数与每小时创建速率限制。会话完成后，待扫描和 clean 版本都计入用户配额；扫描拒绝释放用户配额，但隔离对象仍计入物理占用。固定到 Production 的独立副本再次计量。
+- `quota_used_bytes` 是产品额度口径；`physical_observed_bytes` 是 Worker 最近一次从对象存储盘点到的对象内容字节，含临时、回收站、隔离和未完成分段。它不等同供应商账单或底层磁盘空间。活动上传中的 `physical_reserved_bytes` 覆盖“临时对象 + 不可变副本”的峰值，不能因用户取消就提前释放。
+- 小于或等于 100,000,000 字节的上传使用有 `content-length-range` 的预签名 POST；更大文件按 64 MiB 分段，服务端只签发所需分段并在组装前校验实际分段大小和 SHA-256。上传暂存桶必须通过 `S3_STAGING_BUCKET` 与正式 `S3_BUCKET` 分离；对象完成校验后由服务端跨桶复制到不可变版本桶。新接口不回退到无大小约束 PUT；既有旧 PUT 会话只允许在原链接期限内完成。
+- 文件删除和附件解除关联立即从用户配额释放，但对象保留 30 天；原管理者可用 Workspace 或对应 Production 的回收站接口恢复，恢复前重新核对权限和当前配额。过期对象清除失败可重试；行、版本哈希、来源追溯和审计仍保留。迁移前的回收站项目自迁移上线起至少再保留 30 天。
+- 上传额度由运维命令设置，不提供成员自行扩容 API：`storage-quota show --workspace <id>`、`storage-quota set --workspace <id> --bytes <bytes> --actor <operator>`、`storage-quota unset --workspace <id> --actor <operator>`。`GET /v1/me/workspace-storage` 供用户查看本人 active Workspace 的汇总，不暴露文件名；活动直连成员但非 Workspace 成员不会出现在个人清单中。
+- Worker 周期性对账正式桶、暂存桶中的对象和未完成分段，记录最近观测值。发现未知对象、数据库引用缺失或物理上限风险时只告警并暂停该 Workspace 新上传，不自动删除来源不明内容。Worker 清理是未完成分段的主路径；Compose 还为只存临时对象的 `S3_STAGING_BUCKET` 设置两天到期/中止兜底。由于 MinIO 生命周期的 `expire-days` 会对所在桶的完整对象也生效，禁止把该规则加到存放正式版本的桶；S3 生产部署应在专用暂存桶配置等价的两天 incomplete-multipart 规则和临时对象到期策略。
+
 要验证 API → MinIO → 持久扫描队列 → Worker → ClamAV 的完整链路，启动本地 Compose 栈并让 API 集成测试能连接本地 PostgreSQL/MinIO，然后设置 `FILE_SCAN_E2E=1` 运行 `go test -count=1 -run '^TestFileScanWorkerEndToEnd$' ./cmd/server`。此用例分别上传普通文本和 EICAR 测试签名，检查最终状态为 `ready` 与 `rejected`；EICAR 是无害的防病毒测试样本，不是可执行恶意软件。
 
 匿名公开上传仍关闭，身份证明/健康材料的专用高敏工作流、格式专用解析、CDR 和可内嵌执行主动内容的预览也尚未接入。普通内部文件会在后台 ClamAV 与通用内容签名校验通过后才可下载。头像继续使用静态图像解码重编码，不依赖 ClamAV。上传文件还应校验实际内容类型和签名，不能只信客户端 `Content-Type`；[OWASP 文件上传指南](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html)对此有明确建议。

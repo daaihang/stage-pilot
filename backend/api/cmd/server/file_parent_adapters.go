@@ -16,8 +16,10 @@ type fileParentAdapter interface {
 	FromRoute(*http.Request) (fileParent, error)
 	Resolve(context.Context, fileParent) (fileParent, error)
 	Authorize(context.Context, string, fileParent, string, fileAction) bool
+	UploadPolicy(context.Context, fileParent) (fileUploadPolicy, error)
 	Attach(context.Context, pgx.Tx, string, fileParent) error
 	List(context.Context, *pgxpool.Pool, fileParent) (pgx.Rows, error)
+	ListTrash(context.Context, *pgxpool.Pool, fileParent) (pgx.Rows, error)
 }
 
 type programAttachmentAdapter struct{ app *application }
@@ -55,6 +57,15 @@ func (a programAttachmentAdapter) Authorize(ctx context.Context, userID string, 
 	return roleRank[role] >= roleRank[workspaceRoleMember]
 }
 
+func (a programAttachmentAdapter) UploadPolicy(ctx context.Context, parent fileParent) (fileUploadPolicy, error) {
+	resolved, err := a.Resolve(ctx, parent)
+	if err != nil {
+		return fileUploadPolicy{}, err
+	}
+	_ = resolved
+	return fileUploadPolicy{MaxBytes: hardMaxFileBytes}, nil
+}
+
 func (a programAttachmentAdapter) Attach(ctx context.Context, tx pgx.Tx, attachmentID string, parent fileParent) error {
 	_, err := tx.Exec(ctx, `INSERT INTO program_file_attachments(attachment_id,workspace_id,program_id) VALUES($1,$2,$3)`, attachmentID, parent.WorkspaceID, parent.ID)
 	return err
@@ -62,6 +73,11 @@ func (a programAttachmentAdapter) Attach(ctx context.Context, tx pgx.Tx, attachm
 
 func (a programAttachmentAdapter) List(ctx context.Context, db *pgxpool.Pool, parent fileParent) (pgx.Rows, error) {
 	return db.Query(ctx, attachmentListQuery, parent.WorkspaceID, parent.ID)
+}
+
+func (a programAttachmentAdapter) ListTrash(ctx context.Context, db *pgxpool.Pool, parent fileParent) (pgx.Rows, error) {
+	query := strings.Replace(attachmentListQuery, "a.deleted_at IS NULL AND f.deleted_at IS NULL", "a.deleted_at IS NOT NULL AND f.deleted_at IS NOT NULL", 1)
+	return db.Query(ctx, query, parent.WorkspaceID, parent.ID)
 }
 
 func (a productionProgramAttachmentAdapter) FromRoute(r *http.Request) (fileParent, error) {
@@ -93,6 +109,15 @@ func (a productionProgramAttachmentAdapter) Authorize(ctx context.Context, userI
 	return access.Permissions[productionView]
 }
 
+func (a productionProgramAttachmentAdapter) UploadPolicy(ctx context.Context, parent fileParent) (fileUploadPolicy, error) {
+	resolved, err := a.Resolve(ctx, parent)
+	if err != nil {
+		return fileUploadPolicy{}, err
+	}
+	_ = resolved
+	return fileUploadPolicy{MaxBytes: hardMaxFileBytes}, nil
+}
+
 func (a productionProgramAttachmentAdapter) Attach(ctx context.Context, tx pgx.Tx, attachmentID string, parent fileParent) error {
 	_, err := tx.Exec(ctx, `INSERT INTO production_program_file_attachments(attachment_id,workspace_id,production_id,production_program_id) VALUES($1,$2,$3,$4)`, attachmentID, parent.WorkspaceID, parent.ProductionID, parent.ID)
 	return err
@@ -101,7 +126,8 @@ func (a productionProgramAttachmentAdapter) Attach(ctx context.Context, tx pgx.T
 const attachmentListQuery = `SELECT a.id,a.file_id,a.file_type_id,a.security_class,f.status,
 	COALESCE(published.id,latest.id,''),COALESCE(published.version_no,latest.version_no,0),
 	COALESCE(published.filename,latest.filename,f.filename),COALESCE(published.content_type,latest.content_type,f.content_type),
-	COALESCE(published.size_bytes,latest.size_bytes,f.size_bytes),COALESCE(latest.security_status,'pending'),published.id IS NOT NULL
+	COALESCE(published.size_bytes,latest.size_bytes,f.size_bytes),COALESCE(latest.security_status,'pending'),published.id IS NOT NULL,
+	COALESCE(a.purge_after,f.purge_after),NOT EXISTS(SELECT 1 FROM file_versions purged WHERE purged.file_id=f.id AND purged.object_purged_at IS NULL)
 	FROM file_attachments a
 	JOIN files f ON f.id=a.file_id AND f.workspace_id=a.workspace_id
 	LEFT JOIN file_versions published ON published.id=f.current_version_id AND published.file_id=f.id AND published.security_status='clean' AND published.object_purged_at IS NULL
@@ -113,6 +139,16 @@ const attachmentListQuery = `SELECT a.id,a.file_id,a.file_type_id,a.security_cla
 
 func (a productionProgramAttachmentAdapter) List(ctx context.Context, db *pgxpool.Pool, parent fileParent) (pgx.Rows, error) {
 	query := strings.Replace(attachmentListQuery,
+		`JOIN program_file_attachments x ON x.attachment_id=a.id
+	WHERE x.workspace_id=$1 AND x.program_id=$2`,
+		`JOIN production_program_file_attachments x ON x.attachment_id=a.id
+	WHERE x.workspace_id=$1 AND x.production_program_id=$2 AND x.production_id=$3`, 1)
+	return db.Query(ctx, query, parent.WorkspaceID, parent.ID, parent.ProductionID)
+}
+
+func (a productionProgramAttachmentAdapter) ListTrash(ctx context.Context, db *pgxpool.Pool, parent fileParent) (pgx.Rows, error) {
+	query := strings.Replace(attachmentListQuery, "a.deleted_at IS NULL AND f.deleted_at IS NULL", "a.deleted_at IS NOT NULL AND f.deleted_at IS NOT NULL", 1)
+	query = strings.Replace(query,
 		`JOIN program_file_attachments x ON x.attachment_id=a.id
 	WHERE x.workspace_id=$1 AND x.program_id=$2`,
 		`JOIN production_program_file_attachments x ON x.attachment_id=a.id

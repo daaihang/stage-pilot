@@ -16,11 +16,14 @@ import (
 )
 
 type objectStorage struct {
-	client        *minio.Client
-	presignClient *minio.Client
-	bucket        string
-	ttl           time.Duration
-	maxBytes      int64
+	client           *minio.Client
+	presignClient    *minio.Client
+	core             minio.Core
+	bucket           string
+	stagingBucket    string
+	ttl              time.Duration
+	maxBytes         int64
+	physicalMaxBytes int64
 }
 
 func newObjectStorage(ctx context.Context) (*objectStorage, error) {
@@ -42,7 +45,17 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	bucket := envOrDefault("S3_BUCKET", "stagepilot")
 	if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil {
 		code := minio.ToErrorResponse(err).Code
-		if code != "BucketAlreadyOwnedByYou" && code != "BucketAlreadyExists" {
+		if code != "BucketAlreadyOwnedByYou" {
+			return nil, err
+		}
+	}
+	stagingBucket := envOrDefault("S3_STAGING_BUCKET", bucket+"-staging")
+	if stagingBucket == bucket {
+		return nil, fmt.Errorf("S3_STAGING_BUCKET must be separate from S3_BUCKET")
+	}
+	if err := client.MakeBucket(ctx, stagingBucket, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil {
+		code := minio.ToErrorResponse(err).Code
+		if code != "BucketAlreadyOwnedByYou" {
 			return nil, err
 		}
 	}
@@ -61,7 +74,11 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	}
 	max := int64(2_000_000_000)
 	if v, e := strconv.ParseInt(os.Getenv("FILES_MAX_BYTES"), 10, 64); e == nil && v > 0 {
-		max = min(v, int64(2_000_000_000))
+		max = min(v, hardMaxFileBytes)
+	}
+	physicalMax, err := strconv.ParseInt(os.Getenv("FILES_WORKSPACE_PHYSICAL_MAX_BYTES"), 10, 64)
+	if err != nil || physicalMax <= 0 {
+		return nil, fmt.Errorf("FILES_WORKSPACE_PHYSICAL_MAX_BYTES must be configured as a positive byte count")
 	}
 	publicURL, err := url.Parse(public)
 	if err != nil || publicURL.Host == "" {
@@ -71,7 +88,7 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &objectStorage{client: client, presignClient: publicClient, bucket: bucket, ttl: ttl, maxBytes: max}, nil
+	return &objectStorage{client: client, presignClient: publicClient, core: minio.Core{Client: client}, bucket: bucket, stagingBucket: stagingBucket, ttl: ttl, maxBytes: max, physicalMaxBytes: physicalMax}, nil
 }
 
 func registerFileRoutes(app *application, mux *http.ServeMux) {
@@ -85,6 +102,11 @@ func registerFileRoutes(app *application, mux *http.ServeMux) {
 	mux.Handle("GET /v1/workspaces/{id}/files/{fileId}/versions/{versionId}/download", app.auth(http.HandlerFunc(app.downloadFileVersion)))
 	mux.Handle("POST /v1/file-upload-sessions/{uploadId}/complete", app.auth(http.HandlerFunc(app.completeFileUploadSession)))
 	mux.Handle("GET /v1/file-upload-sessions/{uploadId}", app.auth(http.HandlerFunc(app.getFileUploadSessionStatus)))
+	mux.Handle("POST /v1/file-upload-sessions/{uploadId}/parts/{partNumber}/url", app.auth(http.HandlerFunc(app.signFileUploadPart)))
+	mux.Handle("GET /v1/file-upload-sessions/{uploadId}/parts", app.auth(http.HandlerFunc(app.listVerifiedUploadParts)))
+	mux.Handle("DELETE /v1/file-upload-sessions/{uploadId}", app.auth(http.HandlerFunc(app.cancelFileUploadSession)))
+	mux.Handle("GET /v1/workspaces/{id}/files/trash", app.auth(http.HandlerFunc(app.listDeletedFiles)))
+	mux.Handle("POST /v1/workspaces/{id}/files/{fileId}/restore", app.auth(http.HandlerFunc(app.restoreFile)))
 	registerFileAttachmentRoutes(app, mux)
 }
 
@@ -160,7 +182,7 @@ func (app *application) libraryFileCapabilities(ctx context.Context, userID, wor
 		canWrite = access.Permissions[productionEdit]
 		canDelete = canWrite
 	}
-	return map[string]bool{"can_download": false, "can_upload_version": canWrite, "can_delete": canDelete}
+	return map[string]bool{"can_download": false, "can_upload_version": canWrite, "can_delete": canDelete, "can_manage_trash": canDelete}
 }
 
 func cleanFilename(name string) string {
@@ -206,8 +228,9 @@ func (app *application) createFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := cleanFilename(in.Filename)
-	if in.SizeBytes <= 0 || in.SizeBytes > s.maxBytes {
-		errorJSON(w, 400, "invalid_size", "文件大小无效或超过限制")
+	policy := fileUploadPolicy{MaxBytes: s.maxBytes}
+	if err := validateFileUploadSize(policy, in.SizeBytes, s.maxBytes); err != nil {
+		writeFileStorageError(w, err)
 		return
 	}
 	id, key := newID(), "ws/"+workspaceID+"/staging/"+newID()
@@ -215,24 +238,56 @@ func (app *application) createFile(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if len(idempotencyKey) > 200 {
+		writeFileStorageError(w, storageError(http.StatusBadRequest, "invalid_idempotency_key", "上传请求标识无效"))
+		return
+	}
+	if idempotencyKey != "" {
+		existing, err := findIdempotentFileUpload(r.Context(), app.db, workspaceID, claims(r).Subject, idempotencyKey)
+		if err != nil {
+			serverError(w, err)
+			return
+		}
+		if existing != nil {
+			if existing.ExpectedSize != in.SizeBytes || existing.Filename != filename || existing.ContentType != contentType || !sameOptionalString(existing.ProductionID, in.ProductionID) {
+				writeFileStorageError(w, storageError(http.StatusConflict, "idempotency_conflict", "该上传请求标识已用于不同文件"))
+				return
+			}
+			var upload map[string]any
+			if existing.Status == "pending" {
+				upload, err = app.createFileUploadSession(r.Context(), s, workspaceID, existing.FileID, claims(r).Subject, filename, contentType, in.SizeBytes, policy, idempotencyKey)
+			} else if existing.Status == "completed" {
+				upload = map[string]any{"id": existing.ID, "upload_id": existing.ID, "transport": "completed"}
+			} else {
+				writeFileStorageError(w, storageError(http.StatusConflict, "upload_not_pending", "该上传会话已结束，请重新选择文件开始上传"))
+				return
+			}
+			if err != nil {
+				if !writeFileStorageError(w, err) {
+					serverError(w, err)
+				}
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"file": map[string]any{"id": existing.FileID, "filename": filename,
+				"content_type": contentType, "size_bytes": in.SizeBytes, "status": existing.FileStatus}, "upload": upload})
+			return
+		}
+	}
 	_, err := app.db.Exec(r.Context(), `INSERT INTO files(id,workspace_id,production_id,bucket,object_key,filename,content_type,size_bytes,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, workspaceID, in.ProductionID, s.bucket, key, filename, contentType, in.SizeBytes, claims(r).Subject)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	uploadID := newID()
-	_, err = app.db.Exec(r.Context(), `INSERT INTO file_upload_sessions(id,workspace_id,file_id,created_by,staging_bucket,staging_key,expected_size,filename,content_type,expires_at)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, uploadID, workspaceID, id, claims(r).Subject, s.bucket, key, in.SizeBytes, filename, contentType, time.Now().Add(s.ttl))
+	upload, err := app.createFileUploadSession(r.Context(), s, workspaceID, id, claims(r).Subject, filename, contentType, in.SizeBytes, policy, idempotencyKey)
 	if err != nil {
-		serverError(w, err)
+		_, _ = app.db.Exec(r.Context(), `UPDATE files SET deleted_at=NOW(),purge_after=NOW()+INTERVAL '30 days',updated_at=NOW() WHERE id=$1 AND deleted_at IS NULL`, id)
+		if !writeFileStorageError(w, err) {
+			serverError(w, err)
+		}
 		return
 	}
-	presigned, err := s.presignClient.PresignedPutObject(r.Context(), s.bucket, key, s.ttl)
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	writeJSON(w, 201, map[string]any{"file": map[string]any{"id": id, "filename": filename, "content_type": contentType, "size_bytes": in.SizeBytes, "status": "pending"}, "upload": map[string]any{"id": uploadID, "upload_id": uploadID, "url": presigned.String(), "method": "PUT", "expires_in": int64(s.ttl.Seconds())}})
+	writeJSON(w, 201, map[string]any{"file": map[string]any{"id": id, "filename": filename, "content_type": contentType, "size_bytes": in.SizeBytes, "status": "pending"}, "upload": upload})
 }
 
 func (app *application) completeFile(w http.ResponseWriter, r *http.Request) {
@@ -346,7 +401,9 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 		items = append(items, f)
 	}
 	capabilities := app.libraryFileCapabilities(r.Context(), claims(r).Subject, workspaceID, productionID)
-	writeJSON(w, 200, map[string]any{"items": items, "total": len(items), "capabilities": map[string]bool{"can_upload": capabilities["can_upload_version"]}})
+	writeJSON(w, 200, map[string]any{"items": items, "total": len(items), "capabilities": map[string]bool{
+		"can_upload": capabilities["can_upload_version"], "can_manage_trash": capabilities["can_manage_trash"],
+	}})
 }
 func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
 	f, err := app.fileLocation(r)
@@ -389,13 +446,41 @@ func (app *application) deleteFile(w http.ResponseWriter, r *http.Request) {
 	if !app.authorizeFileScope(w, r, r.PathValue("id"), f.ProductionID, "delete") {
 		return
 	}
-	tag, err := app.db.Exec(r.Context(), "UPDATE files SET deleted_at=NOW(),updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL", r.PathValue("fileId"), r.PathValue("id"))
+	tx, err := app.db.Begin(r.Context())
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	if tag.RowsAffected() != 1 {
+	defer tx.Rollback(r.Context())
+	workspaceID, fileID := r.PathValue("id"), r.PathValue("fileId")
+	if err := ensureWorkspaceStorageAccount(r.Context(), tx, workspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `SELECT 1 FROM workspace_storage_accounts WHERE workspace_id=$1 FOR UPDATE`, workspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	var status string
+	err = tx.QueryRow(r.Context(), `SELECT status FROM files WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL FOR UPDATE`, fileID, workspaceID).Scan(&status)
+	if err != nil {
 		errorJSON(w, 404, "file_not_found", "文件不存在")
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `UPDATE files SET deleted_at=NOW(),purge_after=NOW()+INTERVAL '30 days',updated_at=NOW() WHERE id=$1 AND workspace_id=$2 AND deleted_at IS NULL`, fileID, workspaceID); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := releaseVersionChargeTx(r.Context(), tx, workspaceID, fileID, claims(r).Subject, "file_trashed"); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := cancelPendingFileSessionsTx(r.Context(), tx, workspaceID, fileID, claims(r).Subject); err != nil {
+		serverError(w, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		serverError(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]string{"status": "deleted"})
