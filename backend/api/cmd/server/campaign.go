@@ -78,6 +78,7 @@ type campaignRevisionItem struct {
 	RevisionNo            int                     `json:"revision_no"`
 	Status                string                  `json:"status"`
 	FormVersionID         string                  `json:"form_version_id"`
+	ProcessingMode        string                  `json:"processing_mode"`
 	ReviewRecipeVersionID *string                 `json:"review_recipe_version_id,omitempty"`
 	ReviewRecipeSource    *reviewRecipeSourceInfo `json:"review_recipe_source,omitempty"`
 	AvailabilityPolicy    json.RawMessage         `json:"availability_policy"`
@@ -139,6 +140,7 @@ type campaignCreateInput struct {
 
 type campaignRevisionCreateInput struct {
 	ChangeNote            string          `json:"change_note"`
+	ProcessingMode        string          `json:"processing_mode"`
 	Form                  *formDefinition `json:"form"`
 	AvailabilityPolicy    json.RawMessage `json:"availability_policy"`
 	ReviewRecipeVersionID string          `json:"review_recipe_version_id"`
@@ -156,6 +158,7 @@ type formDefinition struct {
 }
 
 type templateDefinition struct {
+	ProcessingMode      string          `json:"processing_mode"`
 	Form                formDefinition  `json:"form"`
 	AvailabilityPolicy  json.RawMessage `json:"availability_policy"`
 	ReviewWorkflow      json.RawMessage `json:"review_workflow"`
@@ -253,6 +256,7 @@ func normalizeFormVersionItem(item *formVersionItem) {
 
 func normalizeDefinition(def templateDefinition) templateDefinition {
 	def.Form = normalizeFormDefinition(def.Form)
+	def.ProcessingMode = normalizeIntakeProcessingMode(def.ProcessingMode, def.ReviewWorkflow)
 	def.AvailabilityPolicy = defaultJSON(def.AvailabilityPolicy, "{}")
 	def.ReviewWorkflow = defaultJSON(def.ReviewWorkflow, "{}")
 	def.MaterializationPlan = defaultJSON(def.MaterializationPlan, "{}")
@@ -609,8 +613,9 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(raw, &requestFields)
 		_, hasRecipeOverride := requestFields["review_recipe_version_id"]
 		_, hasWorkflowOverride := requestFields["review_workflow"]
-		if hasRecipeOverride || hasWorkflowOverride {
-			errorJSON(w, http.StatusUnprocessableEntity, "template_review_snapshot_override", "从模板创建时审核来源与完整快照由所选已发布模板版本决定；创建后可在活动草稿中更换方案")
+		_, hasProcessingModeOverride := requestFields["processing_mode"]
+		if hasRecipeOverride || hasWorkflowOverride || hasProcessingModeOverride {
+			errorJSON(w, http.StatusUnprocessableEntity, "template_snapshot_override", "从模板创建时处理方式、审核来源与完整快照由所选已发布模板版本决定；创建后可在活动草稿中调整")
 			return
 		}
 	}
@@ -703,6 +708,7 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 		templateDefinitionValue = normalizeDefinition(templateDefinition{})
 	}
 
+	processingMode := templateDefinitionValue.ProcessingMode
 	reviewWorkflow := templateDefinitionValue.ReviewWorkflow
 	reviewRecipeVersionID := strings.TrimSpace(input.ReviewRecipeVersionID)
 	explicitRecipe := reviewRecipeVersionID != ""
@@ -713,32 +719,43 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 	if inlineReview {
 		reviewWorkflow = input.ReviewWorkflow
 	}
-	recipeID, recipeDefinition, err := resolveReviewRecipeSnapshot(r.Context(), tx, reviewRecipeVersionID, access.WorkspaceID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			errorJSON(w, http.StatusNotFound, "review_recipe_not_found", "审核方案不存在或无权使用")
-		} else {
-			serverError(w, err)
+	var recipeID *string
+	normalizedReviewWorkflow := reviewWorkflow
+	if processingMode == intakeSingleRoundDecision {
+		var recipeDefinition json.RawMessage
+		recipeID, recipeDefinition, err = resolveReviewRecipeSnapshot(r.Context(), tx, reviewRecipeVersionID, access.WorkspaceID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				errorJSON(w, http.StatusNotFound, "review_recipe_not_found", "审核方案不存在或无权使用")
+			} else {
+				serverError(w, err)
+			}
+			return
 		}
-		return
-	}
-	if !inlineReview && (explicitRecipe || len(reviewWorkflow) == 0 || string(reviewWorkflow) == "{}") {
-		// A template's complete workflow is its own snapshot. The catalog
-		// version records provenance, but must not erase template customizations.
-		reviewWorkflow = recipeDefinition
-	}
-	parsedReviewDefinition, normalizedReviewWorkflow, err := parseReviewRecipeDefinition(reviewWorkflow, true)
-	if err != nil {
-		writeReviewRecipeValidationError(w, err)
-		return
-	}
-	if err := validateReviewRecipeReferences(r.Context(), tx, parsedReviewDefinition, access.WorkspaceID, access.ProductionID, false); err != nil {
-		if !writeReviewRecipeValidationError(w, err) {
-			serverError(w, err)
+		if !inlineReview && (explicitRecipe || len(reviewWorkflow) == 0 || string(reviewWorkflow) == "{}") {
+			// A template's complete workflow is its own snapshot. The catalog
+			// version records provenance, but must not erase template customizations.
+			reviewWorkflow = recipeDefinition
 		}
-		return
+		parsedReviewDefinition, normalized, parseErr := parseReviewRecipeDefinition(reviewWorkflow, true)
+		if parseErr != nil {
+			writeReviewRecipeValidationError(w, parseErr)
+			return
+		}
+		if err := validateReviewRecipeReferences(r.Context(), tx, parsedReviewDefinition, access.WorkspaceID, access.ProductionID, false); err != nil {
+			if !writeReviewRecipeValidationError(w, err) {
+				serverError(w, err)
+			}
+			return
+		}
+		normalizedReviewWorkflow = normalized
+	} else if templateRecipeVersionID != nil {
+		// The source and workflow are dormant in collection-only (or an
+		// unimplemented future mode); preserve the immutable template snapshot.
+		recipeID = templateRecipeVersionID
 	}
 	definition := normalizeDefinition(templateDefinitionValue)
+	definition.ProcessingMode = processingMode
 	definition.ReviewWorkflow = normalizedReviewWorkflow
 
 	campaignID, formVersionID, revisionID := newID(), newID(), newID()
@@ -773,8 +790,8 @@ func (app *application) createCampaign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := tx.Exec(r.Context(), `INSERT INTO campaign_revisions
-		(id,workspace_id,campaign_id,revision_no,status,form_version_id,review_recipe_version_id,availability_policy,review_workflow,materialization_plan,created_by)
-		VALUES($1,$2,$3,1,'draft',$4,$5,$6,$7,$8,$9)`, revisionID, access.WorkspaceID, campaignID, formVersionID, recipeID,
+		(id,workspace_id,campaign_id,revision_no,status,form_version_id,processing_mode,review_recipe_version_id,availability_policy,review_workflow,materialization_plan,created_by)
+		VALUES($1,$2,$3,1,'draft',$4,$5,$6,$7,$8,$9,$10)`, revisionID, access.WorkspaceID, campaignID, formVersionID, processingMode, recipeID,
 		definition.AvailabilityPolicy, definition.ReviewWorkflow, definition.MaterializationPlan, claims(r).Subject); err != nil {
 		serverError(w, err)
 		return
@@ -982,18 +999,23 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 
 	form := normalizeFormDefinition(formDefinition{})
 	availability, review, materialization := defaultJSON(input.AvailabilityPolicy, "{}"), defaultJSON(input.ReviewWorkflow, "{}"), defaultJSON(input.MaterializationPlan, "{}")
+	processingMode := strings.TrimSpace(input.ProcessingMode)
 	var sourceRecipeVersionID *string
 	if input.Form == nil {
 		var source formDefinition
 		var sourceAvailability, sourceReview, sourceMaterialization []byte
 		var sourceRecipeID *string
+		var sourceProcessingMode string
 		err := tx.QueryRow(r.Context(), `SELECT fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen,
-			cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan
+			cr.processing_mode,cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan
 			FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
 			WHERE cr.workspace_id=$1 AND cr.campaign_id=$2 AND cr.status='published'`, access.WorkspaceID, campaignID).
-			Scan(&source.SchemaVersion, &source.Blocks, &source.Fields, &source.LogicRules, &source.Presentation, &source.EndScreen, &sourceRecipeID, &sourceAvailability, &sourceReview, &sourceMaterialization)
+			Scan(&source.SchemaVersion, &source.Blocks, &source.Fields, &source.LogicRules, &source.Presentation, &source.EndScreen, &sourceProcessingMode, &sourceRecipeID, &sourceAvailability, &sourceReview, &sourceMaterialization)
 		if err == nil {
 			form = normalizeFormDefinition(source)
+			if processingMode == "" {
+				processingMode = sourceProcessingMode
+			}
 			sourceRecipeVersionID = sourceRecipeID
 			availability, materialization = sourceAvailability, sourceMaterialization
 			if len(input.ReviewWorkflow) == 0 || string(input.ReviewWorkflow) == "null" {
@@ -1006,42 +1028,58 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 	} else {
 		form = normalizeFormDefinition(*input.Form)
 	}
+	if processingMode == "" {
+		processingMode = intakeSingleRoundDecision
+	}
+	if !knownIntakeProcessingMode(processingMode) {
+		errorJSON(w, http.StatusUnprocessableEntity, "invalid_processing_mode", "表单处理方式无效")
+		return
+	}
 	// New revisions inherit the respondent-facing title from the campaign when
 	// the caller did not provide one. A later explicit presentation edit can
 	// still diverge from the internal campaign name.
 	setFormPublicTitle(&form, campaignName)
-	reviewRecipeVersionID := strings.TrimSpace(input.ReviewRecipeVersionID)
-	explicitReviewRecipe := reviewRecipeVersionID != ""
-	if reviewRecipeVersionID == "" && sourceRecipeVersionID != nil {
-		reviewRecipeVersionID = strings.TrimSpace(*sourceRecipeVersionID)
-	}
-	inlineReviewProvided := len(input.ReviewWorkflow) > 0 && string(input.ReviewWorkflow) != "null"
 	var recipeID *string
-	var recipeDefinition json.RawMessage
-	if reviewRecipeVersionID != "" || sourceRecipeVersionID == nil || !inlineReviewProvided && (len(review) == 0 || string(review) == "{}") {
-		recipeID, recipeDefinition, err = resolveReviewRecipeSnapshot(r.Context(), tx, reviewRecipeVersionID, access.WorkspaceID)
+	normalizedReview := review
+	if input.ReviewRecipeVersionID != "" {
+		id := strings.TrimSpace(input.ReviewRecipeVersionID)
+		recipeID = &id
+	} else {
+		recipeID = sourceRecipeVersionID
+	}
+	if processingMode == intakeSingleRoundDecision {
+		reviewRecipeVersionID := ""
+		if recipeID != nil {
+			reviewRecipeVersionID = strings.TrimSpace(*recipeID)
+		}
+		inlineReviewProvided := len(input.ReviewWorkflow) > 0 && string(input.ReviewWorkflow) != "null"
+		if reviewRecipeVersionID != "" || sourceRecipeVersionID == nil || !inlineReviewProvided && (len(review) == 0 || string(review) == "{}") {
+			var recipeDefinition json.RawMessage
+			recipeID, recipeDefinition, err = resolveReviewRecipeSnapshot(r.Context(), tx, reviewRecipeVersionID, access.WorkspaceID)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					errorJSON(w, http.StatusNotFound, "review_recipe_not_found", "审核方案不存在或无权使用")
+				} else {
+					serverError(w, err)
+				}
+				return
+			}
+			if !inlineReviewProvided && (input.ReviewRecipeVersionID != "" || sourceRecipeVersionID == nil || len(review) == 0 || string(review) == "{}") {
+				review = recipeDefinition
+			}
+		}
+		_, normalizedReview, err = parseReviewRecipeDefinition(review, true)
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				errorJSON(w, http.StatusNotFound, "review_recipe_not_found", "审核方案不存在或无权使用")
-			} else {
+			writeReviewRecipeValidationError(w, err)
+			return
+		}
+		parsedReviewDefinition, _, _ := parseReviewRecipeDefinition(normalizedReview, true)
+		if err := validateReviewRecipeReferences(r.Context(), tx, parsedReviewDefinition, access.WorkspaceID, access.ProductionID, false); err != nil {
+			if !writeReviewRecipeValidationError(w, err) {
 				serverError(w, err)
 			}
 			return
 		}
-		if !inlineReviewProvided && (explicitReviewRecipe || sourceRecipeVersionID == nil || len(review) == 0 || string(review) == "{}") {
-			review = recipeDefinition
-		}
-	}
-	parsedReviewDefinition, normalizedReview, reviewErr := parseReviewRecipeDefinition(review, true)
-	if reviewErr != nil {
-		writeReviewRecipeValidationError(w, reviewErr)
-		return
-	}
-	if err := validateReviewRecipeReferences(r.Context(), tx, parsedReviewDefinition, access.WorkspaceID, access.ProductionID, false); err != nil {
-		if !writeReviewRecipeValidationError(w, err) {
-			serverError(w, err)
-		}
-		return
 	}
 	if !validateFormDefinition(w, form) || !validatePolicyJSON(w, "availability_policy", availability) || !validatePolicyJSON(w, "materialization_plan", materialization) {
 		return
@@ -1057,8 +1095,8 @@ func (app *application) createCampaignRevision(w http.ResponseWriter, r *http.Re
 		serverError(w, err)
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `INSERT INTO campaign_revisions(id,workspace_id,campaign_id,revision_no,status,form_version_id,review_recipe_version_id,availability_policy,review_workflow,materialization_plan,change_note,created_by)
-		VALUES($1,$2,$3,$4,'draft',$5,$6,$7,$8,$9,$10,$11)`, revisionID, access.WorkspaceID, campaignID, revisionNo, formVersionID, recipeID,
+	if _, err := tx.Exec(r.Context(), `INSERT INTO campaign_revisions(id,workspace_id,campaign_id,revision_no,status,form_version_id,processing_mode,review_recipe_version_id,availability_policy,review_workflow,materialization_plan,change_note,created_by)
+		VALUES($1,$2,$3,$4,'draft',$5,$6,$7,$8,$9,$10,$11,$12)`, revisionID, access.WorkspaceID, campaignID, revisionNo, formVersionID, processingMode, recipeID,
 		availability, normalizedReview, materialization, input.ChangeNote, claims(r).Subject); err != nil {
 		serverError(w, err)
 		return
@@ -1110,15 +1148,15 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		errorJSON(w, http.StatusConflict, "campaign_archived", "归档表单不能发布")
 		return
 	}
-	var revisionStatus, formVersionID string
+	var revisionStatus, formVersionID, processingMode string
 	var recipeVersionID *string
 	var availability, review, materialization []byte
 	var form formDefinition
-	if err := tx.QueryRow(r.Context(), `SELECT cr.status,cr.form_version_id,cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan,
+	if err := tx.QueryRow(r.Context(), `SELECT cr.status,cr.form_version_id,cr.processing_mode,cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan,
 		fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen
 		FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
 		WHERE cr.id=$1 AND cr.campaign_id=$2 AND cr.workspace_id=$3 FOR UPDATE`, revisionID, campaignID, access.WorkspaceID).Scan(
-		&revisionStatus, &formVersionID, &recipeVersionID, &availability, &review, &materialization,
+		&revisionStatus, &formVersionID, &processingMode, &recipeVersionID, &availability, &review, &materialization,
 		&form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen); err != nil {
 		errorJSON(w, http.StatusNotFound, "campaign_revision_not_found", "表单版本不存在或无权访问")
 		return
@@ -1137,8 +1175,8 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 	if !requireRevisionMatchWithSummary(w, r, currentRevision.ETag, &currentRevision) {
 		return
 	}
-	if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
-		errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_source_required", "请为表单草稿选择已发布的单轮审核方案来源")
+	if err := validateIntakeProcessingMode(processingMode); err != nil {
+		writeFormValidationError(w, err)
 		return
 	}
 	if err := validateFormDefinitionValue(form); err != nil {
@@ -1153,22 +1191,30 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		serverError(w, err)
 		return
 	}
-	parsedReview, normalizedReview, err := parseReviewRecipeDefinition(review, false)
-	if err != nil {
-		writeReviewRecipeValidationError(w, err)
-		return
-	}
-	if err := validateReviewRecipeReferences(r.Context(), tx, parsedReview, access.WorkspaceID, access.ProductionID, true); err != nil {
-		if !writeReviewRecipeValidationError(w, err) {
-			serverError(w, err)
+	var normalizedReview json.RawMessage = review
+	if processingMode == intakeSingleRoundDecision {
+		if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
+			errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_source_required", "请为表单草稿选择已发布的单轮人工审核方案来源")
+			return
 		}
-		return
-	}
-	if err := validateP1ReviewerThreshold(r.Context(), tx, access.WorkspaceID, access.ProductionID, parsedReview); err != nil {
-		if !writeReviewRecipeValidationError(w, err) {
-			serverError(w, err)
+		parsedReview, normalized, parseErr := parseReviewRecipeDefinition(review, false)
+		if parseErr != nil {
+			writeReviewRecipeValidationError(w, parseErr)
+			return
 		}
-		return
+		normalizedReview = normalized
+		if err := validateReviewRecipeReferences(r.Context(), tx, parsedReview, access.WorkspaceID, access.ProductionID, true); err != nil {
+			if !writeReviewRecipeValidationError(w, err) {
+				serverError(w, err)
+			}
+			return
+		}
+		if err := validateP1ReviewerThreshold(r.Context(), tx, access.WorkspaceID, access.ProductionID, parsedReview); err != nil {
+			if !writeReviewRecipeValidationError(w, err) {
+				serverError(w, err)
+			}
+			return
+		}
 	}
 	if err := validateAvailabilityPolicyValue(availability); err != nil {
 		if !writeFormValidationError(w, err) {
@@ -1176,7 +1222,7 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
-	if err := validatePublicSubmissionCompatibility(availability, form.Fields, normalizedReview); err != nil {
+	if err := validatePublicSubmissionCompatibility(processingMode, availability, form.Fields, normalizedReview); err != nil {
 		if !writeFormValidationError(w, err) {
 			serverError(w, err)
 		}
@@ -1188,7 +1234,7 @@ func (app *application) publishCampaignRevision(w http.ResponseWriter, r *http.R
 		}
 		return
 	}
-	if recipeVersionID != nil && strings.TrimSpace(*recipeVersionID) != "" {
+	if processingMode == intakeSingleRoundDecision && recipeVersionID != nil && strings.TrimSpace(*recipeVersionID) != "" {
 		if err := validateWorkspaceReviewRecipeVersion(r.Context(), tx, access.WorkspaceID, *recipeVersionID); err != nil {
 			if !writeWorkspaceReviewCatalogError(w, err) {
 				serverError(w, err)
@@ -1273,7 +1319,7 @@ func (app *application) queryCampaignRevisions(ctx context.Context, queryer inte
 	QueryRow(context.Context, string, ...any) pgx.Row
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 }, campaignID, workspaceID string) ([]campaignRevisionItem, error) {
-	rows, err := queryer.Query(ctx, `SELECT cr.id,cr.campaign_id,cr.workspace_id,cr.revision_no,cr.status,cr.form_version_id,
+	rows, err := queryer.Query(ctx, `SELECT cr.id,cr.campaign_id,cr.workspace_id,cr.revision_no,cr.status,cr.form_version_id,cr.processing_mode,
 		cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan,cr.change_note,cr.created_by,cr.created_at,cr.published_at,cr.archived_at,
 		fv.id,fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen,fv.created_at
 		FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
@@ -1286,7 +1332,7 @@ func (app *application) queryCampaignRevisions(ctx context.Context, queryer inte
 	for rows.Next() {
 		var item campaignRevisionItem
 		var form formVersionItem
-		if err := rows.Scan(&item.ID, &item.CampaignID, &item.WorkspaceID, &item.RevisionNo, &item.Status, &item.FormVersionID,
+		if err := rows.Scan(&item.ID, &item.CampaignID, &item.WorkspaceID, &item.RevisionNo, &item.Status, &item.FormVersionID, &item.ProcessingMode,
 			&item.ReviewRecipeVersionID, &item.AvailabilityPolicy, &item.ReviewWorkflow, &item.MaterializationPlan, &item.ChangeNote, &item.CreatedBy, &item.CreatedAt, &item.PublishedAt, &item.ArchivedAt,
 			&form.ID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen, &form.CreatedAt); err != nil {
 			return nil, err
@@ -1309,12 +1355,12 @@ func (app *application) loadRevision(ctx context.Context, queryer interface {
 }, revisionID, workspaceID string) (campaignRevisionItem, error) {
 	var item campaignRevisionItem
 	var form formVersionItem
-	err := queryer.QueryRow(ctx, `SELECT cr.id,cr.campaign_id,cr.workspace_id,cr.revision_no,cr.status,cr.form_version_id,
+	err := queryer.QueryRow(ctx, `SELECT cr.id,cr.campaign_id,cr.workspace_id,cr.revision_no,cr.status,cr.form_version_id,cr.processing_mode,
 		cr.review_recipe_version_id,cr.availability_policy,cr.review_workflow,cr.materialization_plan,cr.change_note,cr.created_by,cr.created_at,cr.published_at,cr.archived_at,
 		fv.id,fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen,fv.created_at
 		FROM campaign_revisions cr JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
 		WHERE cr.id=$1 AND cr.workspace_id=$2`, revisionID, workspaceID).Scan(
-		&item.ID, &item.CampaignID, &item.WorkspaceID, &item.RevisionNo, &item.Status, &item.FormVersionID,
+		&item.ID, &item.CampaignID, &item.WorkspaceID, &item.RevisionNo, &item.Status, &item.FormVersionID, &item.ProcessingMode,
 		&item.ReviewRecipeVersionID, &item.AvailabilityPolicy, &item.ReviewWorkflow, &item.MaterializationPlan, &item.ChangeNote, &item.CreatedBy, &item.CreatedAt, &item.PublishedAt, &item.ArchivedAt,
 		&form.ID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen, &form.CreatedAt)
 	if err != nil {

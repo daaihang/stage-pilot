@@ -17,6 +17,7 @@ function revisionForVersion(template, version) {
     etag: version?.etag || "",
     formVersion: definition.form || emptyFormVersion(),
     availabilityPolicy: definition.availability_policy || {},
+    processingMode: definition.processing_mode || "MANUAL_DECISION",
     reviewWorkflow: definition.review_workflow || {},
     materializationPlan: definition.materialization_plan || {},
     reviewRecipeVersionId: version?.reviewRecipeVersionId || "",
@@ -29,6 +30,7 @@ function templateDefinition(snapshot) {
   return {
     form: snapshot.form,
     availability_policy: snapshot.policy,
+    processing_mode: snapshot.processingMode,
     review_workflow: snapshot.reviewWorkflow,
     materialization_plan: snapshot.materializationPlan,
   };

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -630,7 +631,7 @@ func isAutoAcceptWorkflow(raw json.RawMessage) bool {
 		strings.EqualFold(strings.TrimSpace(workflow.FinalDecision), "auto_accept")
 }
 
-func validatePublicSubmissionCompatibility(policyRaw, fieldsRaw, workflowRaw json.RawMessage) error {
+func validatePublicSubmissionCompatibility(processingMode string, policyRaw, fieldsRaw, workflowRaw json.RawMessage) error {
 	var policy map[string]any
 	if err := json.Unmarshal(policyRaw, &policy); err != nil {
 		return &formValidationError{"invalid_availability_policy", "开放规则格式无效"}
@@ -638,16 +639,19 @@ func validatePublicSubmissionCompatibility(policyRaw, fieldsRaw, workflowRaw jso
 	if limit, ok := policy["per_actor_limit"].(float64); ok && limit > 0 && !hasRequiredContactEmailField(fieldsRaw) {
 		return &formValidationError{"contact_email_required_for_actor_limit", "启用每邮箱提交次数限制时，表单必须包含必填的联系邮箱字段"}
 	}
+	if err := validateIntakeProcessingMode(processingMode); err != nil {
+		return err
+	}
+	if processingMode == intakeCollectOnly {
+		return nil
+	}
 	if isAutoAcceptWorkflow(workflowRaw) {
 		return &formValidationError{"auto_accept_unavailable", "自动确认执行尚未开放，请改用人工决定后再发布"}
 	}
-	if err := validateSingleRoundReviewWorkflow(workflowRaw); err != nil {
-		return err
-	}
-	return nil
+	return validateSingleRoundReviewWorkflow(workflowRaw)
 }
 
-func publicSubmissionUnavailableReason(policyRaw, formRaw, workflowRaw json.RawMessage) string {
+func publicSubmissionUnavailableReason(processingMode string, policyRaw, formRaw, workflowRaw json.RawMessage) string {
 	var policy map[string]any
 	if json.Unmarshal(policyRaw, &policy) != nil {
 		return "invalid_availability_policy"
@@ -663,6 +667,16 @@ func publicSubmissionUnavailableReason(policyRaw, formRaw, workflowRaw json.RawM
 	}
 	if limit, ok := policy["per_actor_limit"].(float64); ok && limit > 0 && !hasRequiredContactEmailField(fieldsRaw) {
 		return "contact_email_required_for_actor_limit"
+	}
+	if modeErr := validateIntakeProcessingMode(processingMode); modeErr != nil {
+		var formErr *formValidationError
+		if errors.As(modeErr, &formErr) {
+			return formErr.Code
+		}
+		return "invalid_processing_mode"
+	}
+	if processingMode == intakeCollectOnly {
+		return ""
 	}
 	if isAutoAcceptWorkflow(workflowRaw) {
 		return "auto_accept_unavailable"

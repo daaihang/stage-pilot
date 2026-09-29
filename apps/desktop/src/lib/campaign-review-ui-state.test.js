@@ -43,3 +43,16 @@ test("prior decisions can be corrected; only unsupported or absent runs need leg
   assert.equal(getEntryReviewDecisionState({ canDecide: true, entryStatus: "submitted", reviewStatus: null }).legacyRequired, true);
   assert.equal(getEntryReviewDecisionState({ canDecide: true, entryStatus: "submitted", reviewStatus: "collecting_feedback" }).legacyRequired, false);
 });
+
+test("collect-only entries never expose decisions or legacy override", () => {
+  const state = getEntryReviewDecisionState({
+    canDecide: true,
+    entryStatus: "submitted",
+    reviewStatus: null,
+    hasDecision: false,
+    processingMode: "COLLECT_ONLY",
+  });
+  assert.equal(state.canSubmitDecision, false);
+  assert.equal(state.legacyRequired, false);
+  assert.equal(state.quorumPending, false);
+});

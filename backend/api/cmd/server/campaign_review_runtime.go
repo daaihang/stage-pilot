@@ -106,7 +106,7 @@ func validateSingleRoundReviewWorkflowWithUnboundReviewers(raw json.RawMessage, 
 	if err != nil {
 		return err
 	}
-	if !executableIntakeProcessingMode(definition.Mode) {
+	if definition.Mode != intakeSingleRoundDecision {
 		return reviewRecipeError("single_round_manual_required", "当前仅支持单轮人工审核，请改用 MANUAL_DECISION")
 	}
 	if len(definition.Rounds) != 1 {
@@ -712,6 +712,15 @@ func (app *application) assignEntryReviewTask(w http.ResponseWriter, r *http.Req
 		return
 	}
 	defer tx.Rollback(r.Context())
+	var processingMode string
+	if err := tx.QueryRow(r.Context(), `SELECT processing_mode FROM campaign_revisions WHERE workspace_id=$1 AND id=$2`, access.WorkspaceID, access.CampaignRevisionID).Scan(&processingMode); err != nil {
+		serverError(w, err)
+		return
+	}
+	if processingMode == intakeCollectOnly {
+		errorJSON(w, http.StatusConflict, "review_not_applicable", "该提交采用仅收集方式，不存在审核任务或审核人分配")
+		return
+	}
 	var runID, runStatus, mode string
 	var required int
 	if err := tx.QueryRow(r.Context(), `SELECT id,status,completion_mode,required_count FROM entry_review_runs WHERE workspace_id=$1 AND entry_id=$2 FOR UPDATE`, access.WorkspaceID, entryID).Scan(&runID, &runStatus, &mode, &required); err != nil {

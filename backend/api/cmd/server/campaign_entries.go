@@ -81,6 +81,7 @@ type entryInboxItem struct {
 	ID                 string     `json:"id"`
 	Status             string     `json:"status"`
 	CampaignRevisionID string     `json:"campaign_revision_id"`
+	ProcessingMode     string     `json:"processing_mode"`
 	SubmittedAt        *time.Time `json:"submitted_at,omitempty"`
 	LastActivityAt     time.Time  `json:"last_activity_at"`
 	ContactEmail       string     `json:"contact_email,omitempty"`
@@ -180,6 +181,7 @@ type entryResponse struct {
 	ProductionID       string     `json:"production_id"`
 	CampaignID         string     `json:"campaign_id"`
 	CampaignRevisionID string     `json:"campaign_revision_id"`
+	ProcessingMode     string     `json:"processing_mode"`
 	Status             string     `json:"status"`
 	ContactEmail       string     `json:"contact_email,omitempty"`
 	SubmittedAt        *time.Time `json:"submitted_at,omitempty"`
@@ -333,11 +335,12 @@ func (app *application) listCampaignEntries(w http.ResponseWriter, r *http.Reque
 		arg += 2
 	}
 	whereSQL := strings.Join(where, " AND ")
-	query := `SELECT e.id,e.status,e.campaign_revision_id,e.submitted_at,e.last_activity_at,e.contact_email,
+	query := `SELECT e.id,e.status,e.campaign_revision_id,COALESCE(cr.processing_mode,'MANUAL_DECISION'),e.submitted_at,e.last_activity_at,e.contact_email,
 		(e.anonymized_at IS NOT NULL), (e.status='needs_changes'), (e.status='conversion_failed'),
 		COALESCE(latest.revision_no,0), state.read_at IS NOT NULL, state.starred_at IS NOT NULL,
 		COALESCE(e.submitted_at,e.created_at) AS sort_at
 		FROM entries e
+		LEFT JOIN campaign_revisions cr ON cr.workspace_id=e.workspace_id AND cr.id=e.campaign_revision_id
 		LEFT JOIN entry_inbox_user_states state ON state.workspace_id=e.workspace_id AND state.entry_id=e.id AND state.user_id=$` + strconv.Itoa(arg) + `
 		LEFT JOIN LATERAL (SELECT er.revision_no,er.answers FROM entry_revisions er WHERE er.workspace_id=e.workspace_id AND er.entry_id=e.id ORDER BY er.revision_no DESC LIMIT 1) latest ON TRUE
 		WHERE ` + whereSQL + ` ORDER BY sort_at DESC,e.id DESC LIMIT $` + strconv.Itoa(arg+1)
@@ -356,7 +359,7 @@ func (app *application) listCampaignEntries(w http.ResponseWriter, r *http.Reque
 		var item entryInboxItem
 		var anonymized, needsChanges, conversionFailed, isRead, isStarred bool
 		var sortAt time.Time
-		if err := rows.Scan(&item.ID, &item.Status, &item.CampaignRevisionID, &item.SubmittedAt, &item.LastActivityAt, &item.ContactEmail, &anonymized, &needsChanges, &conversionFailed, &item.CurrentRevisionNo, &isRead, &isStarred, &sortAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Status, &item.CampaignRevisionID, &item.ProcessingMode, &item.SubmittedAt, &item.LastActivityAt, &item.ContactEmail, &anonymized, &needsChanges, &conversionFailed, &item.CurrentRevisionNo, &isRead, &isStarred, &sortAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -476,8 +479,6 @@ func (app *application) getEntry(w http.ResponseWriter, r *http.Request) {
 
 func (app *application) loadEntryResponseByID(ctx context.Context, access entryAccess, entryID, userID string) (entryDetailResponse, error) {
 	var response entryDetailResponse
-	response.CanDecide = access.Access.Permissions[campaignDecide]
-	response.CanManageReview = access.Access.Permissions[campaignManage]
 	var entry entryResponse
 	var deletedAt *time.Time
 	err := app.db.QueryRow(ctx, `SELECT e.id,e.workspace_id,e.production_id,e.campaign_id,e.campaign_revision_id,e.status,e.contact_email,e.submitted_at,e.last_activity_at,e.anonymized_at,e.created_at,e.updated_at,COALESCE(latest.revision_no,0),e.deleted_at FROM entries e LEFT JOIN LATERAL (SELECT er.revision_no FROM entry_revisions er WHERE er.workspace_id=e.workspace_id AND er.entry_id=e.id ORDER BY er.revision_no DESC LIMIT 1) latest ON TRUE WHERE e.id=$1 AND e.workspace_id=$2`, entryID, access.WorkspaceID).Scan(&entry.ID, &entry.WorkspaceID, &entry.ProductionID, &entry.CampaignID, &entry.CampaignRevisionID, &entry.Status, &entry.ContactEmail, &entry.SubmittedAt, &entry.LastActivityAt, &entry.AnonymizedAt, &entry.CreatedAt, &entry.UpdatedAt, &entry.CurrentRevisionNo, &deletedAt)
@@ -500,6 +501,10 @@ func (app *application) loadEntryResponseByID(ctx context.Context, access entryA
 	if err != nil {
 		return response, err
 	}
+	entry.ProcessingMode = revision.ProcessingMode
+	response.CanDecide = access.Access.Permissions[campaignDecide] && entry.ProcessingMode != intakeCollectOnly
+	response.CanManageReview = access.Access.Permissions[campaignManage] && entry.ProcessingMode != intakeCollectOnly
+	response.Entry = entry
 	response.FormVersion = revision.FormVersion
 	var current entryRevisionResponse
 	err = app.db.QueryRow(ctx, `SELECT id,revision_no,schema_version,answers,source,created_at FROM entry_revisions WHERE workspace_id=$1 AND entry_id=$2 ORDER BY revision_no DESC LIMIT 1`, access.WorkspaceID, entryID).Scan(&current.ID, &current.RevisionNo, &current.SchemaVersion, &current.Answers, &current.Source, &current.CreatedAt)
@@ -649,12 +654,17 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 	var currentStatus string
 	var deletedAt *time.Time
 	var currentDecisionID *string
-	if err := tx.QueryRow(r.Context(), `SELECT status,deleted_at,current_decision_id FROM entries WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, entryID, access.WorkspaceID).Scan(&currentStatus, &deletedAt, &currentDecisionID); err != nil {
+	var processingMode string
+	if err := tx.QueryRow(r.Context(), `SELECT e.status,e.deleted_at,e.current_decision_id,cr.processing_mode FROM entries e JOIN campaign_revisions cr ON cr.workspace_id=e.workspace_id AND cr.id=e.campaign_revision_id WHERE e.id=$1 AND e.workspace_id=$2 FOR UPDATE OF e`, entryID, access.WorkspaceID).Scan(&currentStatus, &deletedAt, &currentDecisionID, &processingMode); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			errorJSON(w, http.StatusNotFound, "entry_not_found", "提交记录不存在")
 		} else {
 			serverError(w, err)
 		}
+		return
+	}
+	if processingMode == intakeCollectOnly {
+		errorJSON(w, http.StatusConflict, "decision_not_applicable", "该提交采用仅收集方式，不支持人工决定或遗留覆盖")
 		return
 	}
 	if deletedAt != nil || (!canChangeEntryDecision(currentStatus) && !(currentStatus == "needs_changes" && input.LegacyOverride)) {

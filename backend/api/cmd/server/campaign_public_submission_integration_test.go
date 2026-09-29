@@ -188,6 +188,103 @@ func TestPublicCampaignRevisionConflictAndReplay(t *testing.T) {
 	}
 }
 
+func TestCollectOnlySubmissionSkipsReviewAndDecisionPaths(t *testing.T) {
+	app := newIntegrationApp(t)
+	fixture := createPublicCampaignFixture(t, app, `{"submission_limit":3,"capacity":1,"waitlist_enabled":false}`, `{"mode":"AUTO_ACCEPT"}`)
+	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_revisions SET processing_mode='COLLECT_ONLY' WHERE id=$1 AND workspace_id=$2`, fixture.revisionID, fixture.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	// A full acceptance capacity must not stop a collection-only form from
+	// receiving submissions.
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status,contact_email,submitted_at,last_activity_at) VALUES($1,$2,$3,$4,$5,'accepted','already-accepted@example.test',NOW(),NOW())`, newID(), fixture.workspaceID, fixture.productionID, fixture.campaignID, fixture.revisionID); err != nil {
+		t.Fatal(err)
+	}
+	publicGet := httptest.NewRecorder()
+	app.routes().ServeHTTP(publicGet, httptest.NewRequest(http.MethodGet, "/v1/public/campaign-shares/"+fixture.shareToken, nil))
+	if publicGet.Code != http.StatusOK || !bytes.Contains(publicGet.Body.Bytes(), []byte(`"accepting":true`)) {
+		t.Fatalf("collect-only GET should accept at full decision capacity: %d %s", publicGet.Code, publicGet.Body.String())
+	}
+
+	key := "collect-only-submit"
+	created := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "collect@example.test", key, "198.51.100.40")
+	if created.Code != http.StatusCreated || !bytes.Contains(created.Body.Bytes(), []byte(`"status":"submitted"`)) {
+		t.Fatalf("collect-only submission = %d: %s", created.Code, created.Body.String())
+	}
+	replayed := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "collect@example.test", key, "198.51.100.41")
+	if replayed.Code != http.StatusCreated || replayed.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("collect-only idempotency replay = %d, replay=%q: %s", replayed.Code, replayed.Header().Get("Idempotent-Replayed"), replayed.Body.String())
+	}
+	var entryID string
+	if err := app.db.QueryRow(t.Context(), `SELECT entry_id FROM campaign_public_submission_idempotency WHERE campaign_id=$1 AND entry_id IS NOT NULL ORDER BY completed_at DESC LIMIT 1`, fixture.campaignID).Scan(&entryID); err != nil {
+		t.Fatal(err)
+	}
+	var status, mode string
+	var runs, decisions, materializations int
+	if err := app.db.QueryRow(t.Context(), `SELECT e.status,cr.processing_mode,(SELECT COUNT(*)::int FROM entry_review_runs r WHERE r.workspace_id=e.workspace_id AND r.entry_id=e.id),(SELECT COUNT(*)::int FROM decisions d WHERE d.workspace_id=e.workspace_id AND d.entry_id=e.id),(SELECT COUNT(*)::int FROM entry_materializations m WHERE m.workspace_id=e.workspace_id AND m.entry_id=e.id) FROM entries e JOIN campaign_revisions cr ON cr.workspace_id=e.workspace_id AND cr.id=e.campaign_revision_id WHERE e.id=$1`, entryID).Scan(&status, &mode, &runs, &decisions, &materializations); err != nil {
+		t.Fatal(err)
+	}
+	if status != "submitted" || mode != intakeCollectOnly || runs != 0 || decisions != 0 || materializations != 0 {
+		t.Fatalf("unexpected collect-only Entry runtime: status=%s mode=%s runs=%d decisions=%d materializations=%d", status, mode, runs, decisions, materializations)
+	}
+
+	detail := authedRequest(t, app, fixture.ownerToken, http.MethodGet, "/v1/entries/"+entryID, nil)
+	var detailBody struct {
+		Entry struct {
+			ProcessingMode string `json:"processing_mode"`
+		} `json:"entry"`
+		CanDecide       bool `json:"can_decide"`
+		CanManageReview bool `json:"can_manage_review"`
+	}
+	if detail.Code != http.StatusOK || json.Unmarshal(detail.Body.Bytes(), &detailBody) != nil || detailBody.Entry.ProcessingMode != intakeCollectOnly || detailBody.CanDecide || detailBody.CanManageReview {
+		t.Fatalf("collect-only Entry detail = %d: %s", detail.Code, detail.Body.String())
+	}
+	listing := authedRequest(t, app, fixture.ownerToken, http.MethodGet, "/v1/campaigns/"+fixture.campaignID+"/entries", nil)
+	var listBody struct {
+		Items []struct {
+			ProcessingMode string `json:"processing_mode"`
+		} `json:"items"`
+	}
+	if listing.Code != http.StatusOK || json.Unmarshal(listing.Body.Bytes(), &listBody) != nil {
+		t.Fatalf("collect-only Entry list = %d: %s", listing.Code, listing.Body.String())
+	}
+	foundCollection := false
+	for _, item := range listBody.Items {
+		if item.ProcessingMode == intakeCollectOnly {
+			foundCollection = true
+		}
+	}
+	if !foundCollection {
+		t.Fatalf("Entry list did not expose its pinned processing mode: %s", listing.Body.String())
+	}
+
+	for _, body := range []map[string]any{
+		{"type": "accept", "reason": "legacy attempt"},
+		{"type": "accept", "reason": "legacy attempt", "legacy_override": true},
+	} {
+		response := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", body)
+		if response.Code != http.StatusConflict || publicResponseErrorCode(t, response) != "decision_not_applicable" {
+			t.Fatalf("collect-only decision = %d: %s", response.Code, response.Body.String())
+		}
+	}
+	assignment := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/review-tasks", map[string]any{"reviewer_id": fixture.ownerID, "reason": "不应适用于仅收集"})
+	if assignment.Code != http.StatusConflict || publicResponseErrorCode(t, assignment) != "review_not_applicable" {
+		t.Fatalf("collect-only review assignment = %d: %s", assignment.Code, assignment.Body.String())
+	}
+
+	// A later publication cannot change the processing semantics pinned to this
+	// Entry. The old successful public request still replays before revision
+	// conflict handling, as it did before collection-only was added.
+	publishNextPublicRevision(t, app, fixture, `{}`, integrationManualReviewWorkflow)
+	entryDetailAfterPublish := authedRequest(t, app, fixture.ownerToken, http.MethodGet, "/v1/entries/"+entryID, nil)
+	if !bytes.Contains(entryDetailAfterPublish.Body.Bytes(), []byte(`"processing_mode":"COLLECT_ONLY"`)) {
+		t.Fatalf("new campaign Revision rewrote the Entry's processing mode: %s", entryDetailAfterPublish.Body.String())
+	}
+	oldReplay := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "collect@example.test", key, "198.51.100.42")
+	if oldReplay.Code != http.StatusCreated || oldReplay.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("old successful collect-only request should replay after publication: %d %s", oldReplay.Code, oldReplay.Body.String())
+	}
+}
+
 func TestPublicCampaignSubmissionLimitSerializesConcurrentRequests(t *testing.T) {
 	app := newIntegrationApp(t)
 	fixture := createPublicCampaignFixture(t, app, `{"submission_limit":2}`, integrationManualReviewWorkflow)

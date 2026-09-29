@@ -55,23 +55,29 @@ func TestPublicSubmissionPolicyCompatibility(t *testing.T) {
 	requiredEmail := json.RawMessage(`[{"id":"email","semantic_key":"CONTACT_EMAIL","required":true}]`)
 	optionalEmail := json.RawMessage(`[{"id":"email","semantic_key":"contact_email","required":false}]`)
 	workflow := json.RawMessage(`{"schema_version":1,"mode":"MANUAL_DECISION","rounds":[{"key":"screen","name":"初审","execution":"parallel","reviewer_policy":{"source":"explicit_members","member_ids":["member"],"role_keys":[]},"completion":{"mode":"all"},"feedback":{"kind":"binary"}}],"request_changes":{"enabled":false,"target":"same_round"},"final_decision":"manual"}`)
-	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{"per_actor_limit":1}`), requiredEmail, workflow); err != nil {
+	if err := validatePublicSubmissionCompatibility(intakeSingleRoundDecision, json.RawMessage(`{"per_actor_limit":1}`), requiredEmail, workflow); err != nil {
 		t.Fatalf("required email should satisfy actor limit: %v", err)
 	}
-	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{"per_actor_limit":1}`), optionalEmail, nil); err == nil || err.(*formValidationError).Code != "contact_email_required_for_actor_limit" {
+	if err := validatePublicSubmissionCompatibility(intakeSingleRoundDecision, json.RawMessage(`{"per_actor_limit":1}`), optionalEmail, nil); err == nil || err.(*formValidationError).Code != "contact_email_required_for_actor_limit" {
 		t.Fatalf("optional email should fail actor limit compatibility, got %v", err)
 	}
-	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{"per_actor_limit":0}`), optionalEmail, workflow); err != nil {
+	if err := validatePublicSubmissionCompatibility(intakeSingleRoundDecision, json.RawMessage(`{"per_actor_limit":0}`), optionalEmail, workflow); err != nil {
 		t.Fatalf("zero actor limit should be unlimited: %v", err)
 	}
-	if err := validatePublicSubmissionCompatibility(json.RawMessage(`{}`), requiredEmail, json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); err == nil || err.(*formValidationError).Code != "auto_accept_unavailable" {
+	if err := validatePublicSubmissionCompatibility(intakeSingleRoundDecision, json.RawMessage(`{}`), requiredEmail, json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); err == nil || err.(*formValidationError).Code != "auto_accept_unavailable" {
 		t.Fatalf("auto accept should be blocked, got %v", err)
 	}
-	if reason := publicSubmissionUnavailableReason(json.RawMessage(`{"close_behavior":"accept_to_waitlist"}`), json.RawMessage(`{"fields":[{"id":"email","semantic_key":"CONTACT_EMAIL","required":true}]}`), nil); reason != "close_behavior_unsupported" {
+	if err := validatePublicSubmissionCompatibility(intakeCollectOnly, json.RawMessage(`{"capacity":1,"waitlist_limit":1}`), optionalEmail, json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); err != nil {
+		t.Fatalf("collection-only should not require review workflow or contact email when actor limit is off: %v", err)
+	}
+	if reason := publicSubmissionUnavailableReason(intakeSingleRoundDecision, json.RawMessage(`{"close_behavior":"accept_to_waitlist"}`), json.RawMessage(`{"fields":[{"id":"email","semantic_key":"CONTACT_EMAIL","required":true}]}`), nil); reason != "close_behavior_unsupported" {
 		t.Fatalf("legacy close behavior reason = %q", reason)
 	}
-	if reason := publicSubmissionUnavailableReason(json.RawMessage(`{"per_actor_limit":1}`), json.RawMessage(`{"fields":[{"id":"email","semantic_key":"contact_email","required":true}]}`), workflow); reason != "" {
+	if reason := publicSubmissionUnavailableReason(intakeSingleRoundDecision, json.RawMessage(`{"per_actor_limit":1}`), json.RawMessage(`{"fields":[{"id":"email","semantic_key":"contact_email","required":true}]}`), workflow); reason != "" {
 		t.Fatalf("public form with required contact email should be available, reason=%q", reason)
+	}
+	if reason := publicSubmissionUnavailableReason(intakeCollectOnly, json.RawMessage(`{"capacity":1,"waitlist_enabled":false}`), json.RawMessage(`{"fields":[]}`), json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); reason != "" {
+		t.Fatalf("collection-only should ignore dormant review settings and decision capacity: reason=%q", reason)
 	}
 }
 

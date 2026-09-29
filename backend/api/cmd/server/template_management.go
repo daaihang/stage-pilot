@@ -76,6 +76,7 @@ func loadCampaignTemplateVersion(ctx context.Context, q templateManagementQuerye
 		FROM campaign_template_versions v JOIN campaign_templates t ON t.id=v.template_id
 		WHERE v.id=$1 AND v.template_id=$2`, versionID, templateID).Scan(&item.ID, &item.TemplateID, &item.WorkspaceID, &item.Version, &item.Status, &item.Definition, &item.ReviewRecipeVersionID, &item.CreatedBy, &item.CreatedAt, &item.PublishedAt)
 	if err == nil {
+		item.Definition = normalizeTemplateDefinitionSnapshot(item.Definition)
 		workspaceID := ""
 		if item.WorkspaceID != nil {
 			workspaceID = *item.WorkspaceID
@@ -86,6 +87,14 @@ func loadCampaignTemplateVersion(ctx context.Context, q templateManagementQuerye
 		item.ETag = templateVersionETag(item)
 	}
 	return item, err
+}
+
+func normalizeTemplateDefinitionSnapshot(raw json.RawMessage) json.RawMessage {
+	var definition templateDefinition
+	if err := json.Unmarshal(raw, &definition); err != nil {
+		return raw
+	}
+	return mustJSON(normalizeDefinition(definition))
 }
 
 func normalizeTemplateDefinition(raw json.RawMessage) (templateDefinition, json.RawMessage, error) {
@@ -143,8 +152,13 @@ func validateTemplateDefinition(definition templateDefinition, kind string) erro
 	if err := validateAvailabilityPolicyValue(definition.AvailabilityPolicy); err != nil {
 		return err
 	}
-	if _, _, err := parseReviewRecipeDefinition(definition.ReviewWorkflow, true); err != nil {
+	if err := validateIntakeProcessingMode(definition.ProcessingMode); err != nil {
 		return err
+	}
+	if definition.ProcessingMode == intakeSingleRoundDecision {
+		if _, _, err := parseReviewRecipeDefinition(definition.ReviewWorkflow, true); err != nil {
+			return err
+		}
 	}
 	return validateMaterializationPlanValue(definition.MaterializationPlan, kind)
 }
@@ -160,22 +174,32 @@ func validateCampaignTemplatePublication(ctx context.Context, queryer workspaceR
 	if err := validateMaterializationPlanValue(definition.MaterializationPlan, kind); err != nil {
 		issues = append(issues, issueFromValidationError(err, "/definition/materialization_plan"))
 	}
-	if normalized, err := reusableReviewWorkflow(definition.ReviewWorkflow); err != nil {
-		issues = append(issues, issueFromValidationError(err, "/definition/review_workflow"))
-	} else {
-		definition.ReviewWorkflow = normalized
-		if err := validateReusableSingleRoundReviewWorkflow(normalized); err != nil {
+	if err := validateIntakeProcessingMode(definition.ProcessingMode); err != nil {
+		issues = append(issues, issueFromValidationError(err, "/definition/processing_mode"))
+	} else if definition.ProcessingMode == intakeSingleRoundDecision {
+		if normalized, err := reusableReviewWorkflow(definition.ReviewWorkflow); err != nil {
 			issues = append(issues, issueFromValidationError(err, "/definition/review_workflow"))
+		} else {
+			definition.ReviewWorkflow = normalized
+			if err := validateReusableSingleRoundReviewWorkflow(normalized); err != nil {
+				issues = append(issues, issueFromValidationError(err, "/definition/review_workflow"))
+			}
+		}
+		if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
+			issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_source_required", Path: "/review_recipe_version_id", Message: "请为模板选择当前工作空间允许的审核方案来源"})
+		} else if err := validateWorkspaceReviewRecipeVersion(ctx, queryer, workspaceID, *recipeVersionID); err != nil {
+			var validationErr *reviewRecipeValidationError
+			if errors.As(err, &validationErr) {
+				issues = append(issues, issueFromValidationError(err, "/review_recipe_version_id"))
+			} else {
+				return nil, definition, err
+			}
 		}
 	}
-	if recipeVersionID == nil || strings.TrimSpace(*recipeVersionID) == "" {
-		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_source_required", Path: "/review_recipe_version_id", Message: "请为模板选择当前工作空间允许的审核方案来源"})
-	} else if err := validateWorkspaceReviewRecipeVersion(ctx, queryer, workspaceID, *recipeVersionID); err != nil {
-		var validationErr *reviewRecipeValidationError
-		if errors.As(err, &validationErr) {
-			issues = append(issues, issueFromValidationError(err, "/review_recipe_version_id"))
-		} else {
-			return nil, definition, err
+	if err := validatePublicSubmissionCompatibility(definition.ProcessingMode, definition.AvailabilityPolicy, definition.Form.Fields, definition.ReviewWorkflow); err != nil {
+		var validationErr *formValidationError
+		if errors.As(err, &validationErr) && validationErr.Code == "contact_email_required_for_actor_limit" {
+			issues = append(issues, issueFromValidationError(err, "/definition/availability_policy/per_actor_limit"))
 		}
 	}
 	return issues, definition, nil
@@ -276,10 +300,10 @@ func templateDefinitionFromRevision(ctx context.Context, q templateManagementQue
 	var kind, campaignID string
 	var form formDefinition
 	err := q.QueryRow(ctx, `SELECT c.kind,c.id,fv.schema_version,fv.blocks,fv.fields,fv.logic_rules,fv.presentation,fv.end_screen,
-		cr.availability_policy,cr.review_workflow,cr.materialization_plan
+		cr.processing_mode,cr.availability_policy,cr.review_workflow,cr.materialization_plan
 		FROM campaign_revisions cr JOIN campaigns c ON c.workspace_id=cr.workspace_id AND c.id=cr.campaign_id
 		JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id
-		WHERE cr.id=$1 AND cr.workspace_id=$2`, revisionID, workspaceID).Scan(&kind, &campaignID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen, &def.AvailabilityPolicy, &def.ReviewWorkflow, &def.MaterializationPlan)
+		WHERE cr.id=$1 AND cr.workspace_id=$2`, revisionID, workspaceID).Scan(&kind, &campaignID, &form.SchemaVersion, &form.Blocks, &form.Fields, &form.LogicRules, &form.Presentation, &form.EndScreen, &def.ProcessingMode, &def.AvailabilityPolicy, &def.ReviewWorkflow, &def.MaterializationPlan)
 	if err != nil {
 		return def, "", "", err
 	}
@@ -318,6 +342,7 @@ func (app *application) listCampaignTemplateVersions(w http.ResponseWriter, r *h
 			serverError(w, err)
 			return
 		}
+		item.Definition = normalizeTemplateDefinitionSnapshot(item.Definition)
 		workspaceID := ""
 		if item.WorkspaceID != nil {
 			workspaceID = *item.WorkspaceID
@@ -466,7 +491,7 @@ func (app *application) createWorkspaceCampaignTemplate(w http.ResponseWriter, r
 		return
 	}
 	def = normalizeDefinition(def)
-	if sourceRecipeVersionID == nil {
+	if sourceRecipeVersionID == nil && def.ProcessingMode == intakeSingleRoundDecision {
 		defaultRecipeVersionID, snapshot, resolveErr := resolveReviewRecipeSnapshot(r.Context(), tx, "", access.WorkspaceID)
 		if resolveErr != nil {
 			serverError(w, resolveErr)
@@ -480,18 +505,19 @@ func (app *application) createWorkspaceCampaignTemplate(w http.ResponseWriter, r
 	if copyingCampaignRevision {
 		def = portableTemplateDefinition(def)
 	}
-	// Template reviewers are portable roles, not Production member IDs. A
-	// Campaign copy additionally strips its concrete activity members.
-	var normalizedReview json.RawMessage
-	if copyingCampaignRevision {
-		normalizedReview, err = portableReviewWorkflow(def.ReviewWorkflow)
-	} else {
-		normalizedReview, err = reusableReviewWorkflow(def.ReviewWorkflow)
-	}
-	if err != nil {
-		writeReviewRecipeValidationError(w, err)
-		return
-	} else {
+	if def.ProcessingMode == intakeSingleRoundDecision {
+		// Template reviewers are portable roles, not Production member IDs. A
+		// Campaign copy additionally strips its concrete activity members.
+		var normalizedReview json.RawMessage
+		if copyingCampaignRevision {
+			normalizedReview, err = portableReviewWorkflow(def.ReviewWorkflow)
+		} else {
+			normalizedReview, err = reusableReviewWorkflow(def.ReviewWorkflow)
+		}
+		if err != nil {
+			writeReviewRecipeValidationError(w, err)
+			return
+		}
 		def.ReviewWorkflow = normalizedReview
 	}
 	if err := validateFormDefinitionDraftValue(def.Form); err != nil {
@@ -727,11 +753,13 @@ func (app *application) createCampaignTemplateVersion(w http.ResponseWriter, r *
 		def = templateDefinition{}
 	}
 	def = normalizeDefinition(def)
-	if normalized, err := reusableReviewWorkflow(def.ReviewWorkflow); err != nil {
-		writeReviewRecipeValidationError(w, err)
-		return
-	} else {
-		def.ReviewWorkflow = normalized
+	if def.ProcessingMode == intakeSingleRoundDecision {
+		if normalized, err := reusableReviewWorkflow(def.ReviewWorkflow); err != nil {
+			writeReviewRecipeValidationError(w, err)
+			return
+		} else {
+			def.ReviewWorkflow = normalized
+		}
 	}
 	if err := validateFormDefinitionDraftValue(def.Form); err != nil {
 		if !writeFormValidationError(w, err) {
@@ -739,7 +767,7 @@ func (app *application) createCampaignTemplateVersion(w http.ResponseWriter, r *
 		}
 		return
 	}
-	if recipeID != nil {
+	if def.ProcessingMode == intakeSingleRoundDecision && recipeID != nil {
 		var exists bool
 		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM review_recipe_versions rv JOIN review_recipe_templates rt ON rt.id=rv.template_id WHERE rv.id=$1 AND rv.published_at IS NOT NULL AND rt.archived_at IS NULL AND (rt.scope='system' OR rt.workspace_id=$2))`, *recipeID, workspaceID).Scan(&exists); err != nil || !exists {
 			errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_not_found", "审核方案版本不存在或无权使用")
@@ -820,11 +848,13 @@ func (app *application) updateCampaignTemplateVersion(w http.ResponseWriter, r *
 		}
 		return
 	}
-	if normalizedReview, e := reusableReviewWorkflow(def.ReviewWorkflow); e != nil {
-		writeReviewRecipeValidationError(w, e)
-		return
-	} else {
-		def.ReviewWorkflow = normalizedReview
+	if def.ProcessingMode == intakeSingleRoundDecision {
+		if normalizedReview, e := reusableReviewWorkflow(def.ReviewWorkflow); e != nil {
+			writeReviewRecipeValidationError(w, e)
+			return
+		} else {
+			def.ReviewWorkflow = normalizedReview
+		}
 		normalized = mustJSON(def)
 	}
 	recipeID := current.ReviewRecipeVersionID
@@ -834,7 +864,7 @@ func (app *application) updateCampaignTemplateVersion(w http.ResponseWriter, r *
 			recipeID = in.ReviewRecipeVersionID
 		}
 	}
-	if recipeID != nil {
+	if def.ProcessingMode == intakeSingleRoundDecision && recipeID != nil {
 		var exists bool
 		if err := app.db.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM review_recipe_versions rv JOIN review_recipe_templates rt ON rt.id=rv.template_id WHERE rv.id=$1 AND rv.published_at IS NOT NULL AND rt.archived_at IS NULL AND (rt.scope='system' OR rt.workspace_id=$2))`, *recipeID, workspaceID).Scan(&exists); err != nil || !exists {
 			errorJSON(w, http.StatusUnprocessableEntity, "review_recipe_not_found", "审核方案版本不存在或无权使用")
@@ -1068,11 +1098,13 @@ func (app *application) saveCampaignAsTemplate(w http.ResponseWriter, r *http.Re
 	def = portableTemplateDefinition(def)
 	var sourceRecipeVersionID *string
 	_ = tx.QueryRow(r.Context(), `SELECT review_recipe_version_id FROM campaign_revisions WHERE id=$1 AND workspace_id=$2`, revisionID, access.WorkspaceID).Scan(&sourceRecipeVersionID)
-	if normalized, e := portableReviewWorkflow(def.ReviewWorkflow); e != nil {
-		writeReviewRecipeValidationError(w, e)
-		return
-	} else {
-		def.ReviewWorkflow = normalized
+	if def.ProcessingMode == intakeSingleRoundDecision {
+		if normalized, e := portableReviewWorkflow(def.ReviewWorkflow); e != nil {
+			writeReviewRecipeValidationError(w, e)
+			return
+		} else {
+			def.ReviewWorkflow = normalized
+		}
 	}
 	templateID, versionID := newID(), newID()
 	if _, err := tx.Exec(r.Context(), `INSERT INTO campaign_templates(id,workspace_id,scope,kind,name,description,status,latest_version,source_campaign_id,source_campaign_revision_id,created_by) VALUES($1,$2,'workspace',$3,$4,$5,'draft',1,$6,$7,$8)`, templateID, access.WorkspaceID, kind, in.Name, strings.TrimSpace(in.Description), sourceCampaignID, revisionID, claims(r).Subject); err != nil {

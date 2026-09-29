@@ -24,6 +24,7 @@ function acceptingReasonText(reason) {
   if (reason === "submission_limit_reached") return "当前提交名额已满。";
   if (reason === "file_upload_unavailable") return "当前表单包含暂不支持的文件字段。";
   if (reason === "auto_accept_unavailable") return "此表单的自动确认审核流程暂不可用，请联系管理员。";
+  if (reason === "processing_mode_unavailable" || reason === "invalid_processing_mode") return "此表单的处理方式暂不可用，请联系管理员修正并重新发布。";
   if (reason === "contact_email_required_for_actor_limit") return "此表单的邮箱提交次数限制尚未正确配置，请联系管理员。";
   if (reason === "close_behavior_unsupported") return "此表单使用了暂不支持的截止后策略，请联系管理员。";
   return "当前暂不接受提交。";

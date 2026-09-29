@@ -22,8 +22,17 @@ export function canEditReviewFeedback({ canSubmit, busy }) {
   return Boolean(canSubmit && !busy);
 }
 
-export function getEntryReviewDecisionState({ canDecide, entryStatus, reviewStatus, hasDecision }) {
+export function getEntryReviewDecisionState({ canDecide, entryStatus, reviewStatus, hasDecision, processingMode }) {
   const entryDecidable = DECIDABLE_ENTRY_STATUSES.has(entryStatus);
+  if (processingMode === "COLLECT_ONLY") {
+    return {
+      entryDecidable,
+      runReady: false,
+      legacyRequired: false,
+      canSubmitDecision: false,
+      quorumPending: false,
+    };
+  }
   const runReady = reviewStatus === "ready_for_decision" || DECIDED_REVIEW_RUN_STATUSES.has(reviewStatus);
   const legacyRequired = !reviewStatus || reviewStatus === "blocked_unsupported";
   const canSubmitDecision = Boolean(canDecide && entryDecidable && (runReady || hasDecision || legacyRequired));

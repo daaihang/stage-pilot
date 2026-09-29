@@ -286,7 +286,8 @@ func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 	var revisionNo *int
 	var form json.RawMessage
 	var policy, reviewWorkflow json.RawMessage
-	err = app.db.QueryRow(r.Context(), `SELECT c.name,c.description,c.kind,c.status,c.production_id,p.name,p.timezone,p.planned_start_at,p.planned_end_at,c.published_revision_id,cr.revision_no, jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.availability_policy,cr.review_workflow FROM campaigns c JOIN productions p ON p.id=c.production_id AND p.workspace_id=c.workspace_id LEFT JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id LEFT JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE c.id=$1 AND c.workspace_id=$2 AND c.deleted_at IS NULL`, campaignID, workspaceID).Scan(&name, &description, &kind, &campaignStatus, &productionID, &productionName, &timezone, &plannedStart, &plannedEnd, &revisionID, &revisionNo, &form, &policy, &reviewWorkflow)
+	var processingMode string
+	err = app.db.QueryRow(r.Context(), `SELECT c.name,c.description,c.kind,c.status,c.production_id,p.name,p.timezone,p.planned_start_at,p.planned_end_at,c.published_revision_id,cr.revision_no, jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.processing_mode,cr.availability_policy,cr.review_workflow FROM campaigns c JOIN productions p ON p.id=c.production_id AND p.workspace_id=c.workspace_id LEFT JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id LEFT JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE c.id=$1 AND c.workspace_id=$2 AND c.deleted_at IS NULL`, campaignID, workspaceID).Scan(&name, &description, &kind, &campaignStatus, &productionID, &productionName, &timezone, &plannedStart, &plannedEnd, &revisionID, &revisionNo, &form, &processingMode, &policy, &reviewWorkflow)
 	if err != nil || revisionID == nil || campaignStatus == "archived" {
 		errorJSON(w, 404, "share_unavailable", "公开表单不可用")
 		return
@@ -338,7 +339,7 @@ func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if accepting {
-		if unavailable := publicSubmissionUnavailableReason(policy, form, reviewWorkflow); unavailable != "" {
+		if unavailable := publicSubmissionUnavailableReason(processingMode, policy, form, reviewWorkflow); unavailable != "" {
 			accepting = false
 			reason = unavailable
 		}
@@ -411,7 +412,8 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 	var schemaVersion, revisionNo int
 	var form json.RawMessage
 	var policy, reviewWorkflow json.RawMessage
-	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,p.timezone,c.published_revision_id,cr.revision_no,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.availability_policy,cr.review_workflow FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN productions p ON p.workspace_id=c.workspace_id AND p.id=c.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE OF sl,c`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &timezone, &revisionID, &revisionNo, &formVersionID, &schemaVersion, &form, &policy, &reviewWorkflow); err != nil {
+	var processingMode string
+	if err = tx.QueryRow(r.Context(), `SELECT sl.id,sl.workspace_id,sl.campaign_id,sl.production_id,c.status,p.timezone,c.published_revision_id,cr.revision_no,cr.form_version_id,fv.schema_version,jsonb_build_object('schema_version',fv.schema_version,'blocks',fv.blocks,'fields',fv.fields,'logic_rules',fv.logic_rules,'presentation',fv.presentation,'end_screen',fv.end_screen),cr.processing_mode,cr.availability_policy,cr.review_workflow FROM campaign_share_links sl JOIN campaigns c ON c.workspace_id=sl.workspace_id AND c.id=sl.campaign_id AND c.production_id=sl.production_id JOIN productions p ON p.workspace_id=c.workspace_id AND p.id=c.production_id JOIN campaign_revisions cr ON cr.workspace_id=c.workspace_id AND cr.id=c.published_revision_id JOIN form_versions fv ON fv.workspace_id=cr.workspace_id AND fv.id=cr.form_version_id WHERE sl.`+column+`=$1 AND sl.revoked_at IS NULL AND (sl.expires_at IS NULL OR sl.expires_at>NOW()) AND c.deleted_at IS NULL FOR UPDATE OF sl,c`, tokenHash(token)).Scan(&shareID, &workspaceID, &campaignID, &productionID, &campaignStatus, &timezone, &revisionID, &revisionNo, &formVersionID, &schemaVersion, &form, &processingMode, &policy, &reviewWorkflow); err != nil {
 		errorJSON(w, 404, "share_unavailable", "公开链接不可用")
 		return
 	}
@@ -470,7 +472,7 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		errorJSON(w, 422, "file_upload_unavailable", "当前公开表单暂不支持文件字段")
 		return
 	}
-	if unavailable := publicSubmissionUnavailableReason(policy, form, reviewWorkflow); unavailable != "" {
+	if unavailable := publicSubmissionUnavailableReason(processingMode, policy, form, reviewWorkflow); unavailable != "" {
 		message := "当前发布版本的公开收件策略暂不可用，请联系管理员修正并重新发布"
 		switch unavailable {
 		case "auto_accept_unavailable":
@@ -481,6 +483,8 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 			message = "该表单使用了暂不支持的截止后转候补策略，请联系管理员修正并重新发布"
 		case "review_workflow_unsupported":
 			message = "该表单审核配置暂不支持公开收件，请联系管理员改为单轮人工审核并重新发布"
+		case "processing_mode_unavailable":
+			message = "该表单处理方式暂不可运行，请联系管理员修正并重新发布"
 		}
 		errorJSON(w, http.StatusConflict, unavailable, message)
 		return
@@ -524,7 +528,8 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	entryID, entryRevisionID := newID(), newID()
-	if _, err = tx.Exec(r.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status,contact_email,submitted_at,last_activity_at) VALUES($1,$2,$3,$4,$5,'in_review',$6,NOW(),NOW())`, entryID, workspaceID, productionID, campaignID, revisionID, contact); err != nil {
+	contract := intakeProcessingContracts[processingMode]
+	if _, err = tx.Exec(r.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status,contact_email,submitted_at,last_activity_at) VALUES($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())`, entryID, workspaceID, productionID, campaignID, revisionID, contract.EntryStatus, contact); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -532,9 +537,11 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 		serverError(w, err)
 		return
 	}
-	if err = createEntryReviewRun(r.Context(), tx, workspaceID, productionID, revisionID, entryID, entryRevisionID, reviewWorkflow); err != nil {
-		serverError(w, err)
-		return
+	if contract.CreatesReviewRun {
+		if err = createEntryReviewRun(r.Context(), tx, workspaceID, productionID, revisionID, entryID, entryRevisionID, reviewWorkflow); err != nil {
+			serverError(w, err)
+			return
+		}
 	}
 	response := map[string]any{"status": "submitted", "submitted_at": now}
 	responseBytes, _ := json.Marshal(response)

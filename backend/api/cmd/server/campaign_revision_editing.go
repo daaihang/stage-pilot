@@ -29,6 +29,7 @@ func revisionETag(item campaignRevisionItem) string {
 		"revision_no":           item.RevisionNo,
 		"status":                item.Status,
 		"form_version_id":       item.FormVersionID,
+		"processing_mode":       item.ProcessingMode,
 		"review_recipe_version": item.ReviewRecipeVersionID,
 		"availability_policy":   canonical(item.AvailabilityPolicy),
 		"review_workflow":       canonical(item.ReviewWorkflow),
@@ -156,6 +157,13 @@ func (app *application) updateCampaignRevision(w http.ResponseWriter, r *http.Re
 		}
 	}
 	availability, review, materialization := current.AvailabilityPolicy, current.ReviewWorkflow, current.MaterializationPlan
+	processingMode := current.ProcessingMode
+	if value, exists := patch["processing_mode"]; exists {
+		if err := json.Unmarshal(value, &processingMode); err != nil || !knownIntakeProcessingMode(processingMode) {
+			errorJSON(w, http.StatusUnprocessableEntity, "invalid_processing_mode", "表单处理方式无效")
+			return
+		}
+	}
 	if value, exists := patch["availability_policy"]; exists {
 		if !validJSONType(value, "object") {
 			errorJSON(w, http.StatusUnprocessableEntity, "invalid_policy", "availability_policy 必须是 JSON 对象")
@@ -185,7 +193,7 @@ func (app *application) updateCampaignRevision(w http.ResponseWriter, r *http.Re
 			requested = &id
 		}
 		recipeID = requested
-		if requested != nil {
+		if requested != nil && processingMode == intakeSingleRoundDecision {
 			_, snapshot, err := resolveReviewRecipeSnapshot(r.Context(), tx, *requested, access.WorkspaceID)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
@@ -207,7 +215,8 @@ func (app *application) updateCampaignRevision(w http.ResponseWriter, r *http.Re
 		}
 		review = value
 	}
-	if _, exists := patch["review_workflow"]; exists || recipeChanged {
+	_, workflowPatched := patch["review_workflow"]
+	if processingMode == intakeSingleRoundDecision && (workflowPatched || recipeChanged) {
 		_, normalized, err := parseReviewRecipeDefinition(review, true)
 		if err != nil {
 			writeReviewRecipeValidationError(w, err)
@@ -226,7 +235,7 @@ func (app *application) updateCampaignRevision(w http.ResponseWriter, r *http.Re
 		serverError(w, err)
 		return
 	}
-	if _, err := tx.Exec(r.Context(), `UPDATE campaign_revisions SET review_recipe_version_id=$1,availability_policy=$2,review_workflow=$3,materialization_plan=$4,change_note=$5 WHERE id=$6 AND workspace_id=$7 AND campaign_id=$8`, recipeID, availability, review, materialization, changeNote, revisionID, access.WorkspaceID, campaignID); err != nil {
+	if _, err := tx.Exec(r.Context(), `UPDATE campaign_revisions SET processing_mode=$1,review_recipe_version_id=$2,availability_policy=$3,review_workflow=$4,materialization_plan=$5,change_note=$6 WHERE id=$7 AND workspace_id=$8 AND campaign_id=$9`, processingMode, recipeID, availability, review, materialization, changeNote, revisionID, access.WorkspaceID, campaignID); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -302,15 +311,19 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 		return
 	}
 	issues := make([]revisionValidationIssue, 0, 8)
-	if revision.ReviewRecipeVersionID == nil || strings.TrimSpace(*revision.ReviewRecipeVersionID) == "" {
-		issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_source_required", Path: "/review_recipe_version_id", Message: "请选择已发布的单轮审核方案来源"})
-	} else if err := validateWorkspaceReviewRecipeVersion(r.Context(), app.db, access.WorkspaceID, *revision.ReviewRecipeVersionID); err != nil {
-		var validationErr *reviewRecipeValidationError
-		if errors.As(err, &validationErr) {
-			issues = append(issues, revisionValidationIssue{Severity: "error", Code: validationErr.Code, Path: "/review_recipe_version_id", Message: validationErr.Message})
-		} else {
-			serverError(w, err)
-			return
+	if err := validateIntakeProcessingMode(revision.ProcessingMode); err != nil {
+		issues = append(issues, issueFromValidationError(err, "/processing_mode"))
+	} else if revision.ProcessingMode == intakeSingleRoundDecision {
+		if revision.ReviewRecipeVersionID == nil || strings.TrimSpace(*revision.ReviewRecipeVersionID) == "" {
+			issues = append(issues, revisionValidationIssue{Severity: "error", Code: "review_recipe_source_required", Path: "/review_recipe_version_id", Message: "请选择已发布的单轮人工审核方案来源"})
+		} else if err := validateWorkspaceReviewRecipeVersion(r.Context(), app.db, access.WorkspaceID, *revision.ReviewRecipeVersionID); err != nil {
+			var validationErr *reviewRecipeValidationError
+			if errors.As(err, &validationErr) {
+				issues = append(issues, revisionValidationIssue{Severity: "error", Code: validationErr.Code, Path: "/review_recipe_version_id", Message: validationErr.Message})
+			} else {
+				serverError(w, err)
+				return
+			}
 		}
 	}
 	if revision.FormVersion == nil {
@@ -325,7 +338,7 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 		issues = append(issues, issueFromValidationError(err, "/availability_policy"))
 	}
 	if revision.FormVersion != nil {
-		if err := validatePublicSubmissionCompatibility(revision.AvailabilityPolicy, revision.FormVersion.Fields, revision.ReviewWorkflow); err != nil {
+		if err := validatePublicSubmissionCompatibility(revision.ProcessingMode, revision.AvailabilityPolicy, revision.FormVersion.Fields, revision.ReviewWorkflow); err != nil {
 			path := "/review_workflow"
 			var formErr *formValidationError
 			if errors.As(err, &formErr) && formErr.Code == "contact_email_required_for_actor_limit" {
@@ -340,13 +353,15 @@ func (app *application) validateCampaignRevision(w http.ResponseWriter, r *http.
 			issues = append(issues, issueFromValidationError(err, "/materialization_plan"))
 		}
 	}
-	parsed, _, recipeErr := parseReviewRecipeDefinition(revision.ReviewWorkflow, false)
-	if recipeErr != nil {
-		issues = append(issues, issueFromValidationError(recipeErr, "/review_workflow"))
-	} else if err := validateReviewRecipeReferences(r.Context(), app.db, parsed, access.WorkspaceID, access.ProductionID, true); err != nil {
-		issues = append(issues, issueFromValidationError(err, "/review_workflow"))
-	} else if err := validateP1ReviewerThreshold(r.Context(), app.db, access.WorkspaceID, access.ProductionID, parsed); err != nil {
-		issues = append(issues, issueFromValidationError(err, "/review_workflow"))
+	if revision.ProcessingMode == intakeSingleRoundDecision {
+		parsed, _, recipeErr := parseReviewRecipeDefinition(revision.ReviewWorkflow, false)
+		if recipeErr != nil {
+			issues = append(issues, issueFromValidationError(recipeErr, "/review_workflow"))
+		} else if err := validateReviewRecipeReferences(r.Context(), app.db, parsed, access.WorkspaceID, access.ProductionID, true); err != nil {
+			issues = append(issues, issueFromValidationError(err, "/review_workflow"))
+		} else if err := validateP1ReviewerThreshold(r.Context(), app.db, access.WorkspaceID, access.ProductionID, parsed); err != nil {
+			issues = append(issues, issueFromValidationError(err, "/review_workflow"))
+		}
 	}
 	warnings := 0
 	if revision.FormVersion != nil {

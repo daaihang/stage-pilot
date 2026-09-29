@@ -1,8 +1,9 @@
 package main
 
-// Processing modes describe the outcome of a new public submission. Only the
-// single-round manual mode has a runtime in P1; these other identifiers are
-// deliberately not accepted by the publisher or exposed as catalog choices.
+import "encoding/json"
+
+// Processing modes describe what happens after a public submission. Only
+// collection-only and the single-round manual review mode currently execute.
 const (
 	intakeCollectOnly          = "COLLECT_ONLY"
 	intakeDirectManualDecision = "DIRECT_MANUAL_DECISION"
@@ -21,7 +22,7 @@ type intakeProcessingContract struct {
 }
 
 var intakeProcessingContracts = map[string]intakeProcessingContract{
-	intakeCollectOnly:          {EntryStatus: "submitted", CapacityCheck: "none"},
+	intakeCollectOnly:          {EntryStatus: "submitted", CapacityCheck: "none", Executable: true},
 	intakeDirectManualDecision: {EntryStatus: "submitted", DecisionPermission: campaignDecide, CapacityCheck: "decision"},
 	intakeSingleRoundDecision:  {EntryStatus: "in_review", ReviewPermission: campaignReview, DecisionPermission: campaignDecide, CapacityCheck: "decision", CreatesReviewRun: true, Executable: true},
 	intakeAutoAccept:           {EntryStatus: "accepted", DecisionPermission: campaignDecide, CapacityCheck: "submit", CreatesDecision: true},
@@ -30,4 +31,36 @@ var intakeProcessingContracts = map[string]intakeProcessingContract{
 func executableIntakeProcessingMode(mode string) bool {
 	contract, exists := intakeProcessingContracts[mode]
 	return exists && contract.Executable
+}
+
+func knownIntakeProcessingMode(mode string) bool {
+	_, exists := intakeProcessingContracts[mode]
+	return exists
+}
+
+func inferIntakeProcessingMode(workflowRaw json.RawMessage) string {
+	var workflow struct {
+		Mode string `json:"mode"`
+	}
+	if len(workflowRaw) > 0 && json.Unmarshal(workflowRaw, &workflow) == nil && knownIntakeProcessingMode(workflow.Mode) {
+		return workflow.Mode
+	}
+	return intakeSingleRoundDecision
+}
+
+func normalizeIntakeProcessingMode(mode string, workflowRaw json.RawMessage) string {
+	if mode == "" {
+		return inferIntakeProcessingMode(workflowRaw)
+	}
+	return mode
+}
+
+func validateIntakeProcessingMode(mode string) error {
+	if !knownIntakeProcessingMode(mode) {
+		return &formValidationError{"invalid_processing_mode", "表单处理方式无效"}
+	}
+	if !executableIntakeProcessingMode(mode) {
+		return &formValidationError{"processing_mode_unavailable", "该表单处理方式暂未开放，请选择仅收集或单轮人工审核"}
+	}
+	return nil
 }

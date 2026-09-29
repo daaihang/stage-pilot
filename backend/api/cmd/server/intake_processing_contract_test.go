@@ -10,7 +10,7 @@ func TestIntakeProcessingModeContracts(t *testing.T) {
 		mode string
 		want intakeProcessingContract
 	}{
-		{intakeCollectOnly, intakeProcessingContract{EntryStatus: "submitted", CapacityCheck: "none"}},
+		{intakeCollectOnly, intakeProcessingContract{EntryStatus: "submitted", CapacityCheck: "none", Executable: true}},
 		{intakeDirectManualDecision, intakeProcessingContract{EntryStatus: "submitted", DecisionPermission: campaignDecide, CapacityCheck: "decision"}},
 		{intakeSingleRoundDecision, intakeProcessingContract{EntryStatus: "in_review", ReviewPermission: campaignReview, DecisionPermission: campaignDecide, CapacityCheck: "decision", CreatesReviewRun: true, Executable: true}},
 		{intakeAutoAccept, intakeProcessingContract{EntryStatus: "accepted", DecisionPermission: campaignDecide, CapacityCheck: "submit", CreatesDecision: true}},
@@ -31,22 +31,49 @@ func TestIntakeProcessingModeContracts(t *testing.T) {
 	}
 }
 
-func TestFutureIntakeModesFailClosedAtPublishAndPublicGate(t *testing.T) {
-	for _, mode := range []string{intakeCollectOnly, intakeDirectManualDecision, intakeAutoAccept} {
+func TestOnlyCollectAndSingleRoundAreExecutable(t *testing.T) {
+	for _, mode := range []string{intakeCollectOnly, intakeSingleRoundDecision} {
+		if err := validateIntakeProcessingMode(mode); err != nil {
+			t.Fatalf("mode %q should be executable: %v", mode, err)
+		}
+	}
+	for _, mode := range []string{intakeDirectManualDecision, intakeAutoAccept, "UNKNOWN"} {
 		t.Run(mode, func(t *testing.T) {
-			workflow := map[string]any{"schema_version": 1, "mode": mode, "rounds": []any{}, "request_changes": map[string]any{"enabled": false, "target": "same_round"}}
-			if mode == intakeAutoAccept {
-				workflow["final_decision"] = "auto_accept"
-			} else {
-				workflow["final_decision"] = "manual"
-			}
-			raw, _ := json.Marshal(workflow)
-			if err := validateSingleRoundReviewWorkflow(raw); err == nil {
-				t.Fatal("unimplemented mode accepted by publisher")
-			}
-			if reason := publicSubmissionUnavailableReason(json.RawMessage(`{}`), json.RawMessage(`{"fields":[]}`), raw); reason == "" {
-				t.Fatal("unimplemented mode accepted by public endpoint")
+			if err := validateIntakeProcessingMode(mode); err == nil {
+				t.Fatal("unimplemented or unknown mode accepted by publisher")
 			}
 		})
+	}
+
+	workflow, _ := json.Marshal(map[string]any{"schema_version": 1, "mode": intakeAutoAccept, "rounds": []any{}, "final_decision": "auto_accept"})
+	if reason := publicSubmissionUnavailableReason(intakeAutoAccept, json.RawMessage(`{}`), json.RawMessage(`{"fields":[]}`), workflow); reason != "processing_mode_unavailable" {
+		t.Fatalf("auto accept public gate = %q", reason)
+	}
+	if reason := publicSubmissionUnavailableReason(intakeSingleRoundDecision, json.RawMessage(`{}`), json.RawMessage(`{"fields":[]}`), workflow); reason != "auto_accept_unavailable" {
+		t.Fatalf("auto-accept review recipe must not run as manual decision: %q", reason)
+	}
+	collectReview := map[string]any{}
+	if err := json.Unmarshal(defaultSingleRoundReviewRecipe(), &collectReview); err != nil {
+		t.Fatal(err)
+	}
+	collectReview["mode"] = intakeCollectOnly
+	collectReviewRaw, _ := json.Marshal(collectReview)
+	if err := validateSingleRoundReviewWorkflow(collectReviewRaw); err == nil {
+		t.Fatal("COLLECT_ONLY must not be accepted as a review workflow mode")
+	}
+}
+
+func TestLegacyProcessingModeInferenceIsSafe(t *testing.T) {
+	if got := normalizeIntakeProcessingMode("", json.RawMessage(`{"mode":"COLLECT_ONLY"}`)); got != intakeCollectOnly {
+		t.Fatalf("legacy collect workflow inferred as %q", got)
+	}
+	if got := normalizeIntakeProcessingMode("", json.RawMessage(`{"mode":"MANUAL_DECISION"}`)); got != intakeSingleRoundDecision {
+		t.Fatalf("manual workflow inferred as %q", got)
+	}
+	if got := normalizeIntakeProcessingMode("", json.RawMessage(`{"mode":"UNKNOWN"}`)); got != intakeSingleRoundDecision {
+		t.Fatalf("unknown legacy workflow should fail safe to manual, got %q", got)
+	}
+	if got := normalizeIntakeProcessingMode(intakeCollectOnly, json.RawMessage(`{"mode":"MANUAL_DECISION"}`)); got != intakeCollectOnly {
+		t.Fatalf("explicit processing mode was overridden by dormant workflow: %q", got)
 	}
 }
