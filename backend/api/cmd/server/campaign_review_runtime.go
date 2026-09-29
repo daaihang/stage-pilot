@@ -717,8 +717,8 @@ func (app *application) assignEntryReviewTask(w http.ResponseWriter, r *http.Req
 		serverError(w, err)
 		return
 	}
-	if processingMode == intakeCollectOnly {
-		errorJSON(w, http.StatusConflict, "review_not_applicable", "该提交采用仅收集方式，不存在审核任务或审核人分配")
+	if processingMode != intakeSingleRoundDecision {
+		errorJSON(w, http.StatusConflict, "review_not_applicable", "该提交的处理方式不创建审核任务或审核人分配")
 		return
 	}
 	var runID, runStatus, mode string

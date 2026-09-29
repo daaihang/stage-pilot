@@ -642,13 +642,19 @@ func validatePublicSubmissionCompatibility(processingMode string, policyRaw, fie
 	if err := validateIntakeProcessingMode(processingMode); err != nil {
 		return err
 	}
-	if processingMode == intakeCollectOnly {
+	switch processingMode {
+	case intakeCollectOnly, intakeDirectManualDecision, intakeAutoAccept:
+		// These processing paths do not execute the dormant review-workflow
+		// snapshot. Keep validating their shared public-intake policy above.
 		return nil
+	case intakeSingleRoundDecision:
+		if isAutoAcceptWorkflow(workflowRaw) {
+			return &formValidationError{"auto_accept_unavailable", "自动接受应通过表单处理方式配置，不能作为审核方案运行"}
+		}
+		return validateSingleRoundReviewWorkflow(workflowRaw)
+	default:
+		return &formValidationError{"invalid_processing_mode", "表单处理方式无效"}
 	}
-	if isAutoAcceptWorkflow(workflowRaw) {
-		return &formValidationError{"auto_accept_unavailable", "自动确认执行尚未开放，请改用人工决定后再发布"}
-	}
-	return validateSingleRoundReviewWorkflow(workflowRaw)
 }
 
 func publicSubmissionUnavailableReason(processingMode string, policyRaw, formRaw, workflowRaw json.RawMessage) string {
@@ -675,16 +681,20 @@ func publicSubmissionUnavailableReason(processingMode string, policyRaw, formRaw
 		}
 		return "invalid_processing_mode"
 	}
-	if processingMode == intakeCollectOnly {
+	switch processingMode {
+	case intakeCollectOnly, intakeDirectManualDecision, intakeAutoAccept:
 		return ""
+	case intakeSingleRoundDecision:
+		if isAutoAcceptWorkflow(workflowRaw) {
+			return "auto_accept_unavailable"
+		}
+		if validateSingleRoundReviewWorkflow(workflowRaw) != nil {
+			return "review_workflow_unsupported"
+		}
+		return ""
+	default:
+		return "invalid_processing_mode"
 	}
-	if isAutoAcceptWorkflow(workflowRaw) {
-		return "auto_accept_unavailable"
-	}
-	if validateSingleRoundReviewWorkflow(workflowRaw) != nil {
-		return "review_workflow_unsupported"
-	}
-	return ""
 }
 
 func policyLimit(policy map[string]any, key string) int64 {

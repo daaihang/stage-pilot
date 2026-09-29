@@ -3,7 +3,8 @@ package main
 import "encoding/json"
 
 // Processing modes describe what happens after a public submission. Only
-// collection-only and the single-round manual review mode currently execute.
+// collection-only, direct manual decisions, single-round review, and automatic
+// acceptance currently execute.
 const (
 	intakeCollectOnly          = "COLLECT_ONLY"
 	intakeDirectManualDecision = "DIRECT_MANUAL_DECISION"
@@ -23,9 +24,9 @@ type intakeProcessingContract struct {
 
 var intakeProcessingContracts = map[string]intakeProcessingContract{
 	intakeCollectOnly:          {EntryStatus: "submitted", CapacityCheck: "none", Executable: true},
-	intakeDirectManualDecision: {EntryStatus: "submitted", DecisionPermission: campaignDecide, CapacityCheck: "decision"},
+	intakeDirectManualDecision: {EntryStatus: "submitted", DecisionPermission: campaignDecide, CapacityCheck: "decision", Executable: true},
 	intakeSingleRoundDecision:  {EntryStatus: "in_review", ReviewPermission: campaignReview, DecisionPermission: campaignDecide, CapacityCheck: "decision", CreatesReviewRun: true, Executable: true},
-	intakeAutoAccept:           {EntryStatus: "accepted", DecisionPermission: campaignDecide, CapacityCheck: "submit", CreatesDecision: true},
+	intakeAutoAccept:           {EntryStatus: "accepted", DecisionPermission: campaignDecide, CapacityCheck: "submit", CreatesDecision: true, Executable: true},
 }
 
 func executableIntakeProcessingMode(mode string) bool {
@@ -60,7 +61,7 @@ func validateIntakeProcessingMode(mode string) error {
 		return &formValidationError{"invalid_processing_mode", "表单处理方式无效"}
 	}
 	if !executableIntakeProcessingMode(mode) {
-		return &formValidationError{"processing_mode_unavailable", "该表单处理方式暂未开放，请选择仅收集或单轮人工审核"}
+		return &formValidationError{"processing_mode_unavailable", "该表单处理方式暂未开放"}
 	}
 	return nil
 }

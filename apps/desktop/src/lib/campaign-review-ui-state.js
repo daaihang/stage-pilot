@@ -31,6 +31,27 @@ export function getEntryReviewDecisionState({ canDecide, entryStatus, reviewStat
       legacyRequired: false,
       canSubmitDecision: false,
       quorumPending: false,
+      reasonRequired: false,
+    };
+  }
+  if (processingMode === "DIRECT_MANUAL_DECISION") {
+    return {
+      entryDecidable,
+      runReady: false,
+      legacyRequired: false,
+      canSubmitDecision: Boolean(canDecide && entryDecidable),
+      quorumPending: false,
+      reasonRequired: false,
+    };
+  }
+  if (processingMode === "AUTO_ACCEPT") {
+    return {
+      entryDecidable,
+      runReady: false,
+      legacyRequired: false,
+      canSubmitDecision: Boolean(canDecide && entryDecidable && hasDecision),
+      quorumPending: false,
+      reasonRequired: true,
     };
   }
   const runReady = reviewStatus === "ready_for_decision" || DECIDED_REVIEW_RUN_STATUSES.has(reviewStatus);
@@ -42,5 +63,6 @@ export function getEntryReviewDecisionState({ canDecide, entryStatus, reviewStat
     legacyRequired,
     canSubmitDecision,
     quorumPending: Boolean(canDecide && entryDecidable && reviewStatus && !runReady && !hasDecision && !legacyRequired),
+    reasonRequired: legacyRequired,
   };
 }

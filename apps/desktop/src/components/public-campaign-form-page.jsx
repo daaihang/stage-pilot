@@ -22,6 +22,7 @@ function acceptingReasonText(reason) {
   if (reason === "campaign_not_open") return "表单尚未开放或已关闭。";
   if (reason === "campaign_closed") return "表单收件已截止。";
   if (reason === "submission_limit_reached") return "当前提交名额已满。";
+  if (reason === "campaign_capacity_reached") return "自动接受名额已满，暂时无法继续提交。";
   if (reason === "file_upload_unavailable") return "当前表单包含暂不支持的文件字段。";
   if (reason === "auto_accept_unavailable") return "此表单的自动确认审核流程暂不可用，请联系管理员。";
   if (reason === "processing_mode_unavailable" || reason === "invalid_processing_mode") return "此表单的处理方式暂不可用，请联系管理员修正并重新发布。";

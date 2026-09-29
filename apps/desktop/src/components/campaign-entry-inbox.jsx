@@ -29,17 +29,33 @@ const DECISION_ACTIONS = {
   reject: { label: "拒绝", loading: "正在拒绝提交…", success: "已拒绝提交", variant: "destructive" },
 };
 
+const PROCESSING_MODE_LABELS = {
+  COLLECT_ONLY: "仅收集",
+  DIRECT_MANUAL_DECISION: "免评审决定",
+  MANUAL_DECISION: "单轮审核",
+  AUTO_ACCEPT: "自动接受",
+};
+
+function decisionActorLabel(decision, members = []) {
+  if (decision?.actorType === "system") {
+    return decision?.metadata?.automation === "AUTO_ACCEPT" ? "系统自动接受" : "系统决定";
+  }
+  if (!decision?.decidedBy) return "人工决定";
+  const member = members.find((item) => item.userId === decision.decidedBy);
+  return `人工决定：${member?.name || decision.decidedBy}`;
+}
+
 function formatDate(value) {
   if (!value) return "未设置";
   try { return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); } catch { return value; }
 }
 
-function DecisionDialog({ actionType, busy, legacyRequired, onOpenChange, onSubmit }) {
+function DecisionDialog({ actionType, busy, legacyRequired, reasonRequired, processingMode, onOpenChange, onSubmit }) {
   const [reason, setReason] = useState("");
   const [attempted, setAttempted] = useState(false);
   const [legacyOverride, setLegacyOverride] = useState(false);
   const action = actionType ? DECISION_ACTIONS[actionType] : null;
-  const requiresReason = actionType === "reject" || legacyRequired;
+  const requiresReason = actionType === "reject" || legacyRequired || reasonRequired;
   const missingReason = requiresReason && attempted && !reason.trim();
 
   useEffect(() => {
@@ -69,13 +85,13 @@ function DecisionDialog({ actionType, busy, legacyRequired, onOpenChange, onSubm
         <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
           <DialogHeader>
             <DialogTitle>确认{action.label}提交</DialogTitle>
-            <DialogDescription>{legacyRequired ? "当前 Entry 属于未兼容的存量审核流程。覆盖操作会留存处理原因与审计标记。" : requiresReason ? "拒绝原因将作为当前决定的一部分保存，并向可查看该 Entry 的成员展示。" : "此操作会追加一条决定记录，并将 Entry 状态更新为当前决定结果。"}</DialogDescription>
+            <DialogDescription>{legacyRequired ? "当前 Entry 属于未兼容的存量审核流程。覆盖操作会留存处理原因与审计标记。" : processingMode === "AUTO_ACCEPT" ? "人工修正自动接受结果必须填写原因；新决定会追加到历史，不会覆盖系统 Decision。" : actionType === "reject" ? "拒绝原因将作为当前决定的一部分保存，并向可查看该 Entry 的成员展示。" : "此操作会追加一条决定记录，并将 Entry 状态更新为当前决定结果。"}</DialogDescription>
           </DialogHeader>
           {legacyRequired ? <label className="flex items-start gap-2 text-xs"><Checkbox checked={legacyOverride} onCheckedChange={(checked) => setLegacyOverride(checked === true)} /><span>我确认按存量流程覆盖此审核结果</span></label> : null}
           <Field data-invalid={missingReason || undefined}>
-            <FieldLabel htmlFor="entry-decision-reason">{legacyRequired ? "遗留流程处理原因" : "决定备注"}{requiresReason ? "（必填）" : "（可选）"}</FieldLabel>
+            <FieldLabel htmlFor="entry-decision-reason">{legacyRequired ? "遗留流程处理原因" : processingMode === "AUTO_ACCEPT" ? "修正自动接受原因" : "决定备注"}{requiresReason ? "（必填）" : "（可选）"}</FieldLabel>
             <Textarea id="entry-decision-reason" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} aria-invalid={missingReason || undefined} aria-describedby={missingReason ? "entry-decision-reason-error" : undefined} autoFocus />
-            {missingReason ? <FieldError id="entry-decision-reason-error">请填写拒绝原因。</FieldError> : null}
+            {missingReason ? <FieldError id="entry-decision-reason-error">{processingMode === "AUTO_ACCEPT" ? "请填写修正自动接受结果的原因。" : legacyRequired ? "请填写遗留流程处理原因。" : "请填写拒绝原因。"}</FieldError> : null}
           </Field>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button>
@@ -95,6 +111,8 @@ function ReviewRunCard({ detail, members, onAssign, assignmentBusy }) {
   const activeReviewers = members || [];
   useEffect(() => { setTaskId(""); setReviewerId(""); setReason(""); }, [run?.id]);
   if (detail?.entry?.processingMode === "COLLECT_ONLY") return <Card><CardHeader><div className="flex items-center gap-2"><CardTitle className="text-sm">审核状态</CardTitle><Badge variant="outline">无需审核</Badge></div><CardDescription>该 Entry 固定采用仅收集处理方式，不创建审核任务、反馈或审核人分配。</CardDescription></CardHeader><CardContent className="text-sm text-muted-foreground">如需处理结果，请在未来单独启用相应处理路径；此处不能通过遗留覆盖改变该 Entry。</CardContent></Card>;
+  if (detail?.entry?.processingMode === "DIRECT_MANUAL_DECISION") return <Card><CardHeader><div className="flex items-center gap-2"><CardTitle className="text-sm">审核状态</CardTitle><Badge variant="outline">无需审核</Badge></div><CardDescription>该 Entry 不创建 ReviewRun 或审核人任务，直接由具备决定权限的成员处理。</CardDescription></CardHeader><CardContent className="text-sm text-muted-foreground">当前状态：{detail.entry.status === "submitted" ? "待人工决定" : STATUS_LABELS[detail.entry.status] || detail.entry.status}。决定历史保留在下方。</CardContent></Card>;
+  if (detail?.entry?.processingMode === "AUTO_ACCEPT") return <Card><CardHeader><div className="flex items-center gap-2"><CardTitle className="text-sm">审核状态</CardTitle><Badge variant="outline">系统自动接受</Badge></div><CardDescription>提交事务内已生成系统 Decision；该处理方式不创建 ReviewRun。</CardDescription></CardHeader><CardContent className="text-sm text-muted-foreground">具备决定权限的成员可追加人工修正，必须填写原因；系统决定仍保留在历史中。</CardContent></Card>;
   if (!run) return <Card><CardHeader><CardTitle className="text-sm">审核状态</CardTitle></CardHeader><CardContent className="space-y-3 text-sm text-muted-foreground"><p>该存量提交没有可运行的审核任务。管理员可使用带原因的遗留流程覆盖作出决定。</p></CardContent></Card>;
   const runLabels = { awaiting_assignment: "待补足审核人", collecting_feedback: "收集审核意见中", ready_for_decision: "已达到决定门槛", decided: "已完成决定", blocked_unsupported: "存量审核配置不兼容", legacy_override_decided: "已通过遗留流程覆盖" };
   const pendingTasks = run.tasks.filter((task) => task.status === "pending");
@@ -199,7 +217,7 @@ function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, o
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Badge>{STATUS_LABELS[entry.status] || entry.status}</Badge>
-        {entry.processingMode === "COLLECT_ONLY" ? <Badge variant="outline">仅收集</Badge> : null}
+          {entry.processingMode ? <Badge variant="outline">{PROCESSING_MODE_LABELS[entry.processingMode] || entry.processingMode}</Badge> : null}
         {entry.contactEmail ? <span className="text-xs text-muted-foreground">{entry.contactEmail}</span> : null}
         <Button type="button" variant="ghost" size="sm" onClick={() => void toggle("is_read", !state.isRead)}>{state.isRead ? "标记未读" : "标记已读"}</Button>
       </div>
@@ -232,19 +250,21 @@ function InboxDetail({ detail, revisions, members, onStateChanged, onDecision, o
         <CardHeader className="gap-3">
             <CardTitle className="text-sm">决定</CardTitle>
           {entry.processingMode === "COLLECT_ONLY" ? <p className="text-xs text-muted-foreground">仅收集记录不适用接受、候补、拒绝或遗留流程覆盖。</p> : null}
+          {entry.processingMode === "DIRECT_MANUAL_DECISION" ? <p className="text-xs text-muted-foreground">免评审人工决定：无需达到审核门槛，可直接作出或修正结果。</p> : null}
+          {entry.processingMode === "AUTO_ACCEPT" ? <p className="text-xs text-muted-foreground">自动接受已产生系统决定；任何人工修正都必须填写原因。</p> : null}
             {decisionState.quorumPending ? <p className="text-xs text-muted-foreground">审核门槛尚未达到，当前不可作最终决定。</p> : null}
             {canDecide ? <div className="flex flex-wrap gap-2">{Object.entries(DECISION_ACTIONS).map(([type, action]) => <Button key={type} type="button" size="sm" variant={action.variant} onClick={() => setDecisionType(type)} disabled={decisionBusy}>{action.label}</Button>)}</div> : null}
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             {entry.processingMode === "COLLECT_ONLY" ? <p>该路径不会创建 Decision 或 Materialization。</p> : <>
-              {detail.decision ? <div className="rounded-md border p-3"><p className="font-medium text-foreground">当前：{DECISION_ACTIONS[detail.decision.type]?.label || detail.decision.type}</p><p className="mt-1">{detail.decision.reason || "无备注"}</p><p className="mt-1 text-xs">作出于 {formatDate(detail.decision.decidedAt)}</p></div> : <p>当前没有 Decision。</p>}
-              {detail.decisionHistory?.length ? <div className="space-y-2"><p className="text-xs font-medium text-foreground">决定历史</p>{detail.decisionHistory.map((decision) => <div key={decision.id} className="border-t pt-2 text-xs"><p className="font-medium text-foreground">{DECISION_ACTIONS[decision.type]?.label || decision.type}</p><p>{decision.reason || "无备注"} · {formatDate(decision.decidedAt)}</p></div>)}</div> : null}
+              {detail.decision ? <div className="rounded-md border p-3"><p className="font-medium text-foreground">当前：{DECISION_ACTIONS[detail.decision.type]?.label || detail.decision.type}</p><p className="mt-1">{detail.decision.reason || "无备注"}</p><p className="mt-1 text-xs">{decisionActorLabel(detail.decision, members)} · {formatDate(detail.decision.decidedAt)}</p></div> : <p>当前没有 Decision。</p>}
+              {detail.decisionHistory?.length ? <div className="space-y-2"><p className="text-xs font-medium text-foreground">决定历史</p>{detail.decisionHistory.map((decision) => <div key={decision.id} className="border-t pt-2 text-xs"><p className="font-medium text-foreground">{DECISION_ACTIONS[decision.type]?.label || decision.type} · {decisionActorLabel(decision, members)}</p><p>{decision.reason || "无备注"} · {formatDate(decision.decidedAt)}</p></div>)}</div> : null}
             </>}
           </CardContent>
         </Card>
         <Card><CardHeader><CardTitle className="text-sm">转化</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{entry.processingMode === "COLLECT_ONLY" ? "仅收集方式不支持结果转化。" : detail.materializations?.length ? detail.materializations.length + " 条转化记录" : "当前没有 Materialization。"}</CardContent></Card>
       </div>
-      {entry.processingMode === "COLLECT_ONLY" ? null : <DecisionDialog actionType={decisionType} busy={decisionBusy} legacyRequired={legacyRequired} onOpenChange={(open) => !open && setDecisionType(null)} onSubmit={(payload) => onDecision(entry.id, payload)} />}
+      {entry.processingMode === "COLLECT_ONLY" ? null : <DecisionDialog actionType={decisionType} busy={decisionBusy} legacyRequired={legacyRequired} reasonRequired={decisionState.reasonRequired} processingMode={entry.processingMode} onOpenChange={(open) => !open && setDecisionType(null)} onSubmit={(payload) => onDecision(entry.id, payload)} />}
     </div>
   );
 }
@@ -438,7 +458,7 @@ export function CampaignEntryInbox({ campaignId }) {
           <div className="divide-y rounded-md border">
             {items.map((item) => <div key={item.id} className={`flex items-center gap-3 px-3 py-3 text-sm transition-colors hover:bg-muted/40 ${!item.inboxState?.isRead ? "bg-primary/5" : ""}`}>
               <button type="button" ref={selectedId === item.id ? triggerRef : undefined} className="min-w-0 flex-1 text-left" onClick={() => void openEntry(item)}>
-                <div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.id}</span>{!item.inboxState?.isRead ? <Badge variant="secondary">未读</Badge> : null}<Badge variant="outline">{STATUS_LABELS[item.status] || item.status}</Badge>{item.processingMode === "COLLECT_ONLY" ? <Badge variant="outline">仅收集</Badge> : null}</div>
+        <div className="flex min-w-0 items-center gap-2"><span className="truncate font-medium">{item.id}</span>{!item.inboxState?.isRead ? <Badge variant="secondary">未读</Badge> : null}<Badge variant="outline">{STATUS_LABELS[item.status] || item.status}</Badge>{item.processingMode ? <Badge variant="outline">{PROCESSING_MODE_LABELS[item.processingMode] || item.processingMode}</Badge> : null}</div>
                 <p className="mt-1 truncate text-xs text-muted-foreground">{item.contactEmail || "匿名提交"} · {formatDate(item.submittedAt || item.lastActivityAt)} · Revision {item.currentRevisionNo}</p>
               </button>
               <Button type="button" variant={item.inboxState?.isStarred ? "secondary" : "ghost"} size="icon" aria-label={item.inboxState?.isStarred ? "取消星标" : "标记星标"} onClick={async (event) => { event.stopPropagation(); try { const next = await updateEntryInboxState(item.id, { isStarred: !item.inboxState?.isStarred }); setItems((current) => current.map((row) => row.id === item.id ? { ...row, inboxState: { ...row.inboxState, isStarred: next.isStarred } } : row)); notify.success(next.isStarred ? "已标记星标" : "已取消星标"); } catch (nextError) { notify.error("更新星标失败", { description: nextError?.message || String(nextError) }); } }}><Star className={item.inboxState?.isStarred ? "fill-current" : ""} /></Button>

@@ -19,6 +19,7 @@ type publicCampaignFixture struct {
 	campaignID   string
 	revisionID   string
 	shareToken   string
+	shortCode    string
 	ownerToken   string
 	ownerID      string
 }
@@ -34,6 +35,10 @@ func createPublicCampaignFixture(t *testing.T, app *application, availability, w
 	productionID := production["id"].(string)
 	campaignID, revisionID, formVersionID := newID(), newID(), newID()
 	shareToken := newID()
+	shortCode, err := generateInvitationCode()
+	if err != nil {
+		t.Fatal(err)
+	}
 	fields := `[ {"id":"email","type":"email","label":"联系邮箱","required":true,"semantic_key":"CONTACT_EMAIL"} ]`
 	blocks := `[{"id":"email_block","type":"field","field_key":"email"}]`
 	if _, err := app.db.Exec(t.Context(), `INSERT INTO form_versions(id,workspace_id,fields,blocks,created_by) VALUES($1,$2,$3::jsonb,$4::jsonb,$5)`, formVersionID, workspaceID, fields, blocks, ownerID); err != nil {
@@ -48,13 +53,21 @@ func createPublicCampaignFixture(t *testing.T, app *application, availability, w
 	if _, err := app.db.Exec(t.Context(), `UPDATE campaigns SET published_revision_id=$1 WHERE id=$2 AND workspace_id=$3`, revisionID, campaignID, workspaceID); err != nil {
 		t.Fatalf("publish public revision: %v", err)
 	}
-	if _, err := app.db.Exec(t.Context(), `INSERT INTO campaign_share_links(id,workspace_id,production_id,campaign_id,long_token_hash,short_code_hash,long_token_ciphertext,short_code_ciphertext,created_by) VALUES($1,$2,$3,$4,$5,$6,'test','test',$7)`, newID(), workspaceID, productionID, campaignID, tokenHash(shareToken), tokenHash("short-"+shareToken), ownerID); err != nil {
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO campaign_share_links(id,workspace_id,production_id,campaign_id,long_token_hash,short_code_hash,long_token_ciphertext,short_code_ciphertext,created_by) VALUES($1,$2,$3,$4,$5,$6,'test','test',$7)`, newID(), workspaceID, productionID, campaignID, tokenHash(shareToken), tokenHash(shortCode), ownerID); err != nil {
 		t.Fatalf("insert public share: %v", err)
 	}
-	return publicCampaignFixture{workspaceID: workspaceID, productionID: productionID, campaignID: campaignID, revisionID: revisionID, shareToken: shareToken, ownerToken: ownerToken, ownerID: ownerID}
+	return publicCampaignFixture{workspaceID: workspaceID, productionID: productionID, campaignID: campaignID, revisionID: revisionID, shareToken: shareToken, shortCode: shortCode, ownerToken: ownerToken, ownerID: ownerID}
 }
 
 func publicSubmitRequest(t *testing.T, app *application, token, revisionID, email, idempotencyKey, remoteIP string) *httptest.ResponseRecorder {
+	return publicSubmitRequestAt(t, app, token, false, revisionID, email, idempotencyKey, remoteIP)
+}
+
+func publicSubmitShortRequest(t *testing.T, app *application, code, revisionID, email, idempotencyKey, remoteIP string) *httptest.ResponseRecorder {
+	return publicSubmitRequestAt(t, app, code, true, revisionID, email, idempotencyKey, remoteIP)
+}
+
+func publicSubmitRequestAt(t *testing.T, app *application, token string, short bool, revisionID, email, idempotencyKey, remoteIP string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
 		"expected_revision_id": revisionID,
@@ -63,7 +76,11 @@ func publicSubmitRequest(t *testing.T, app *application, token, revisionID, emai
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/v1/public/campaign-shares/"+token+"/entries", bytes.NewReader(body))
+	path := "/v1/public/campaign-shares/" + token + "/entries"
+	if short {
+		path = "/v1/public/campaign-shares/short/" + token + "/entries"
+	}
+	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
 	req.RemoteAddr = remoteIP + ":43120"
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", idempotencyKey)
@@ -90,6 +107,13 @@ func publishNextPublicRevision(t *testing.T, app *application, fixture publicCam
 		t.Fatal(err)
 	}
 	return revisionID
+}
+
+func setPublicCampaignProcessingMode(t *testing.T, app *application, fixture publicCampaignFixture, mode string) {
+	t.Helper()
+	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_revisions SET processing_mode=$1 WHERE id=$2 AND workspace_id=$3`, mode, fixture.revisionID, fixture.workspaceID); err != nil {
+		t.Fatalf("set public processing mode: %v", err)
+	}
 }
 
 func publicResponseErrorCode(t *testing.T, response *httptest.ResponseRecorder) string {
@@ -282,6 +306,338 @@ func TestCollectOnlySubmissionSkipsReviewAndDecisionPaths(t *testing.T) {
 	oldReplay := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "collect@example.test", key, "198.51.100.42")
 	if oldReplay.Code != http.StatusCreated || oldReplay.Header().Get("Idempotent-Replayed") != "true" {
 		t.Fatalf("old successful collect-only request should replay after publication: %d %s", oldReplay.Code, oldReplay.Body.String())
+	}
+}
+
+func TestDirectManualDecisionNeedsNoReviewRunAndKeepsDecisionHistory(t *testing.T) {
+	app := newIntegrationApp(t)
+	fixture := createPublicCampaignFixture(t, app, `{"capacity":1,"waitlist_enabled":true,"waitlist_limit":1}`, `{"mode":"AUTO_ACCEPT"}`)
+	setPublicCampaignProcessingMode(t, app, fixture, intakeDirectManualDecision)
+	capacityEntryID, capacityDecisionID := newID(), newID()
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'accepted')`, capacityEntryID, fixture.workspaceID, fixture.productionID, fixture.campaignID, fixture.revisionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,decided_by) VALUES($1,$2,$3,$4,'accept',$5)`, capacityDecisionID, fixture.workspaceID, capacityEntryID, fixture.campaignID, fixture.ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE entries SET current_decision_id=$1 WHERE id=$2`, capacityDecisionID, capacityEntryID); err != nil {
+		t.Fatal(err)
+	}
+
+	publicGet := httptest.NewRecorder()
+	app.routes().ServeHTTP(publicGet, httptest.NewRequest(http.MethodGet, "/v1/public/campaign-shares/"+fixture.shareToken, nil))
+	if publicGet.Code != http.StatusOK || !bytes.Contains(publicGet.Body.Bytes(), []byte(`"accepting":true`)) {
+		t.Fatalf("direct manual decision must accept independently of acceptance capacity: %d %s", publicGet.Code, publicGet.Body.String())
+	}
+
+	created := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "direct@example.test", "direct-manual-submit", "198.51.100.50")
+	if created.Code != http.StatusCreated || !bytes.Contains(created.Body.Bytes(), []byte(`"status":"submitted"`)) {
+		t.Fatalf("direct manual submission = %d: %s", created.Code, created.Body.String())
+	}
+	var entryID string
+	if err := app.db.QueryRow(t.Context(), `SELECT entry_id FROM campaign_public_submission_idempotency WHERE campaign_id=$1 AND entry_id IS NOT NULL`, fixture.campaignID).Scan(&entryID); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var reviewCount, decisionCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT e.status,
+		(SELECT COUNT(*)::int FROM entry_review_runs r WHERE r.workspace_id=e.workspace_id AND r.entry_id=e.id),
+		(SELECT COUNT(*)::int FROM decisions d WHERE d.workspace_id=e.workspace_id AND d.entry_id=e.id)
+		FROM entries e WHERE e.id=$1`, entryID).Scan(&status, &reviewCount, &decisionCount); err != nil {
+		t.Fatal(err)
+	}
+	if status != "submitted" || reviewCount != 0 || decisionCount != 0 {
+		t.Fatalf("direct manual submission state: status=%s reviews=%d decisions=%d", status, reviewCount, decisionCount)
+	}
+	detail := authedRequest(t, app, fixture.ownerToken, http.MethodGet, "/v1/entries/"+entryID, nil)
+	var detailBody struct {
+		CanDecide       bool `json:"can_decide"`
+		CanManageReview bool `json:"can_manage_review"`
+	}
+	if detail.Code != http.StatusOK || json.Unmarshal(detail.Body.Bytes(), &detailBody) != nil || !detailBody.CanDecide || detailBody.CanManageReview {
+		t.Fatalf("direct manual Entry permissions = %d: %s", detail.Code, detail.Body.String())
+	}
+	assignment := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/review-tasks", map[string]any{"reviewer_id": fixture.ownerID, "reason": "不应适用于免评审决定"})
+	if assignment.Code != http.StatusConflict || publicResponseErrorCode(t, assignment) != "review_not_applicable" {
+		t.Fatalf("direct manual assignment = %d: %s", assignment.Code, assignment.Body.String())
+	}
+	legacy := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "accept", "legacy_override": true})
+	if legacy.Code != http.StatusConflict || publicResponseErrorCode(t, legacy) != "legacy_override_not_applicable" {
+		t.Fatalf("direct manual must not use legacy override = %d: %s", legacy.Code, legacy.Body.String())
+	}
+	fullCapacity := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "accept"})
+	if fullCapacity.Code != http.StatusConflict || publicResponseErrorCode(t, fullCapacity) != "campaign_capacity_reached" {
+		t.Fatalf("direct manual acceptance at capacity = %d: %s", fullCapacity.Code, fullCapacity.Body.String())
+	}
+	for _, action := range []map[string]any{
+		{"type": "waitlist", "reason": "复核后转为候补"},
+		{"type": "reject", "reason": "复核后不符合条件"},
+	} {
+		response := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", action)
+		if response.Code != http.StatusOK {
+			t.Fatalf("direct manual decision %v = %d: %s", action, response.Code, response.Body.String())
+		}
+	}
+	var currentID string
+	var currentCount, historyCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT current_decision_id FROM entries WHERE id=$1`, entryID).Scan(&currentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*) FILTER (WHERE is_current)::int,COUNT(*)::int FROM decisions WHERE entry_id=$1`, entryID).Scan(&currentCount, &historyCount); err != nil {
+		t.Fatal(err)
+	}
+	if currentCount != 1 || historyCount != 2 {
+		t.Fatalf("direct manual history current=%d total=%d", currentCount, historyCount)
+	}
+	var latestSupersedes *string
+	var latestActorType string
+	if err := app.db.QueryRow(t.Context(), `SELECT supersedes_id,actor_type FROM decisions WHERE id=$1`, currentID).Scan(&latestSupersedes, &latestActorType); err != nil {
+		t.Fatal(err)
+	}
+	if latestSupersedes == nil || latestActorType != "user" {
+		t.Fatalf("manual decision history did not retain supersede/user attribution: supersedes=%v actor=%s", latestSupersedes, latestActorType)
+	}
+	secondEntryID := newID()
+	thirdEntryID := newID()
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'submitted')`, secondEntryID, fixture.workspaceID, fixture.productionID, fixture.campaignID, fixture.revisionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO entries(id,workspace_id,production_id,campaign_id,campaign_revision_id,status) VALUES($1,$2,$3,$4,$5,'submitted')`, thirdEntryID, fixture.workspaceID, fixture.productionID, fixture.campaignID, fixture.revisionID); err != nil {
+		t.Fatal(err)
+	}
+	firstWaitlist := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+secondEntryID+"/decisions", map[string]any{"type": "waitlist"})
+	if firstWaitlist.Code != http.StatusOK {
+		t.Fatalf("first direct manual waitlist = %d: %s", firstWaitlist.Code, firstWaitlist.Body.String())
+	}
+	waitlistFull := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+thirdEntryID+"/decisions", map[string]any{"type": "waitlist"})
+	if waitlistFull.Code != http.StatusConflict || publicResponseErrorCode(t, waitlistFull) != "waitlist_limit_reached" {
+		t.Fatalf("direct manual waitlist limit = %d: %s", waitlistFull.Code, waitlistFull.Body.String())
+	}
+	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_revisions SET availability_policy='{"capacity":1,"waitlist_enabled":false,"waitlist_limit":1}'::jsonb WHERE id=$1`, fixture.revisionID); err != nil {
+		t.Fatal(err)
+	}
+	waitlistDisabled := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+thirdEntryID+"/decisions", map[string]any{"type": "waitlist"})
+	if waitlistDisabled.Code != http.StatusConflict || publicResponseErrorCode(t, waitlistDisabled) != "waitlist_disabled" {
+		t.Fatalf("direct manual disabled waitlist = %d: %s", waitlistDisabled.Code, waitlistDisabled.Body.String())
+	}
+	finalDetail := authedRequest(t, app, fixture.ownerToken, http.MethodGet, "/v1/entries/"+entryID, nil)
+	if finalDetail.Code != http.StatusOK || !bytes.Contains(finalDetail.Body.Bytes(), []byte(`"decision_history":[`)) || !bytes.Contains(finalDetail.Body.Bytes(), []byte(`"actor_type":"user"`)) {
+		t.Fatalf("direct manual decision history response = %d: %s", finalDetail.Code, finalDetail.Body.String())
+	}
+}
+
+func TestAutoAcceptCreatesAuditedDecisionAndReplaysAcrossCapacityAndRevision(t *testing.T) {
+	app := newIntegrationApp(t)
+	fixture := createPublicCampaignFixture(t, app, `{"capacity":1,"waitlist_enabled":true,"waitlist_limit":1}`, `{"mode":"MANUAL_DECISION"}`)
+	setPublicCampaignProcessingMode(t, app, fixture, intakeAutoAccept)
+
+	get := httptest.NewRecorder()
+	app.routes().ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/v1/public/campaign-shares/"+fixture.shareToken, nil))
+	if get.Code != http.StatusOK || !bytes.Contains(get.Body.Bytes(), []byte(`"accepting":true`)) {
+		t.Fatalf("auto-accept GET before capacity = %d: %s", get.Code, get.Body.String())
+	}
+
+	key := "auto-accept-submit"
+	created := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "automatic@example.test", key, "198.51.100.60")
+	if created.Code != http.StatusCreated || !bytes.Contains(created.Body.Bytes(), []byte(`"status":"submitted"`)) {
+		t.Fatalf("auto-accept public receipt must remain neutral = %d: %s", created.Code, created.Body.String())
+	}
+	var entryID string
+	if err := app.db.QueryRow(t.Context(), `SELECT entry_id FROM campaign_public_submission_idempotency WHERE campaign_id=$1 AND entry_id IS NOT NULL`, fixture.campaignID).Scan(&entryID); err != nil {
+		t.Fatal(err)
+	}
+	var status, actorType string
+	var currentDecisionID, decisionID string
+	var decidedBy *string
+	var decisionCount, runCount, materializationCount int
+	var metadata json.RawMessage
+	if err := app.db.QueryRow(t.Context(), `SELECT e.status,e.current_decision_id,d.id,d.actor_type,d.decided_by,d.metadata,
+		(SELECT COUNT(*)::int FROM decisions x WHERE x.entry_id=e.id),
+		(SELECT COUNT(*)::int FROM entry_review_runs r WHERE r.entry_id=e.id),
+		(SELECT COUNT(*)::int FROM entry_materializations m WHERE m.entry_id=e.id)
+		FROM entries e JOIN decisions d ON d.workspace_id=e.workspace_id AND d.id=e.current_decision_id
+		WHERE e.id=$1`, entryID).Scan(&status, &currentDecisionID, &decisionID, &actorType, &decidedBy, &metadata, &decisionCount, &runCount, &materializationCount); err != nil {
+		t.Fatal(err)
+	}
+	var audit map[string]any
+	if err := json.Unmarshal(metadata, &audit); err != nil {
+		t.Fatal(err)
+	}
+	if status != "accepted" || currentDecisionID != decisionID || actorType != "system" || decidedBy != nil || audit["automation"] != "AUTO_ACCEPT" || audit["trigger"] != "public_submission" || audit["campaign_revision_id"] != fixture.revisionID || decisionCount != 1 || runCount != 0 || materializationCount != 0 {
+		t.Fatalf("auto-accept state status=%s pointer=%s decision=%s actor=%s by=%v metadata=%v counts=%d/%d/%d", status, currentDecisionID, decisionID, actorType, decidedBy, audit, decisionCount, runCount, materializationCount)
+	}
+
+	fullGet := httptest.NewRecorder()
+	app.routes().ServeHTTP(fullGet, httptest.NewRequest(http.MethodGet, "/v1/public/campaign-shares/"+fixture.shareToken, nil))
+	if fullGet.Code != http.StatusOK || !bytes.Contains(fullGet.Body.Bytes(), []byte(`"accepting":false`)) || !bytes.Contains(fullGet.Body.Bytes(), []byte(`"accepting_reason":"campaign_capacity_reached"`)) {
+		t.Fatalf("auto-accept GET at capacity = %d: %s", fullGet.Code, fullGet.Body.String())
+	}
+	fullPost := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "second@example.test", "auto-accept-at-capacity", "198.51.100.61")
+	if fullPost.Code != http.StatusConflict || publicResponseErrorCode(t, fullPost) != "campaign_capacity_reached" {
+		t.Fatalf("auto-accept POST at capacity = %d: %s", fullPost.Code, fullPost.Body.String())
+	}
+	var entryCount, idemCount int
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM entries WHERE campaign_id=$1 AND deleted_at IS NULL`, fixture.campaignID).Scan(&entryCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM campaign_public_submission_idempotency WHERE campaign_id=$1`, fixture.campaignID).Scan(&idemCount); err != nil {
+		t.Fatal(err)
+	}
+	if entryCount != 1 || idemCount != 1 {
+		t.Fatalf("capacity conflict wrote partial data: entries=%d idempotency=%d", entryCount, idemCount)
+	}
+
+	noReason := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "reject"})
+	if noReason.Code != http.StatusUnprocessableEntity || publicResponseErrorCode(t, noReason) != "decision_reason_required" {
+		t.Fatalf("auto-accept correction without reason = %d: %s", noReason.Code, noReason.Body.String())
+	}
+	corrected := authedRequest(t, app, fixture.ownerToken, http.MethodPost, "/v1/entries/"+entryID+"/decisions", map[string]any{"type": "waitlist", "reason": "人工复核后改为候补"})
+	if corrected.Code != http.StatusOK || !bytes.Contains(corrected.Body.Bytes(), []byte(`"status":"waitlisted"`)) {
+		t.Fatalf("auto-accept manual correction = %d: %s", corrected.Code, corrected.Body.String())
+	}
+	var correctedBody struct {
+		Decision entryDecisionResponse `json:"decision"`
+	}
+	if err := json.Unmarshal(corrected.Body.Bytes(), &correctedBody); err != nil {
+		t.Fatal(err)
+	}
+	if correctedBody.Decision.ActorType != "user" || correctedBody.Decision.DecidedBy == nil || *correctedBody.Decision.DecidedBy != fixture.ownerID {
+		t.Fatalf("manual correction actor not exposed: %#v", correctedBody.Decision)
+	}
+	var supersedesID, correctedActorType string
+	var correctionReason string
+	if err := app.db.QueryRow(t.Context(), `SELECT supersedes_id,actor_type,reason FROM decisions WHERE id=$1`, correctedBody.Decision.ID).Scan(&supersedesID, &correctedActorType, &correctionReason); err != nil {
+		t.Fatal(err)
+	}
+	if supersedesID != decisionID || correctedActorType != "user" || correctionReason != "人工复核后改为候补" {
+		t.Fatalf("auto decision history not preserved: supersedes=%s actor=%s reason=%s", supersedesID, correctedActorType, correctionReason)
+	}
+
+	detail := authedRequest(t, app, fixture.ownerToken, http.MethodGet, "/v1/entries/"+entryID, nil)
+	if detail.Code != http.StatusOK || !bytes.Contains(detail.Body.Bytes(), []byte(`"actor_type":"system"`)) || !bytes.Contains(detail.Body.Bytes(), []byte(`"decided_by":null`)) {
+		t.Fatalf("system actor should be visible in decision history: %d %s", detail.Code, detail.Body.String())
+	}
+
+	// Both actor combinations that would confuse or forge attribution are
+	// rejected by the database. The rows are non-current so this specifically
+	// exercises the actor consistency constraint, not the current-decision index.
+	tx, err := app.db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectMigrationConstraintError(t, tx, `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,actor_type,decided_by,is_current) VALUES($1,$2,$3,$4,'accept','system',$5,false)`, newID(), fixture.workspaceID, entryID, fixture.campaignID, fixture.ownerID)
+	expectMigrationConstraintError(t, tx, `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,actor_type,decided_by,is_current) VALUES($1,$2,$3,$4,'accept','user',NULL,false)`, newID(), fixture.workspaceID, entryID, fixture.campaignID)
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestConcurrentAutoAcceptAcrossLongAndShortLinksUsesSingleCapacitySlot(t *testing.T) {
+	app := newIntegrationApp(t)
+	fixture := createPublicCampaignFixture(t, app, `{"capacity":1}`, `{}`)
+	setPublicCampaignProcessingMode(t, app, fixture, intakeAutoAccept)
+
+	type submitResult struct {
+		code     int
+		key      string
+		short    bool
+		response *httptest.ResponseRecorder
+	}
+	start := make(chan struct{})
+	results := make(chan submitResult, 2)
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		<-start
+		response := publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "long@example.test", "auto-long-link", "198.51.100.70")
+		results <- submitResult{code: response.Code, key: "auto-long-link", response: response}
+	}()
+	go func() {
+		defer wait.Done()
+		<-start
+		response := publicSubmitShortRequest(t, app, fixture.shortCode, fixture.revisionID, "short@example.test", "auto-short-link", "198.51.100.71")
+		results <- submitResult{code: response.Code, key: "auto-short-link", short: true, response: response}
+	}()
+	close(start)
+	wait.Wait()
+	close(results)
+	succeeded, capacityRejected := 0, 0
+	var success submitResult
+	for result := range results {
+		switch result.code {
+		case http.StatusCreated:
+			succeeded++
+			success = result
+		case http.StatusConflict:
+			capacityRejected++
+			if publicResponseErrorCode(t, result.response) != "campaign_capacity_reached" {
+				t.Errorf("concurrent loser did not receive capacity conflict: %s", result.response.Body.String())
+			}
+		default:
+			t.Errorf("unexpected concurrent submission response: %d %s", result.code, result.response.Body.String())
+		}
+	}
+	if succeeded != 1 || capacityRejected != 1 {
+		t.Fatalf("long/short auto-accept race succeeded=%d rejected=%d", succeeded, capacityRejected)
+	}
+	var acceptedEntries, currentSystemDecisions, idempotencyRecords int
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM entries WHERE campaign_id=$1 AND status IN ('accepted','converted') AND deleted_at IS NULL`, fixture.campaignID).Scan(&acceptedEntries); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM decisions d JOIN entries e ON e.workspace_id=d.workspace_id AND e.id=d.entry_id WHERE e.campaign_id=$1 AND d.actor_type='system' AND d.is_current`, fixture.campaignID).Scan(&currentSystemDecisions); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM campaign_public_submission_idempotency WHERE campaign_id=$1`, fixture.campaignID).Scan(&idempotencyRecords); err != nil {
+		t.Fatal(err)
+	}
+	if acceptedEntries != 1 || currentSystemDecisions != 1 || idempotencyRecords != 1 {
+		t.Fatalf("capacity race persisted entries=%d system decisions=%d idempotency=%d", acceptedEntries, currentSystemDecisions, idempotencyRecords)
+	}
+
+	// A successful idempotent replay remains valid even after the slot is full
+	// and a newer Revision has been published.
+	var replay *httptest.ResponseRecorder
+	if success.short {
+		replay = publicSubmitShortRequest(t, app, fixture.shortCode, fixture.revisionID, "short@example.test", success.key, "198.51.100.72")
+	} else {
+		replay = publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "long@example.test", success.key, "198.51.100.72")
+	}
+	var originalBody, replayedBody any
+	if err := json.Unmarshal(success.response.Body.Bytes(), &originalBody); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayedBody); err != nil {
+		t.Fatal(err)
+	}
+	if replay.Code != http.StatusCreated || replay.Header().Get("Idempotent-Replayed") != "true" || !jsonEqual(replayedBody, originalBody) {
+		t.Fatalf("replay at capacity did not reproduce the original response: %d %s", replay.Code, replay.Body.String())
+	}
+	newRevisionID := publishNextPublicRevision(t, app, fixture, `{"capacity":1}`, `{}`)
+	if _, err := app.db.Exec(t.Context(), `UPDATE campaign_revisions SET processing_mode='AUTO_ACCEPT' WHERE id=$1`, newRevisionID); err != nil {
+		t.Fatal(err)
+	}
+	if success.short {
+		replay = publicSubmitShortRequest(t, app, fixture.shortCode, fixture.revisionID, "short@example.test", success.key, "198.51.100.73")
+	} else {
+		replay = publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "long@example.test", success.key, "198.51.100.73")
+	}
+	if replay.Code != http.StatusCreated || replay.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("successful request should replay before revision conflict: %d %s", replay.Code, replay.Body.String())
+	}
+	if success.short {
+		replay = publicSubmitShortRequest(t, app, fixture.shortCode, fixture.revisionID, "new@example.test", "stale-auto-revision", "198.51.100.74")
+	} else {
+		replay = publicSubmitRequest(t, app, fixture.shareToken, fixture.revisionID, "new@example.test", "stale-auto-revision", "198.51.100.74")
+	}
+	if replay.Code != http.StatusConflict || publicResponseErrorCode(t, replay) != "form_version_changed" {
+		t.Fatalf("stale auto-accept revision = %d: %s", replay.Code, replay.Body.String())
+	}
+	if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*)::int FROM campaign_public_submission_idempotency WHERE campaign_id=$1`, fixture.campaignID).Scan(&idempotencyRecords); err != nil {
+		t.Fatal(err)
+	}
+	if idempotencyRecords != 1 {
+		t.Fatalf("capacity/version conflicts must not persist idempotency rows: %d", idempotencyRecords)
 	}
 }
 

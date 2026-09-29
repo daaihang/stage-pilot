@@ -70,6 +70,11 @@ func TestPublicSubmissionPolicyCompatibility(t *testing.T) {
 	if err := validatePublicSubmissionCompatibility(intakeCollectOnly, json.RawMessage(`{"capacity":1,"waitlist_limit":1}`), optionalEmail, json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); err != nil {
 		t.Fatalf("collection-only should not require review workflow or contact email when actor limit is off: %v", err)
 	}
+	for _, mode := range []string{intakeDirectManualDecision, intakeAutoAccept} {
+		if err := validatePublicSubmissionCompatibility(mode, json.RawMessage(`{"capacity":1,"waitlist_enabled":true}`), optionalEmail, json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); err != nil {
+			t.Fatalf("%s should ignore dormant review settings: %v", mode, err)
+		}
+	}
 	if reason := publicSubmissionUnavailableReason(intakeSingleRoundDecision, json.RawMessage(`{"close_behavior":"accept_to_waitlist"}`), json.RawMessage(`{"fields":[{"id":"email","semantic_key":"CONTACT_EMAIL","required":true}]}`), nil); reason != "close_behavior_unsupported" {
 		t.Fatalf("legacy close behavior reason = %q", reason)
 	}
@@ -78,6 +83,9 @@ func TestPublicSubmissionPolicyCompatibility(t *testing.T) {
 	}
 	if reason := publicSubmissionUnavailableReason(intakeCollectOnly, json.RawMessage(`{"capacity":1,"waitlist_enabled":false}`), json.RawMessage(`{"fields":[]}`), json.RawMessage(`{"mode":"AUTO_ACCEPT"}`)); reason != "" {
 		t.Fatalf("collection-only should ignore dormant review settings and decision capacity: reason=%q", reason)
+	}
+	if reason := publicSubmissionUnavailableReason(intakeAutoAccept, json.RawMessage(`{"capacity":1}`), json.RawMessage(`{"fields":[]}`), json.RawMessage(`{}`)); reason != "" {
+		t.Fatalf("auto accept should not require a ReviewRun workflow: reason=%q", reason)
 	}
 }
 

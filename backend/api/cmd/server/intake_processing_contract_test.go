@@ -11,9 +11,9 @@ func TestIntakeProcessingModeContracts(t *testing.T) {
 		want intakeProcessingContract
 	}{
 		{intakeCollectOnly, intakeProcessingContract{EntryStatus: "submitted", CapacityCheck: "none", Executable: true}},
-		{intakeDirectManualDecision, intakeProcessingContract{EntryStatus: "submitted", DecisionPermission: campaignDecide, CapacityCheck: "decision"}},
+		{intakeDirectManualDecision, intakeProcessingContract{EntryStatus: "submitted", DecisionPermission: campaignDecide, CapacityCheck: "decision", Executable: true}},
 		{intakeSingleRoundDecision, intakeProcessingContract{EntryStatus: "in_review", ReviewPermission: campaignReview, DecisionPermission: campaignDecide, CapacityCheck: "decision", CreatesReviewRun: true, Executable: true}},
-		{intakeAutoAccept, intakeProcessingContract{EntryStatus: "accepted", DecisionPermission: campaignDecide, CapacityCheck: "submit", CreatesDecision: true}},
+		{intakeAutoAccept, intakeProcessingContract{EntryStatus: "accepted", DecisionPermission: campaignDecide, CapacityCheck: "submit", CreatesDecision: true, Executable: true}},
 	}
 	if len(intakeProcessingContracts) != len(tests) {
 		t.Fatalf("contracts = %d, want %d", len(intakeProcessingContracts), len(tests))
@@ -31,23 +31,21 @@ func TestIntakeProcessingModeContracts(t *testing.T) {
 	}
 }
 
-func TestOnlyCollectAndSingleRoundAreExecutable(t *testing.T) {
-	for _, mode := range []string{intakeCollectOnly, intakeSingleRoundDecision} {
+func TestAllImplementedIntakeModesAreExecutable(t *testing.T) {
+	for _, mode := range []string{intakeCollectOnly, intakeDirectManualDecision, intakeSingleRoundDecision, intakeAutoAccept} {
 		if err := validateIntakeProcessingMode(mode); err != nil {
 			t.Fatalf("mode %q should be executable: %v", mode, err)
 		}
 	}
-	for _, mode := range []string{intakeDirectManualDecision, intakeAutoAccept, "UNKNOWN"} {
-		t.Run(mode, func(t *testing.T) {
-			if err := validateIntakeProcessingMode(mode); err == nil {
-				t.Fatal("unimplemented or unknown mode accepted by publisher")
-			}
-		})
+	if err := validateIntakeProcessingMode("UNKNOWN"); err == nil {
+		t.Fatal("unknown mode accepted by publisher")
 	}
 
 	workflow, _ := json.Marshal(map[string]any{"schema_version": 1, "mode": intakeAutoAccept, "rounds": []any{}, "final_decision": "auto_accept"})
-	if reason := publicSubmissionUnavailableReason(intakeAutoAccept, json.RawMessage(`{}`), json.RawMessage(`{"fields":[]}`), workflow); reason != "processing_mode_unavailable" {
-		t.Fatalf("auto accept public gate = %q", reason)
+	for _, mode := range []string{intakeCollectOnly, intakeDirectManualDecision, intakeAutoAccept} {
+		if reason := publicSubmissionUnavailableReason(mode, json.RawMessage(`{}`), json.RawMessage(`{"fields":[]}`), workflow); reason != "" {
+			t.Fatalf("mode %s should ignore dormant review snapshot: %q", mode, reason)
+		}
 	}
 	if reason := publicSubmissionUnavailableReason(intakeSingleRoundDecision, json.RawMessage(`{}`), json.RawMessage(`{"fields":[]}`), workflow); reason != "auto_accept_unavailable" {
 		t.Fatalf("auto-accept review recipe must not run as manual decision: %q", reason)

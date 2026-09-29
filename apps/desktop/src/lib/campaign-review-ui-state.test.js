@@ -56,3 +56,40 @@ test("collect-only entries never expose decisions or legacy override", () => {
   assert.equal(state.legacyRequired, false);
   assert.equal(state.quorumPending, false);
 });
+
+test("direct manual decisions are available without a ReviewRun and never request legacy override", () => {
+  const state = getEntryReviewDecisionState({
+    canDecide: true,
+    entryStatus: "submitted",
+    reviewStatus: null,
+    hasDecision: false,
+    processingMode: "DIRECT_MANUAL_DECISION",
+  });
+  assert.equal(state.canSubmitDecision, true);
+  assert.equal(state.legacyRequired, false);
+  assert.equal(state.quorumPending, false);
+  assert.equal(state.reasonRequired, false);
+});
+
+test("auto-accept decisions require an existing system result and a reason for human corrections", () => {
+  const missingDecision = getEntryReviewDecisionState({
+    canDecide: true,
+    entryStatus: "accepted",
+    reviewStatus: null,
+    hasDecision: false,
+    processingMode: "AUTO_ACCEPT",
+  });
+  assert.equal(missingDecision.canSubmitDecision, false);
+  assert.equal(missingDecision.reasonRequired, true);
+  assert.equal(missingDecision.legacyRequired, false);
+
+  const correctable = getEntryReviewDecisionState({
+    canDecide: true,
+    entryStatus: "accepted",
+    reviewStatus: null,
+    hasDecision: true,
+    processingMode: "AUTO_ACCEPT",
+  });
+  assert.equal(correctable.canSubmitDecision, true);
+  assert.equal(correctable.reasonRequired, true);
+});

@@ -1,17 +1,17 @@
 # 表单提交后处理与 ReviewRecipe 契约 V1
 
-状态：2026-09-28 第一批。四种方式定义语义；目前只有单轮审核后人工决定可发布和公开收件。
+状态：2026-09-29。四种处理方式均可发布和公开收件；审核配方只参与“单轮审核后人工决定”路径。
 
 ## 处理方式（稳定标识）
 
 | 标识 | 新 Entry 与执行 | 权限 | 容量与收件 |
 |---|---|---|---|
 | `COLLECT_ONLY` 仅收集 | `submitted`；不创建 ReviewRun、任务或 Decision | `campaign.view` 查看 | 开放时间、总提交上限、每邮箱次数约束收件；接受容量和候补不适用 |
-| `DIRECT_MANUAL_DECISION` 免评审、人工决定 | `submitted`；不创建审核任务 | `campaign.decide` 直接接受、候补、拒绝或修正 | 收件不受接受容量约束；决定时检查接受容量、候补开关和候补上限 |
+| `DIRECT_MANUAL_DECISION` 免评审、人工决定 | `submitted`；不创建 ReviewRun、审核任务或初始 Decision | `campaign.decide` 直接接受、候补、拒绝或修正 | 收件不受接受容量约束；决定时检查接受容量、候补开关和候补上限 |
 | `MANUAL_DECISION` 单轮审核后决定 | `in_review`；原子创建 ReviewRun 和审核任务；达到反馈门槛后由人工决定 | 当前任务分配者凭 `campaign.review` 反馈；`campaign.manage` 维护分配；`campaign.decide` 作决定 | 收件上限在提交时检查；接受/候补上限在决定时检查 |
-| `AUTO_ACCEPT` 自动接受 | 同一提交事务创建系统来源 Decision，Entry 为 `accepted`；不建审核任务 | 系统作初始决定；`campaign.decide` 可作留痕修正 | 提交时检查接受容量；满额返回冲突、不创建 Entry、不自动候补；公开 GET 显示不可提交 |
+| `AUTO_ACCEPT` 自动接受 | 同一提交事务创建系统主体 Decision，Entry 为 `accepted`；不建 ReviewRun 或审核任务 | `campaign.decide` 可追加人工修正；每次修正必须填写原因 | 提交时检查接受容量；满额返回冲突、不创建 Entry、不自动候补；公开 GET 显示不可提交 |
 
-`AUTO_ACCEPT` 是自动作出最终结果，**不是**公开页的中性“已收到提交”回执。以上标识不能共用或通过有无轮次推断。未来三种方式当前没有运行时，不能发布、公开提交或出现在业务选择器；设计文档不意味着已实现。截止后才开始审核、通知、评分、多轮、补件和 Materialization 也不在第一批。
+`AUTO_ACCEPT` 是自动作出最终结果，**不是**公开页的中性“已收到提交”回执。系统 Decision 使用 `actor_type=system`、空 `decided_by`，并记录自动化标识、公开提交触发源及 Campaign Revision；后续人工决定通过 supersede 链追加，绝不覆盖系统历史。四种稳定标识互斥且均出现在处理方式选择器；审核来源与参数只在单轮人工审核模式下执行，其他模式保留的快照不参与校验或运行。截止后集中审核、通知、评分、多轮、补件和 Materialization 仍不在当前运行时内。
 
 ## 当前可运行的不可变系统版本
 
@@ -46,7 +46,7 @@ ReviewRecipeVersion（已发布的系统来源）
 
 来源版本 ID 是出处；模板和 Campaign Revision 各自保存**完整独立快照**，实际执行只读 Entry 固定的 Campaign Revision。模板或系统方案后续升级，不重写已发布 Revision、Entry、任务或意见。新建 Campaign 的明确优先级是：请求内完整 `review_workflow`、请求内指定的来源版本、模板自己的工作流快照、工作空间默认方案。模板快照不得被它链接的来源版本无意覆盖。
 
-草稿可以没有审核人，但草稿校验和发布必须分别指出缺少已发布来源、有效审核人或不可达门槛。发布和公开提交都拒绝不兼容单轮定义；公开 GET 也报告不可提交。只有一个并行轮次、二元建议、禁用补件和人工最终决定可运行。`campaign.review`、`campaign.manage`、`campaign.decide` 在每个请求上分别授权，`campaign.materialize` 不在第一批授予。
+单轮人工审核草稿可以没有审核人，但草稿校验和发布必须指出缺少已发布来源、有效审核人或不可达门槛。只有该模式校验单轮审核快照；其他三种方式忽略其保留的审核配置。四种模式都校验表单、开放策略及适用的收件限制。`campaign.review`、`campaign.manage`、`campaign.decide` 在每个请求上分别授权，`campaign.materialize` 当前仍未开放。
 
 ## 工作空间有效目录
 
@@ -65,7 +65,7 @@ PATCH /v1/workspaces/{id}/settings        Owner/Admin 可更新目录和默认 k
 
 ## 当前单轮运行时
 
-公开提交在 Campaign 行锁下核对预期 Revision、幂等键、开放和次数规则；成功时同一事务写 Entry `in_review`、EntryRevision、ReviewRun 和当前有效审核人的任务。相同请求幂等重放不重复建任务。ReviewRun 保存 Revision、答案版本、完成门槛和分配快照。达到门槛后未完成任务仍可反馈；最终 Decision 提交后关闭它们。反馈、改派和决定按 ReviewRun 行锁串行化；意见修订和 Decision 修正只追加历史，不覆盖旧记录。
+公开提交在 Campaign 行锁下核对预期 Revision、幂等键、开放和收件次数规则；相同的成功请求先于 Revision 检查回放。`COLLECT_ONLY` 与 `DIRECT_MANUAL_DECISION` 在同一事务创建 `submitted` Entry 和 EntryRevision，不创建 ReviewRun；前者不支持决定，后者由 `campaign.decide` 直接作决定。`AUTO_ACCEPT` 在同一事务检查容量并创建 `accepted` Entry、EntryRevision、系统 Decision 及当前决定指针；GET 的满额提示只是预检，竞态中的 POST 仍会返回容量冲突且不留下半成品。`MANUAL_DECISION` 在同一事务创建 `in_review` Entry、EntryRevision、ReviewRun 和当前有效审核人的任务。相同请求幂等重放不重复建任务或系统决定。ReviewRun 保存 Revision、答案版本、完成门槛和分配快照。达到门槛后未完成任务仍可反馈；最终 Decision 提交后关闭它们。反馈、改派和决定按 ReviewRun 行锁串行化；意见修订和 Decision 修正只追加历史，不覆盖旧记录。
 
 当前 API：
 

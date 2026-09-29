@@ -114,7 +114,8 @@ type entryDecisionResponse struct {
 	ID        string          `json:"id"`
 	Type      string          `json:"type"`
 	Reason    string          `json:"reason"`
-	DecidedBy string          `json:"decided_by"`
+	ActorType string          `json:"actor_type"`
+	DecidedBy *string         `json:"decided_by"`
 	DecidedAt time.Time       `json:"decided_at"`
 	Metadata  json.RawMessage `json:"metadata"`
 }
@@ -503,7 +504,7 @@ func (app *application) loadEntryResponseByID(ctx context.Context, access entryA
 	}
 	entry.ProcessingMode = revision.ProcessingMode
 	response.CanDecide = access.Access.Permissions[campaignDecide] && entry.ProcessingMode != intakeCollectOnly
-	response.CanManageReview = access.Access.Permissions[campaignManage] && entry.ProcessingMode != intakeCollectOnly
+	response.CanManageReview = access.Access.Permissions[campaignManage] && entry.ProcessingMode == intakeSingleRoundDecision
 	response.Entry = entry
 	response.FormVersion = revision.FormVersion
 	var current entryRevisionResponse
@@ -517,13 +518,13 @@ func (app *application) loadEntryResponseByID(ctx context.Context, access entryA
 		return response, err
 	}
 	var decision entryDecisionResponse
-	err = app.db.QueryRow(ctx, `SELECT id,type,reason,decided_by,decided_at,metadata FROM decisions WHERE workspace_id=$1 AND entry_id=$2 AND is_current=true`, access.WorkspaceID, entryID).Scan(&decision.ID, &decision.Type, &decision.Reason, &decision.DecidedBy, &decision.DecidedAt, &decision.Metadata)
+	err = app.db.QueryRow(ctx, `SELECT id,type,reason,actor_type,decided_by,decided_at,metadata FROM decisions WHERE workspace_id=$1 AND entry_id=$2 AND is_current=true`, access.WorkspaceID, entryID).Scan(&decision.ID, &decision.Type, &decision.Reason, &decision.ActorType, &decision.DecidedBy, &decision.DecidedAt, &decision.Metadata)
 	if err == nil {
 		response.Decision = &decision
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return response, err
 	}
-	decisionRows, err := app.db.Query(ctx, `SELECT id,type,reason,decided_by,decided_at,metadata FROM decisions WHERE workspace_id=$1 AND entry_id=$2 ORDER BY decided_at DESC,id DESC`, access.WorkspaceID, entryID)
+	decisionRows, err := app.db.Query(ctx, `SELECT id,type,reason,actor_type,decided_by,decided_at,metadata FROM decisions WHERE workspace_id=$1 AND entry_id=$2 ORDER BY decided_at DESC,id DESC`, access.WorkspaceID, entryID)
 	if err != nil {
 		return response, err
 	}
@@ -531,7 +532,7 @@ func (app *application) loadEntryResponseByID(ctx context.Context, access entryA
 	response.DecisionHistory = []entryDecisionResponse{}
 	for decisionRows.Next() {
 		var item entryDecisionResponse
-		if err := decisionRows.Scan(&item.ID, &item.Type, &item.Reason, &item.DecidedBy, &item.DecidedAt, &item.Metadata); err != nil {
+		if err := decisionRows.Scan(&item.ID, &item.Type, &item.Reason, &item.ActorType, &item.DecidedBy, &item.DecidedAt, &item.Metadata); err != nil {
 			return response, err
 		}
 		response.DecisionHistory = append(response.DecisionHistory, item)
@@ -626,11 +627,6 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 		errorJSON(w, http.StatusUnprocessableEntity, "decision_reason_required", "拒绝提交时必须填写原因")
 		return
 	}
-	if input.LegacyOverride && reason == "" {
-		errorJSON(w, http.StatusUnprocessableEntity, "legacy_decision_reason_required", "遗留流程覆盖必须填写处理原因")
-		return
-	}
-
 	tx, err := app.db.Begin(r.Context())
 	if err != nil {
 		serverError(w, err)
@@ -667,51 +663,73 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 		errorJSON(w, http.StatusConflict, "decision_not_applicable", "该提交采用仅收集方式，不支持人工决定或遗留覆盖")
 		return
 	}
+	if processingMode != intakeDirectManualDecision && processingMode != intakeSingleRoundDecision && processingMode != intakeAutoAccept {
+		errorJSON(w, http.StatusConflict, "processing_mode_unavailable", "该提交的处理方式不支持人工决定")
+		return
+	}
+	if (processingMode == intakeDirectManualDecision || processingMode == intakeAutoAccept) && input.LegacyOverride {
+		errorJSON(w, http.StatusConflict, "legacy_override_not_applicable", "该处理方式不使用遗留流程覆盖")
+		return
+	}
+	if input.LegacyOverride && reason == "" {
+		errorJSON(w, http.StatusUnprocessableEntity, "legacy_decision_reason_required", "遗留流程覆盖必须填写处理原因")
+		return
+	}
+	if processingMode == intakeAutoAccept && reason == "" {
+		errorJSON(w, http.StatusUnprocessableEntity, "decision_reason_required", "修正自动接受结果时必须填写原因")
+		return
+	}
+	if processingMode == intakeAutoAccept && currentDecisionID == nil {
+		errorJSON(w, http.StatusConflict, "auto_accept_decision_missing", "自动接受结果记录缺失，暂不能修改该提交")
+		return
+	}
 	if deletedAt != nil || (!canChangeEntryDecision(currentStatus) && !(currentStatus == "needs_changes" && input.LegacyOverride)) {
 		errorJSON(w, http.StatusConflict, "entry_decision_not_allowed", "当前提交状态不能作出或修正决定")
 		return
 	}
 	var runID, runStatus string
-	runErr := tx.QueryRow(r.Context(), `SELECT id,status FROM entry_review_runs WHERE workspace_id=$1 AND entry_id=$2 FOR UPDATE`, access.WorkspaceID, entryID).Scan(&runID, &runStatus)
 	legacyOverride := false
-	if errors.Is(runErr, pgx.ErrNoRows) {
-		if !input.LegacyOverride {
-			errorJSON(w, http.StatusConflict, "review_run_required", "该提交没有可完成的审核运行；如需处理存量流程，请使用遗留流程覆盖并填写原因")
-			return
-		}
-		legacyOverride = true
-	} else if runErr != nil {
-		serverError(w, runErr)
-		return
-	} else {
-		switch runStatus {
-		case "blocked_unsupported":
+	if processingMode == intakeSingleRoundDecision {
+		runErr := tx.QueryRow(r.Context(), `SELECT id,status FROM entry_review_runs WHERE workspace_id=$1 AND entry_id=$2 FOR UPDATE`, access.WorkspaceID, entryID).Scan(&runID, &runStatus)
+		if errors.Is(runErr, pgx.ErrNoRows) {
 			if !input.LegacyOverride {
-				errorJSON(w, http.StatusConflict, "legacy_override_required", "此存量审核配置不兼容；需使用遗留流程覆盖并填写原因")
+				errorJSON(w, http.StatusConflict, "review_run_required", "该提交没有可完成的审核运行；如需处理存量流程，请使用遗留流程覆盖并填写原因")
 				return
 			}
 			legacyOverride = true
-		case "ready_for_decision", "decided", "legacy_override_decided":
-			if input.LegacyOverride {
-				errorJSON(w, http.StatusConflict, "legacy_override_not_applicable", "此审核运行不需要遗留流程覆盖")
-				return
-			}
-			// A later Decision may supersede a prior one without rerunning review.
-		default:
-			if input.LegacyOverride {
-				errorJSON(w, http.StatusConflict, "legacy_override_not_applicable", "当前审核配置可正常运行，不能使用遗留流程覆盖")
-				return
-			}
-			if currentDecisionID == nil {
-				errorJSON(w, http.StatusConflict, "review_quorum_not_met", "审核任务尚未达到最终决定门槛")
-				return
+		} else if runErr != nil {
+			serverError(w, runErr)
+			return
+		} else {
+			switch runStatus {
+			case "blocked_unsupported":
+				if !input.LegacyOverride {
+					errorJSON(w, http.StatusConflict, "legacy_override_required", "此存量审核配置不兼容；需使用遗留流程覆盖并填写原因")
+					return
+				}
+				legacyOverride = true
+			case "ready_for_decision", "decided", "legacy_override_decided":
+				if input.LegacyOverride {
+					errorJSON(w, http.StatusConflict, "legacy_override_not_applicable", "此审核运行不需要遗留流程覆盖")
+					return
+				}
+				// A later Decision may supersede a prior one without rerunning review.
+			default:
+				if input.LegacyOverride {
+					errorJSON(w, http.StatusConflict, "legacy_override_not_applicable", "当前审核配置可正常运行，不能使用遗留流程覆盖")
+					return
+				}
+				if currentDecisionID == nil {
+					errorJSON(w, http.StatusConflict, "review_quorum_not_met", "审核任务尚未达到最终决定门槛")
+					return
+				}
 			}
 		}
 	}
 	if decisionType == "accept" {
 		if limit := policyLimit(availability, "capacity"); limit > 0 {
-			var count int64
-			if err := tx.QueryRow(r.Context(), `SELECT COUNT(*) FROM entries WHERE workspace_id=$1 AND campaign_id=$2 AND id<>$3 AND deleted_at IS NULL AND status IN ('accepted','converted')`, access.WorkspaceID, access.CampaignID, entryID).Scan(&count); err != nil {
+			count, err := countCampaignCapacityEntries(r.Context(), tx, access.WorkspaceID, access.CampaignID, entryID)
+			if err != nil {
 				serverError(w, err)
 				return
 			}
@@ -754,12 +772,15 @@ func (app *application) createEntryDecision(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	decision := entryDecisionResponse{ID: newID(), Type: decisionType, Reason: reason, DecidedBy: claims(r).Subject}
+	decidedBy := claims(r).Subject
+	decision := entryDecisionResponse{ID: newID(), Type: decisionType, Reason: reason, ActorType: "user", DecidedBy: &decidedBy}
 	metadata := json.RawMessage(`{}`)
 	if legacyOverride {
 		metadata = json.RawMessage(`{"legacy_override":true}`)
+	} else if processingMode == intakeAutoAccept {
+		metadata = json.RawMessage(`{"manual_correction":"auto_accept","processing_mode":"AUTO_ACCEPT"}`)
 	}
-	if err = tx.QueryRow(r.Context(), `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,reason,supersedes_id,decided_by,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING decided_at,metadata`, decision.ID, access.WorkspaceID, entryID, access.CampaignID, decision.Type, decision.Reason, previousDecisionID, decision.DecidedBy, metadata).Scan(&decision.DecidedAt, &decision.Metadata); err != nil {
+	if err = tx.QueryRow(r.Context(), `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,actor_type,reason,supersedes_id,decided_by,metadata) VALUES($1,$2,$3,$4,$5,'user',$6,$7,$8,$9) RETURNING decided_at,metadata`, decision.ID, access.WorkspaceID, entryID, access.CampaignID, decision.Type, decision.Reason, previousDecisionID, decision.DecidedBy, metadata).Scan(&decision.DecidedAt, &decision.Metadata); err != nil {
 		serverError(w, err)
 		return
 	}

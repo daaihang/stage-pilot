@@ -3,7 +3,7 @@ package main
 // Campaign/结果契约迁移集成测试。
 //
 // 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
-// 执行到 schema 30 或更新版本时运行；这样普通的 go test ./... 不需要本地数据库。
+// 执行到 migration 54 或更新版本时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (
 	"encoding/json"
@@ -34,12 +34,12 @@ func expectMigrationConstraintError(t *testing.T, tx pgx.Tx, query string, args 
 func requireCampaignSchemaV1(t *testing.T, app *application) {
 	t.Helper()
 	var version string
-	if err := app.db.QueryRow(t.Context(), `SELECT value->>'version' FROM app_metadata WHERE key='schema'`).Scan(&version); err != nil {
+	if err := app.db.QueryRow(t.Context(), `SELECT version::text FROM schema_migrations WHERE dirty=false`).Scan(&version); err != nil {
 		t.Skipf("campaign migration schema unavailable: %v", err)
 	}
 	versionNumber, parseErr := strconv.Atoi(version)
-	if parseErr != nil || versionNumber < 30 {
-		t.Skipf("campaign migration schema is %s, want >=30", version)
+	if parseErr != nil || versionNumber < 54 {
+		t.Skipf("campaign migration schema is %s, want >=54", version)
 	}
 	tables := []string{
 		"production_programs", "production_people", "production_registrations", "requirements", "resource_commitments",
@@ -63,6 +63,13 @@ func requireCampaignSchemaV1(t *testing.T, app *application) {
 		if registered == nil {
 			t.Fatalf("table %s missing at campaign schema", table)
 		}
+	}
+	var actorTypeColumn bool
+	if err := app.db.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='decisions' AND column_name='actor_type')`).Scan(&actorTypeColumn); err != nil {
+		t.Fatal(err)
+	}
+	if !actorTypeColumn {
+		t.Fatal("decision actor type migration missing")
 	}
 	if versionNumber >= 44 {
 		var indexExists bool

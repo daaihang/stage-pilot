@@ -344,6 +344,19 @@ func (app *application) publicCampaign(w http.ResponseWriter, r *http.Request) {
 			reason = unavailable
 		}
 	}
+	if accepting && processingMode == intakeAutoAccept {
+		if capacity := policyLimit(policyMap, "capacity"); capacity > 0 {
+			accepted, countErr := countCampaignCapacityEntries(r.Context(), app.db, workspaceID, campaignID, "")
+			if countErr != nil {
+				serverError(w, countErr)
+				return
+			}
+			if accepted >= capacity {
+				accepting = false
+				reason = "campaign_capacity_reached"
+			}
+		}
+	}
 	if _, err := app.db.Exec(r.Context(), `UPDATE campaign_share_links SET last_accessed_at=NOW() WHERE id=$1`, shareID); err != nil {
 		serverError(w, err)
 		return
@@ -522,6 +535,19 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	if processingMode == intakeAutoAccept {
+		if capacity := policyLimit(policyMap, "capacity"); capacity > 0 {
+			accepted, countErr := countCampaignCapacityEntries(r.Context(), tx, workspaceID, campaignID, "")
+			if countErr != nil {
+				serverError(w, countErr)
+				return
+			}
+			if accepted >= capacity {
+				errorJSON(w, http.StatusConflict, "campaign_capacity_reached", "自动接受名额已满，当前无法提交")
+				return
+			}
+		}
+	}
 	answerBytes, _ := json.Marshal(runtimeResult.Answers)
 	if _, err = tx.Exec(r.Context(), `INSERT INTO campaign_public_submission_idempotency(id,workspace_id,campaign_id,share_link_id,idempotency_key_hash,request_hash,status) VALUES($1,$2,$3,$4,$5,$6,'pending')`, newID(), workspaceID, campaignID, shareID, keyHash, requestHash); err != nil {
 		serverError(w, err)
@@ -539,6 +565,28 @@ func (app *application) publicCampaignSubmit(w http.ResponseWriter, r *http.Requ
 	}
 	if contract.CreatesReviewRun {
 		if err = createEntryReviewRun(r.Context(), tx, workspaceID, productionID, revisionID, entryID, entryRevisionID, reviewWorkflow); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+	if contract.CreatesDecision {
+		decisionID := newID()
+		metadata := map[string]any{
+			"automation":           "AUTO_ACCEPT",
+			"trigger":              "public_submission",
+			"campaign_revision_id": revisionID,
+		}
+		metadataJSON, marshalErr := json.Marshal(metadata)
+		if marshalErr != nil {
+			serverError(w, marshalErr)
+			return
+		}
+		if _, err = tx.Exec(r.Context(), `INSERT INTO decisions(id,workspace_id,entry_id,campaign_id,type,actor_type,reason,decided_by,metadata)
+			VALUES($1,$2,$3,$4,'accept','system','',NULL,$5)`, decisionID, workspaceID, entryID, campaignID, metadataJSON); err != nil {
+			serverError(w, err)
+			return
+		}
+		if _, err = tx.Exec(r.Context(), `UPDATE entries SET current_decision_id=$1,last_activity_at=NOW(),updated_at=NOW() WHERE id=$2 AND workspace_id=$3`, decisionID, entryID, workspaceID); err != nil {
 			serverError(w, err)
 			return
 		}

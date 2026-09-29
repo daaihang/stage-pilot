@@ -256,6 +256,7 @@ function mapDecision(value) {
     id: value.id,
     type: value.type,
     reason: value.reason || "",
+    actorType: value.actor_type || "user",
     decidedBy: value.decided_by,
     decidedAt: value.decided_at,
     metadata: value.metadata || {},

@@ -17,7 +17,9 @@ import { resolveSelectItems } from "@/lib/select-options";
 const roles = { producer: "Producer", editor: "Editor", stage_manager: "Stage Manager", contributor: "Contributor", viewer: "Viewer" };
 const processingModes = [
   { value: "COLLECT_ONLY", label: "仅收集" },
+  { value: "DIRECT_MANUAL_DECISION", label: "免评审人工决定" },
   { value: "MANUAL_DECISION", label: "单轮人工审核后决定" },
+  { value: "AUTO_ACCEPT", label: "自动接受" },
 ];
 
 function newRound(source = {}) {
@@ -147,10 +149,24 @@ export function CampaignReviewEditor() {
     applyRecipe(recipe);
   };
 
-  if (processingMode === "COLLECT_ONLY") {
+  if (processingMode !== "MANUAL_DECISION") {
+    const processingModeCopy = {
+      COLLECT_ONLY: {
+        title: "仅收集",
+        description: "提交后只保存 Entry 和答案版本，不创建审核任务或决定；工作人员可查看记录，但不能从该路径作出接受、候补或拒绝决定。",
+      },
+      DIRECT_MANUAL_DECISION: {
+        title: "免评审人工决定",
+        description: "提交后 Entry 保持“已提交”，不创建审核任务；具备决定权限的成员可直接接受、候补或拒绝。",
+      },
+      AUTO_ACCEPT: {
+        title: "自动接受",
+        description: "公开提交事务会同时写入 accepted Entry 和系统 Decision；容量满时停止收件，竞态提交会收到明确冲突。",
+      },
+    }[processingMode];
     return <Card>
-      <CardHeader><CardTitle className="text-sm">仅收集</CardTitle><CardDescription>提交后只保存 Entry 和答案版本，不创建审核任务或决定；工作人员可查看记录，但不能从该路径作出接受、候补或拒绝决定。</CardDescription></CardHeader>
-      <CardContent className="space-y-4">{processingModeField}<div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">原有审核方案来源与参数已保留为未启用草稿配置。切回人工审核时，这些参数会重新参与校验；请检查来源、审核人和完成门槛后再发布。</div></CardContent>
+      <CardHeader><CardTitle className="text-sm">{processingModeCopy?.title || "处理方式"}</CardTitle><CardDescription>{processingModeCopy?.description}</CardDescription></CardHeader>
+      <CardContent className="space-y-4">{processingModeField}<div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">原有审核方案来源与参数保留为未启用草稿配置，不会运行。切回单轮人工审核时，这些参数会重新参与发布校验。</div></CardContent>
     </Card>;
   }
 
