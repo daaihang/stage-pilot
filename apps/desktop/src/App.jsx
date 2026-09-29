@@ -219,7 +219,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtool
     compactMenuMeasureRef,
     rightControlsRef: titlebarRightControlsRef,
   });
-  const { status: workspaceStatus, workspaces, currentWorkspace, switchWorkspace, adoptCreatedWorkspace, refreshWorkspaces, error: workspaceError, retry: retryWorkspaces } = useWorkspaceContext();
+  const { status: workspaceStatus, workspaces, currentWorkspace, switchWorkspace, adoptCreatedWorkspace, refreshWorkspaces, clearWorkspaceCache, error: workspaceError, retry: retryWorkspaces } = useWorkspaceContext();
   const { productionsByWorkspace, creationSession, loadProductions, repository, setProductionsByWorkspaceEntry, createCreationSession, updateCreationSession, discardCreationSession, getCreationSession } = useNavigationData();
   const navigationRepositoryRef = useRef(repository);
   const creationRequestRef = useRef(null);
@@ -233,7 +233,7 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtool
   const shellLayout = resolveAppShellLayout(route);
   const isInviteRoute = route?.mode === "invite";
   const isAccountRoute = route?.mode === "account";
-  const accountReturnPath = isAccountRoute ? resolveAccountReturnTarget(location.search, currentWorkspace ? workspacePath(currentWorkspace.id) : "/workspaces") : null;
+  const accountReturnPath = isAccountRoute ? resolveAccountReturnTarget(location.search, currentWorkspace ? workspacePath(currentWorkspace.id) : "/workspaces", workspaces) : null;
   const accountReturnRoute = accountReturnPath ? matchStagePilotRoute(accountReturnPath.split("?")[0]) : null;
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
   const [joinInvitationOpen, setJoinInvitationOpen] = useState(false);
@@ -561,7 +561,10 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtool
   const accountReturnWorkspace = accountReturnRoute?.workspaceId ? workspaces.find((item) => item.id === accountReturnRoute.workspaceId) : currentWorkspace;
   const accountReturnLabel = accountReturnProduction
     ? `返回活动：${accountReturnProduction.name}`
-    : accountReturnRoute?.mode === "production" ? "返回活动" : `返回工作空间：${accountReturnWorkspace?.name || "工作空间"}`;
+    : accountReturnRoute?.mode === "production" ? "返回活动"
+      : accountReturnRoute?.mode === "work" ? "返回我的工作"
+        : accountReturnPath === "/workspaces" ? "返回工作空间选择"
+          : `返回工作空间：${accountReturnWorkspace?.name || "工作空间"}`;
   const navigateAccount = useCallback((view = "profile", developerAction) => {
     if (creationRequestRef.current && creationSession) {
       notify.info("正在创建活动，请稍候");
@@ -574,14 +577,20 @@ function RoutedMainShell({ authStatus, user, onUserUpdate, subscription, devtool
     const action = developerAction ? `&action=${encodeURIComponent(developerAction)}` : "";
     navigate(`${accountPath(view, from)}${action}`);
   }, [accountReturnPath, creationRequestPending, creationSession, discardCreationSession, isAccountRoute, location.pathname, location.search, navigate]);
-  const handleShellLogout = useCallback(() => {
+  const handleShellLogout = useCallback(async () => {
     if (creationRequestRef.current && creationSession) {
       notify.info("正在创建活动，请稍候");
       return;
     }
     if (creationSession) discardCreationSession(creationSession.id);
-    onLogout();
-  }, [creationRequestPending, creationSession, discardCreationSession, onLogout]);
+    try {
+      await onLogout();
+      clearWorkspaceCache();
+      navigate("/work", { replace: true });
+    } catch (error) {
+      notify.error("退出登录失败", { description: error instanceof Error ? error.message : String(error) });
+    }
+  }, [creationRequestPending, creationSession, clearWorkspaceCache, discardCreationSession, navigate, onLogout]);
   const handleShellNativeAction = useCallback((action) => {
     if (developerActions.has(action)) {
       if (import.meta.env.DEV) navigateAccount("developer", action);

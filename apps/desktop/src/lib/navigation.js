@@ -207,9 +207,14 @@ export function buildBreadcrumbItems({ route, workspace, production } = {}) {
   return items;
 }
 
-export function resolveAccountReturnTarget(search, fallback) {
+export function resolveAccountReturnTarget(search, fallback, workspaces) {
   const candidate = new URLSearchParams(search || "").get("from");
   if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//") || candidate.startsWith("/account")) return fallback;
+  if (Array.isArray(workspaces)) {
+    const url = new URL(candidate, "https://stagepilot.invalid");
+    const route = matchStagePilotRoute(url.pathname, url.search);
+    if (route?.workspaceId && !workspaces.some((workspace) => workspace.id === route.workspaceId)) return fallback;
+  }
   return candidate;
 }
 

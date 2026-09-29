@@ -5,6 +5,7 @@ import {
   matchStagePilotRoute,
   productionPath,
   resolveContextExit,
+  resolveAccountReturnTarget,
   resolveDetailClose,
   resolvePageBack,
   workspacePath,
@@ -12,6 +13,15 @@ import {
 
 const workspace = { id: "ws_1", name: "演出工作空间", workspaceNavigable: true };
 const production = { id: "prod_1", name: "青年音乐节" };
+
+test("account return targets retain accessible workspaces and reject stale cross-account workspace paths", () => {
+  const fallback = "/workspaces";
+  const allowed = [{ id: "ws_1" }];
+  assert.equal(resolveAccountReturnTarget("?from=%2Fw%2Fws_1%2Fmembers", fallback, allowed), "/w/ws_1/members");
+  assert.equal(resolveAccountReturnTarget("?from=%2Fw%2Fws_other%2Fmembers", fallback, allowed), fallback);
+  assert.equal(resolveAccountReturnTarget("?from=%2Fw%2Fws_other%2Fp%2Fprod_1%2Fforms", fallback, allowed), fallback);
+  assert.equal(resolveAccountReturnTarget("?from=%2Fwork%3Ftab%3Dparticipating", fallback, allowed), "/work?tab=participating");
+});
 
 test("workspace page back resolves to the workspace root", () => {
   const route = matchStagePilotRoute("/w/ws_1/members");
