@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogFormGrid } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogFormGrid, DialogForm } from "@/components/ui/dialog";import { Input } from "@/components/ui/input"
 import { notify } from "@/components/ui/sonner"
 import { createProduction } from "@/lib/production-api"
 import { wallClockToInstant } from "@/lib/date-time"
@@ -80,12 +79,10 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="md">
-        <DialogHeader>
+        <DialogForm onSubmit={submit}><DialogHeader>
           <DialogTitle>新建活动</DialogTitle>
           <DialogDescription>创建后自动进入这场活动的生产空间。</DialogDescription>
-        </DialogHeader><DialogBody>
-        <form className="space-y-3" onSubmit={submit}>
-          <label className="block space-y-1.5">
+        </DialogHeader><DialogBody><div className="space-y-3"><label className="block space-y-1.5">
             <span className="text-sm font-medium">活动名称</span>
             <Input value={form.name} onChange={set("name")} maxLength={120} placeholder="例如：2026 青年音乐节" />
           </label>
@@ -107,14 +104,9 @@ export function CreateProductionDialog({ workspace, open, onOpenChange, onCreate
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">描述（可选）</span>
             <Input value={form.description} onChange={set("description")} maxLength={500} />
-          </label>
-          <DialogFooter className="w-full">
-            <Button type="submit" className="w-full" disabled={creating}>
+          </label></div></DialogBody><DialogFooter layout="standard" primary={<Button type="submit" disabled={creating}>
               {creating ? "创建中..." : "创建活动"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogBody></DialogContent>
+            </Button>} /></DialogForm></DialogContent>
     </Dialog>
   )
 }

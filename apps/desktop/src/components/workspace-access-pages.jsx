@@ -13,7 +13,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogForm } from "@/components/ui/dialog";
 import { DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -138,7 +138,30 @@ function WorkspaceMemberRoleDialog({ member, open, onOpenChange, onSubmit }) {
   useEffect(() => {
     if (open) setRole(member?.role || "member");
   }, [member, open]);
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent size="sm"><DialogHeader><DialogTitle>修改成员角色</DialogTitle><DialogDescription>{member ? `${memberDisplayName(member)} · Workspace 固定角色` : "选择成员角色"}</DialogDescription></DialogHeader><DialogBody><form className="space-y-4" onSubmit={(event) => { event.preventDefault(); onSubmit(role); }}><label className="block space-y-1"><span className="text-sm font-medium">角色</span><Select items={[{ value: "owner", label: "Owner" }, { value: "admin", label: "Admin" }, { value: "member", label: "Member" }]} value={role} onValueChange={setRole}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="owner">Owner</SelectItem><SelectItem value="admin">Admin</SelectItem><SelectItem value="member">Member</SelectItem></SelectContent></Select></label><DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit">保存角色</Button></DialogFooter></form></DialogBody></DialogContent></Dialog>;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="sm">
+        <DialogForm onSubmit={(event) => { event.preventDefault(); onSubmit(role); }}>
+          <DialogHeader>
+            <DialogTitle>修改成员角色</DialogTitle>
+            <DialogDescription>{member ? `${memberDisplayName(member)} · Workspace 固定角色` : "选择成员角色"}</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <div className="space-y-4">
+              <label className="block space-y-1">
+                <span className="text-sm font-medium">角色</span>
+                <Select items={[{ value: "owner", label: "Owner" }, { value: "admin", label: "Admin" }, { value: "member", label: "Member" }]} value={role} onValueChange={setRole}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent><SelectItem value="owner">Owner</SelectItem><SelectItem value="admin">Admin</SelectItem><SelectItem value="member">Member</SelectItem></SelectContent>
+                </Select>
+              </label>
+            </div>
+          </DialogBody>
+          <DialogFooter layout="standard" cancel={<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button>} primary={<Button type="submit">保存角色</Button>} />
+        </DialogForm>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export function WorkspaceMembersPage({ route, workspace }) {
@@ -304,7 +327,7 @@ export function WorkspaceMembersPage({ route, workspace }) {
     >
       <ListSurface className="overflow-x-auto"><MemberTable members={filteredMembers} onAction={memberActions} /></ListSurface>
       <WorkspaceMemberRoleDialog member={memberDialog?.member} open={memberDialog?.type === "role"} onOpenChange={(open) => !open && setMemberDialog(null)} onSubmit={saveMemberRole} />
-      <AlertDialog open={memberDialog?.type === "revoke"} onOpenChange={(open) => !open && setMemberDialog(null)}><AlertDialogContent size="sm"><AlertDialogHeader><AlertDialogTitle>移除工作空间成员</AlertDialogTitle><AlertDialogDescription>{memberDialog?.member ? `确认移除 ${memberDisplayName(memberDialog.member)}？这会软撤销 Workspace 访问，但不会自动撤销其独立的 Production 访问。` : "确认移除该成员？"}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>取消</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={removeMember}>确认移除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+      <AlertDialog open={memberDialog?.type === "revoke"} onOpenChange={(open) => !open && setMemberDialog(null)}><AlertDialogContent size="sm"><AlertDialogHeader><AlertDialogTitle>移除工作空间成员</AlertDialogTitle><AlertDialogDescription>{memberDialog?.member ? `确认移除 ${memberDisplayName(memberDialog.member)}？这会软撤销 Workspace 访问，但不会自动撤销其独立的 Production 访问。` : "确认移除该成员？"}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter layout="standard" cancel={<AlertDialogCancel>取消</AlertDialogCancel>} primary={<AlertDialogAction variant="destructive" onClick={removeMember}>确认移除</AlertDialogAction>} /></AlertDialogContent></AlertDialog>
     </ResourcePage>
   );
 }

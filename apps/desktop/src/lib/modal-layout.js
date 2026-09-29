@@ -50,6 +50,35 @@ export function resolveDialogFormGridColumns(
   return Number(containerWidth) >= minColumnWidth * 2 + gap ? 2 : 1;
 }
 
+export function resolveDialogFooterMode({
+  dialogWidth,
+  maxDialogWidth,
+  availableWidth,
+  naturalActionsWidth,
+  layout = "standard",
+} = {}) {
+  if (layout === "auth") return "wide";
+  const measured = [dialogWidth, maxDialogWidth, availableWidth, naturalActionsWidth]
+    .every((value) => Number.isFinite(Number(value)));
+  if (!measured) return "compact";
+  const hostConstrained = maxDialogWidth > 0 && dialogWidth < maxDialogWidth - 1;
+  const actionsDoNotFit = naturalActionsWidth > availableWidth + 1;
+  return hostConstrained || actionsDoNotFit ? "compact" : "wide";
+}
+
+export function resolveDialogFooterArrangement({ layout = "standard", mode = "wide", hasCancel = true } = {}) {
+  if (layout === "auth") {
+    return { direction: "row", alignment: "center", cancelPlacement: "hidden", primaryWidth: "full" };
+  }
+  if (mode === "compact") {
+    return { direction: "column", alignment: "stretch", cancelPlacement: hasCancel ? "first" : "none", primaryWidth: "full" };
+  }
+  if (layout === "wizard") {
+    return { direction: "row", alignment: "space-between", cancelPlacement: hasCancel ? "left" : "none", primaryWidth: "content" };
+  }
+  return { direction: "row", alignment: "end", cancelPlacement: hasCancel ? "grouped-first" : "none", primaryWidth: "content" };
+}
+
 export function pushModalDialog(stack, id) {
   return [...stack.filter((currentId) => currentId !== id), id];
 }

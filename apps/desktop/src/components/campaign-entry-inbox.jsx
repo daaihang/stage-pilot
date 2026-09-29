@@ -4,7 +4,7 @@ import { CampaignFormRenderer } from "@/components/campaign-form-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogForm } from "@/components/ui/dialog";
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -81,24 +81,15 @@ function DecisionDialog({ actionType, busy, legacyRequired, reasonRequired, proc
   if (!action) return null;
   return (
     <Dialog open={Boolean(actionType)} onOpenChange={(open) => !busy && onOpenChange(open)}>
-      <DialogContent size="sm"><DialogBody>
-        <form className="grid gap-4" onSubmit={(event) => void submit(event)}>
-          <DialogHeader>
+      <DialogContent size="sm"><DialogForm onSubmit={(event) => void submit(event)}><DialogHeader>
             <DialogTitle>确认{action.label}提交</DialogTitle>
             <DialogDescription>{legacyRequired ? "当前 Entry 属于未兼容的存量审核流程。覆盖操作会留存处理原因与审计标记。" : processingMode === "AUTO_ACCEPT" ? "人工修正自动接受结果必须填写原因；新决定会追加到历史，不会覆盖系统 Decision。" : actionType === "reject" ? "拒绝原因将作为当前决定的一部分保存，并向可查看该 Entry 的成员展示。" : "此操作会追加一条决定记录，并将 Entry 状态更新为当前决定结果。"}</DialogDescription>
-          </DialogHeader>
-          {legacyRequired ? <label className="flex items-start gap-2 text-xs"><Checkbox checked={legacyOverride} onCheckedChange={(checked) => setLegacyOverride(checked === true)} /><span>我确认按存量流程覆盖此审核结果</span></label> : null}
+          </DialogHeader><DialogBody><div className="grid gap-4">{legacyRequired ? <label className="flex items-start gap-2 text-xs"><Checkbox checked={legacyOverride} onCheckedChange={(checked) => setLegacyOverride(checked === true)} /><span>我确认按存量流程覆盖此审核结果</span></label> : null}
           <Field data-invalid={missingReason || undefined}>
             <FieldLabel htmlFor="entry-decision-reason">{legacyRequired ? "遗留流程处理原因" : processingMode === "AUTO_ACCEPT" ? "修正自动接受原因" : "决定备注"}{requiresReason ? "（必填）" : "（可选）"}</FieldLabel>
             <Textarea id="entry-decision-reason" value={reason} onChange={(event) => setReason(event.target.value)} disabled={busy} aria-invalid={missingReason || undefined} aria-describedby={missingReason ? "entry-decision-reason-error" : undefined} autoFocus />
             {missingReason ? <FieldError id="entry-decision-reason-error">{processingMode === "AUTO_ACCEPT" ? "请填写修正自动接受结果的原因。" : legacyRequired ? "请填写遗留流程处理原因。" : "请填写拒绝原因。"}</FieldError> : null}
-          </Field>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button>
-            <Button type="submit" variant={action.variant} disabled={busy || (legacyRequired && !legacyOverride)}>{busy ? "正在保存…" : "确认" + action.label}</Button>
-          </DialogFooter>
-        </form>
-      </DialogBody></DialogContent>
+          </Field></div></DialogBody><DialogFooter layout="standard" cancel={<Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>取消</Button>} primary={<Button type="submit" variant={action.variant} disabled={busy || (legacyRequired && !legacyOverride)}>{busy ? "正在保存…" : "确认" + action.label}</Button>} /></DialogForm></DialogContent>
     </Dialog>
   );
 }

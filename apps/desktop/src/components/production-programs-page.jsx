@@ -640,9 +640,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
                 : `将“${dialog?.program?.name || "此节目"}”复制为新的活动节目草稿。`}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction
+          <AlertDialogFooter layout="standard" cancel={<AlertDialogCancel>取消</AlertDialogCancel>} primary={<AlertDialogAction
               onClick={() =>
                 dialog?.type === "archive"
                   ? archiveProgram(dialog.program)
@@ -650,8 +648,7 @@ export function ProductionProgramsPage({ route, workspace, production }) {
               }
             >
               {dialog?.type === "archive" ? "确认归档" : "复制草稿"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
+            </AlertDialogAction>} />
         </AlertDialogContent>
       </AlertDialog>
     </div>

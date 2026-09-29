@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { RiCloseLine } from "@/components/ui/icons"
 import { ModalDialogScopeContext, useAppModalLayer, useTrackedDialogState } from "@/components/modal-layer-context"
-import { useModalBodyClearance } from "@/components/modal-body-clearance"
+import { DialogFooterLayout } from "@/components/ui/dialog-footer-layout"
 
 const dialogSizes = { sm: "24rem", md: "32rem", lg: "42rem", xl: "52rem" }
 
@@ -99,6 +99,7 @@ function DialogContent({
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
+        data-dialog-size={normalizedSize}
         data-modal-top={isTop ? "true" : "false"}
         inert={!isTop || !open ? "" : undefined}
         aria-hidden={!isTop || !open || undefined}
@@ -145,37 +146,19 @@ function DialogHeader({
 }
 
 function DialogBody({ className, ...props }) {
-  const bodyRef = useModalBodyClearance()
-  return <div ref={bodyRef} data-slot="dialog-body" className={cn("app-dialog-body min-h-0 min-w-0 flex-1 overflow-y-auto", className)} {...props} />
+  return <div data-slot="dialog-body" className={cn("app-dialog-body min-h-0 min-w-0 flex-1 overflow-y-auto", className)} {...props} />
+}
+
+function DialogForm({ className, ...props }) {
+  return <form data-slot="dialog-form" className={cn("app-dialog-form flex min-h-0 min-w-0 flex-1 flex-col gap-4", className)} {...props} />
 }
 
 function DialogFormGrid({ className, ...props }) {
   return <div data-slot="dialog-form-grid" className={cn("app-dialog-form-grid grid min-w-0 gap-3", className)} {...props} />
 }
 
-function DialogFooter({
-  className,
-  showCloseButton = false,
-  children,
-  ...props
-}) {
-  return (
-    <div
-      data-slot="dialog-footer"
-      className={cn(
-        "flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:justify-end",
-        className
-      )}
-      {...props}
-    >
-      {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close render={<Button variant="outline" />}>
-          Close
-        </DialogPrimitive.Close>
-      )}
-    </div>
-  )
+function DialogFooter({ className, layout, cancel, secondary, primary, ...props }) {
+  return <DialogFooterLayout slot="dialog-footer" className={className} layout={layout} cancel={cancel} secondary={secondary} primary={primary} {...props} />
 }
 
 function DialogTitle({
@@ -214,6 +197,7 @@ export {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogFormGrid,
   DialogHeader,
   DialogOverlay,

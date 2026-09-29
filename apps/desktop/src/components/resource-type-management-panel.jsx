@@ -7,7 +7,7 @@ import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogForm } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -176,19 +176,20 @@ export function ResourceTypeDialog({ definition, workspaceId, open, onOpenChange
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent size="md">
+        <DialogForm onSubmit={submit}>
         <DialogHeader>
           <DialogTitle>{editing ? `编辑${definition.title}` : `新建${definition.title}`}</DialogTitle>
           <DialogDescription>
             {systemDefault ? `系统默认${definition.resourceLabel}类型只能启用或停用；排序请在列表中拖动（“其他”固定在末尾）。` : `停用后不能用于新建${definition.resourceLabel}；排序请在列表中拖动。`}
           </DialogDescription>
-        </DialogHeader><DialogBody>
-        <form className="space-y-4" onSubmit={submit}>
+        </DialogHeader><DialogBody><div className="space-y-4">
           <label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus maxLength={120} disabled={systemDefault} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} /></label>
           <label className="block space-y-1"><span className="text-sm font-medium">颜色</span><div className="flex items-center gap-2"><input aria-label={`${definition.title}颜色`} disabled={systemDefault} className="size-9 cursor-pointer border bg-background p-0.5" type="color" value={/^#[0-9a-f]{6}$/i.test(form.color) ? form.color : definition.initialColor} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} /><Input disabled={systemDefault} value={form.color} onChange={(event) => setForm((current) => ({ ...current, color: event.target.value }))} placeholder={definition.initialColor} /></div></label>
           <label className="flex items-center justify-between gap-3 border-y py-3"><span><span className="block text-sm font-medium">启用</span><span className="text-xs text-muted-foreground">停用类型不会出现在新建{definition.resourceLabel}选项中。</span></span><Switch checked={Boolean(form.is_active)} onCheckedChange={(checked) => setForm((current) => ({ ...current, is_active: checked }))} /></label>
-          <DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy}>{busy ? "保存中…" : "保存"}</Button></DialogFooter>
-        </form>
-      </DialogBody></DialogContent>
+        </div></DialogBody>
+        <DialogFooter layout="standard" cancel={<Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>} primary={<Button type="submit" disabled={busy}>{busy ? "保存中…" : "保存"}</Button>} />
+        </DialogForm>
+      </DialogContent>
     </Dialog>
   );
 }
@@ -249,14 +250,21 @@ export function ResourceTypeDeleteDialog({ definition, workspace, item, types, o
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent size="md">
-        <DialogHeader><DialogTitle>处理“{item?.name || definition.title}”</DialogTitle><DialogDescription>{systemDefault ? `系统默认${definition.title}只能在列表中启用或停用。` : usageCount > 0 ? `“${item?.name}”当前被 ${usageCount} 个${definition.resourceLabel}使用。请选择处理方式。` : `选择如何处理“${item?.name}”。直接删除会软删除类型记录。`}</DialogDescription></DialogHeader><DialogBody>
-        {systemDefault ? <DialogFooter><Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>关闭</Button></DialogFooter> : <form className="space-y-3" onSubmit={submit}><RadioGroup value={strategy} onValueChange={setStrategy} className="gap-2">
+        {systemDefault ? <>
+          <DialogHeader><DialogTitle>处理“{item?.name || definition.title}”</DialogTitle><DialogDescription>系统默认{definition.title}只能在列表中启用或停用。</DialogDescription></DialogHeader>
+          <DialogBody />
+          <DialogFooter layout="standard" primary={<Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>关闭</Button>} />
+        </> : <DialogForm onSubmit={submit}>
+          <DialogHeader><DialogTitle>处理“{item?.name || definition.title}”</DialogTitle><DialogDescription>{usageCount > 0 ? `“${item?.name}”当前被 ${usageCount} 个${definition.resourceLabel}使用。请选择处理方式。` : `选择如何处理“${item?.name}”。直接删除会软删除类型记录。`}</DialogDescription></DialogHeader>
+          <DialogBody><div className="space-y-3"><RadioGroup value={strategy} onValueChange={setStrategy} className="gap-2">
           {targets.length > 0 && <label className="block cursor-pointer border p-3"><span className="flex items-start gap-2"><RadioGroupItem value="move" className="mt-0.5" /><span><span className="block text-sm font-medium">移动到其他启用类型</span><span className="text-xs text-muted-foreground">现有{definition.resourceLabel}会迁移到所选类型，并删除当前类型。</span></span></span>{strategy === "move" && <Select items={resolvedReplacementOptions.items} value={replacementTypeId} onValueChange={setReplacementTypeId}><SelectTrigger className="mt-3 w-full" disabled={loadingTargets}><SelectValue placeholder={`选择目标${definition.title}`} /></SelectTrigger><SelectContent>{resolvedReplacementOptions.items.map((type) => <SelectItem key={type.value} value={type.value} disabled={type.disabled}>{type.label}</SelectItem>)}</SelectContent></Select>}</label>}
           {otherType && <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="other" className="mt-0.5" /><span><span className="block text-sm font-medium">改为“其他”</span><span className="text-xs text-muted-foreground">现有{definition.resourceLabel}会归入系统默认的“其他”类型，并删除当前类型。</span></span></label>}
           <label className="flex cursor-pointer items-start gap-2 border p-3"><RadioGroupItem value="deactivate" className="mt-0.5" /><span><span className="block text-sm font-medium">仅停用</span><span className="text-xs text-muted-foreground">保留当前类型和已有{definition.resourceLabel}引用，不再用于新建资源。</span></span></label>
           <label className={`flex items-start gap-2 border p-3 ${usageCount > 0 ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}><RadioGroupItem value="delete" disabled={usageCount > 0} className="mt-0.5" /><span><span className="block text-sm font-medium">直接删除</span><span className="text-xs text-muted-foreground">{usageCount > 0 ? `仍有 ${usageCount} 个${definition.resourceLabel}使用，不能直接删除。` : "没有资源使用时可直接软删除。"}</span></span></label>
-        </RadioGroup><DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant={strategy === "deactivate" ? "default" : "destructive"} disabled={!canSubmit || busy}>{busy ? "处理中…" : strategy === "deactivate" ? "停用" : strategy === "delete" ? "删除" : "确认处理"}</Button></DialogFooter></form>}
-      </DialogBody></DialogContent>
+          </RadioGroup></div></DialogBody>
+          <DialogFooter layout="standard" cancel={<Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>} primary={<Button type="submit" variant={strategy === "deactivate" ? "default" : "destructive"} disabled={!canSubmit || busy}>{busy ? "处理中…" : strategy === "deactivate" ? "停用" : strategy === "delete" ? "删除" : "确认处理"}</Button>} />
+        </DialogForm>}
+      </DialogContent>
     </Dialog>
   );
 }
@@ -303,10 +311,13 @@ export function ResourceTypeRestoreDialog({ definition, workspaceId, types, open
 
   return <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
     <DialogContent size="md">
+      <DialogForm onSubmit={submit}>
       <DialogHeader><DialogTitle>恢复“{definition.title}”默认</DialogTitle><DialogDescription>系统默认类型将恢复模板中的名称、颜色、顺序和启用状态。所有自定义类型会被软删除，关联的{definition.resourceLabel}会移动到系统默认的“其他”类型，{definition.resourceLabel}本身不会删除。</DialogDescription></DialogHeader><DialogBody>
       <div className="border bg-muted/30 p-3 text-sm"><p>将处理 {summary.customCount} 个自定义类型、迁移 {summary.resourceCount} 个{definition.resourceLabel}。</p><p className="mt-1 text-xs text-muted-foreground">当前没有恢复自定义类型的入口。该操作完成后不可撤销。</p></div>
-      <form onSubmit={submit}><DialogFooter><Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" variant="destructive" disabled={busy || loadingSummary}>{busy ? "恢复中…" : loadingSummary ? "读取中…" : "恢复默认"}</Button></DialogFooter></form>
-    </DialogBody></DialogContent>
+      </DialogBody>
+      <DialogFooter layout="standard" cancel={<Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>} primary={<Button type="submit" variant="destructive" disabled={busy || loadingSummary}>{busy ? "恢复中…" : loadingSummary ? "读取中…" : "恢复默认"}</Button>} />
+      </DialogForm>
+    </DialogContent>
   </Dialog>;
 }
 

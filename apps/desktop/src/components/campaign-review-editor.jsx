@@ -219,10 +219,7 @@ export function CampaignReviewEditor() {
           <AlertDialogTitle>切换审核方案并重置参数？</AlertDialogTitle>
           <AlertDialogDescription>当前审核参数已偏离来源基线。切换后将用新方案的已发布版本重新初始化此草稿的审核参数；取消则保留现有来源和配置。</AlertDialogDescription>
         </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={() => setPendingRecipeVersionId("")}>保留当前配置</AlertDialogCancel>
-          <AlertDialogAction onClick={confirmRecipeSelection}>切换并重置参数</AlertDialogAction>
-        </AlertDialogFooter>
+        <AlertDialogFooter layout="standard" cancel={<AlertDialogCancel onClick={() => setPendingRecipeVersionId("")}>保留当前配置</AlertDialogCancel>} primary={<AlertDialogAction onClick={confirmRecipeSelection}>切换并重置参数</AlertDialogAction>} />
       </AlertDialogContent>
     </AlertDialog>
   </Card>;

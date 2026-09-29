@@ -6,11 +6,13 @@ import {
   DIALOG_FORM_GRID_MIN_WIDTH_REM,
   DIALOG_SIZE_WIDTHS,
   pushModalDialog,
+  resolveDialogFooterArrangement,
+  resolveDialogFooterMode,
   removeModalDialog,
   resolveDialogFormGridColumns,
   resolveDialogSize,
 } from "./modal-layout.js";
-import { scanDialogCallsites, validateDialogUsage } from "./dialog-usage-guard.js";
+import { scanDialogCallsites, scanDialogForms, validateDialogUsage } from "./dialog-usage-guard.js";
 
 test("dialog sizes use the four shared width tiers", () => {
   assert.deepEqual(DIALOG_SIZE_WIDTHS, { sm: "24rem", md: "32rem", lg: "42rem", xl: "52rem" });
@@ -50,6 +52,28 @@ test("two-column form layout waits until both 14rem fields and their gap fit", (
   assert.equal(resolveDialogFormGridColumns(300), 1);
 });
 
+test("dialog footer compacts when the host is constrained or natural actions do not fit", () => {
+  assert.equal(resolveDialogFooterMode({ dialogWidth: 520, maxDialogWidth: 520, availableWidth: 480, naturalActionsWidth: 320 }), "wide");
+  assert.equal(resolveDialogFooterMode({ dialogWidth: 470, maxDialogWidth: 520, availableWidth: 430, naturalActionsWidth: 320 }), "compact");
+  assert.equal(resolveDialogFooterMode({ dialogWidth: 520, maxDialogWidth: 520, availableWidth: 280, naturalActionsWidth: 320 }), "compact");
+  assert.equal(resolveDialogFooterMode({ dialogWidth: 100, maxDialogWidth: 520, availableWidth: 80, naturalActionsWidth: 600, layout: "auth" }), "wide");
+});
+
+test("footer roles preserve standard, wizard, auth, and compact action ordering", () => {
+  assert.deepEqual(resolveDialogFooterArrangement({ layout: "standard", mode: "wide" }), {
+    direction: "row", alignment: "end", cancelPlacement: "grouped-first", primaryWidth: "content",
+  });
+  assert.deepEqual(resolveDialogFooterArrangement({ layout: "wizard", mode: "wide" }), {
+    direction: "row", alignment: "space-between", cancelPlacement: "left", primaryWidth: "content",
+  });
+  assert.deepEqual(resolveDialogFooterArrangement({ layout: "standard", mode: "compact" }), {
+    direction: "column", alignment: "stretch", cancelPlacement: "first", primaryWidth: "full",
+  });
+  assert.deepEqual(resolveDialogFooterArrangement({ layout: "auth", mode: "compact", hasCancel: false }), {
+    direction: "row", alignment: "center", cancelPlacement: "hidden", primaryWidth: "full",
+  });
+});
+
 test("nested modal registration restores the parent dialog after the top dialog closes", () => {
   const outer = Symbol("outer");
   const inner = Symbol("inner");
@@ -86,13 +110,23 @@ test("dialog stack registration remains active until close animation completion"
   assert.doesNotMatch(context, /useLayoutEffect\(\(\)\s*=>\s*\{\s*if\s*\(!open\)\s*return undefined;\s*return registerDialog/);
 });
 
-test("dialog usage guard requires a shared size and rejects caller width overrides", () => {
+test("dialog usage guard requires shared sizes and responsive form grids", () => {
   assert.deepEqual(scanDialogCallsites('<DialogContent size="lg" />', "ok.jsx"), []);
   assert.match(scanDialogCallsites("<DialogContent className=\"max-w-xl\" />", "fixture.jsx").join("\n"), /must declare size/);
   assert.match(scanDialogCallsites('<AlertDialogContent size="sm" className="max-h-96" />', "fixture.jsx").join("\n"), /max-w\/max-h/);
   assert.match(scanDialogCallsites('<DialogContent size="md"><form><div className="sm:grid-cols-2" /></form></DialogContent>', "fixture.jsx").join("\n"), /use DialogFormGrid/);
   assert.match(scanDialogCallsites('<DialogContent size="md"><DetailFormLayout contentClassName="sm:grid-cols-2" /></DialogContent>', "fixture.jsx").join("\n"), /use DialogFormGrid/);
-  assert.match(scanDialogCallsites('<DialogContent size="md"><form><button type="submit">Save</button></form></DialogContent>', "fixture.jsx").join("\n"), /sticky DialogFooter/);
+  assert.match(scanDialogCallsites('<DialogContent size="md"><form><button type="submit">Save</button></form></DialogContent>', "fixture.jsx").join("\n"), /modal forms and actions must use DialogForm/);
+  assert.match(scanDialogCallsites('<DialogContent size="md"><DialogBody><DialogFooter layout="standard" primary={<Button />}/></DialogBody></DialogContent>', "fixture.jsx").join("\n"), /sibling of DialogBody/);
+  assert.match(scanDialogCallsites('<DialogContent size="md"><DialogFooter><Button>Save</Button></DialogFooter></DialogContent>', "fixture.jsx").join("\n"), /explicitly|instead of children/);
+  assert.match(scanDialogCallsites('<DialogContent size="md"><DialogFooter layout="standard" secondary={[<Button/>, <Button/>, <Button/>]} primary={<Button/>}/></DialogContent>', "fixture.jsx").join("\n"), /at most two secondary/);
+  assert.match(scanDialogCallsites('<DialogContent size="md"><DialogFooter layout="standard" primary={[<Button/>, <Button/>]}/></DialogContent>', "fixture.jsx").join("\n"), /exactly one primary/);
+  assert.deepEqual(scanDialogCallsites('<DialogContent size="md"><DialogForm><DialogHeader></DialogHeader><DialogBody></DialogBody><DialogFooter layout="standard" primary={<Button />}/></DialogForm></DialogContent>', "valid.jsx"), []);
+});
+
+test("DialogForm requires ordered Header, Body, and Footer sibling regions", () => {
+  assert.deepEqual(scanDialogForms('<DialogForm><DialogHeader></DialogHeader><DialogBody></DialogBody><DialogFooter layout="standard" primary={<Button />}/></DialogForm>', "ok.jsx"), []);
+  assert.match(scanDialogForms('<DialogForm><DialogBody></DialogBody><DialogHeader></DialogHeader><DialogFooter layout="standard" primary={<Button />}/></DialogForm>', "bad.jsx").join("\n"), /ordered sibling regions/);
 });
 
 test("all desktop dialog callsites follow the shared sizing and form-grid rules", () => {

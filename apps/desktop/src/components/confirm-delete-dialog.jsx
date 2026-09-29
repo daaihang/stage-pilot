@@ -33,17 +33,14 @@ export function ConfirmDeleteDialog({
             确定要删除{resourceType}“{name}”吗？删除后从{resourceCollectionLabel}隐藏，当前暂无恢复入口。
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>
-          <AlertDialogAction
+        <AlertDialogFooter layout="standard" cancel={<AlertDialogCancel disabled={busy}>取消</AlertDialogCancel>} primary={<AlertDialogAction
             type="button"
             variant="destructive"
             disabled={busy}
             onClick={onConfirm}
           >
             {busy ? "删除中…" : confirmLabel}
-          </AlertDialogAction>
-        </AlertDialogFooter>
+          </AlertDialogAction>} />
       </AlertDialogContent>
     </AlertDialog>
   );

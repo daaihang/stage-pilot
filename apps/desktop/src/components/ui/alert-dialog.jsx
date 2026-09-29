@@ -4,7 +4,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { ModalDialogScopeContext, useAppModalLayer, useTrackedDialogState } from "@/components/modal-layer-context"
-import { useModalBodyClearance } from "@/components/modal-body-clearance"
+import { DialogFooterLayout } from "@/components/ui/dialog-footer-layout"
 
 const alertDialogSizes = { sm: "24rem", md: "32rem", lg: "42rem", xl: "52rem" }
 
@@ -57,12 +57,13 @@ function AlertDialogOverlay({ className, ...props }) {
 
 function AlertDialogContent({ className, children, size = "sm", style, ...props }) {
   const normalizedSize = alertDialogSizes[size] ? size : "sm"
-  const { isTop } = React.useContext(ModalDialogScopeContext)
+  const { isTop, open } = React.useContext(ModalDialogScopeContext)
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
       <DialogPrimitive.Popup
         data-slot="alert-dialog-content"
+        data-dialog-size={normalizedSize}
         data-modal-top={isTop ? "true" : "false"}
         role="alertdialog"
         inert={!isTop || !open ? "" : undefined}
@@ -84,13 +85,12 @@ function AlertDialogHeader({ className, ...props }) {
   return <div data-slot="alert-dialog-header" className={cn("flex shrink-0 flex-col gap-1 text-left", className)} {...props} />
 }
 
-function AlertDialogFooter({ className, ...props }) {
-  return <div data-slot="alert-dialog-footer" className={cn("flex shrink-0 flex-col-reverse gap-2 sm:flex-row sm:justify-end", className)} {...props} />
+function AlertDialogFooter({ className, layout, cancel, secondary, primary, ...props }) {
+  return <DialogFooterLayout slot="alert-dialog-footer" className={className} layout={layout} cancel={cancel} secondary={secondary} primary={primary} {...props} />
 }
 
 function AlertDialogBody({ className, ...props }) {
-  const bodyRef = useModalBodyClearance()
-  return <div ref={bodyRef} data-slot="alert-dialog-body" className={cn("app-dialog-body min-h-0 min-w-0 flex-1 overflow-y-auto", className)} {...props} />
+  return <div data-slot="alert-dialog-body" className={cn("app-dialog-body min-h-0 min-w-0 flex-1 overflow-y-auto", className)} {...props} />
 }
 
 function AlertDialogTitle({ className, ...props }) {

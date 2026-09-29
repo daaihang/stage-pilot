@@ -1,80 +1,101 @@
 # Desktop modal dialog conventions
 
-This applies to ordinary `Dialog` and `AlertDialog` surfaces in the desktop app. `Sheet` and the persistent window-detail sidebar have separate layout contracts and are not covered here.
+This contract applies to ordinary `Dialog` and `AlertDialog` surfaces in the desktop app. `Sheet` and the persistent window-detail sidebar have separate layout contracts and are not covered here.
 
-## Host and interaction boundary
+## Host, height, and interaction boundary
 
-- Dialogs render through the application `AppModalLayerProvider` host, not directly over the whole document. On desktop routes the host begins below the native/application titlebar; public campaign and program-sheet routes use the viewport safe-area instead.
-- The backdrop dims and blurs the workspace while leaving the titlebar outside the modal host. Dialog and AlertDialog use the shared modal transition: open for 250ms from scale 0.96 and opacity 0, close for 150ms back to scale 0.96 and opacity 0, with `cubic-bezier(0.22, 1, 0.36, 1)`. The backdrop fades on the same durations; reduced-motion preference disables both transitions.
-- The host covers the main workspace, including an open window-detail surface. When a dialog opens, the workspace becomes `inert`. The titlebar remains available to mouse and keyboard; only its right-side detail controls are disabled until all dialogs close.
-- A normal dialog closes when its own backdrop is pressed. Pressing the titlebar or a titlebar menu does not dismiss it. `AlertDialog` does not close on outside press; its Cancel, action and Escape behavior remain explicit.
-- Only the top registered dialog is interactive. Lower dialogs in a nested stack become `inert` and hidden from assistive technology until the top dialog's close transition completes. The shell remains isolated through that transition; route unmount still releases registrations immediately.
-- Route-owned dialogs should remain mounted under their route so navigation naturally dismisses them. Application-level dialogs must be under the app-level modal provider.
+- Dialogs render through the application `AppModalLayerProvider` host. On desktop routes the host begins below the application titlebar; public routes use the viewport safe area.
+- The backdrop dims and blurs the workspace while leaving the titlebar outside the modal host. Dialog and AlertDialog keep the shared 250ms open / 150ms close transition; reduced-motion preference disables it.
+- The host covers the main workspace, including an open window-detail surface. The workspace becomes inert while a dialog is open. The titlebar remains available to mouse and keyboard; only its right-side detail controls are disabled.
+- Only the top registered dialog is interactive. Route-owned dialogs close naturally when their route unmounts. AlertDialog does not close on outside press; its Cancel, action, and Escape behavior remain explicit.
 
-## Size and height
+Every callsite must choose `size="sm|md|lg|xl"`. Shared maximum widths are 24rem, 32rem, 42rem, and 52rem. Do not add caller-level `max-w-*`, `max-h-*`, or fixed width classes. The popup keeps its 16px outer gutter and height limit based on the titlebar-safe viewport.
 
-Every callsite must choose `size` explicitly. Do not add caller-level `max-w-*`, `max-h-*` or fixed width classes to `DialogContent` / `AlertDialogContent`.
+## Required region structure
 
-| Size | Maximum width |
-| --- | ---: |
-| `sm` | 24rem |
-| `md` | 32rem |
-| `lg` | 42rem |
-| `xl` | 52rem |
+Each dialog has three sibling regions in this order:
 
-The shared content primitive preserves side gutters, centers within the available host, and limits height to the titlebar-safe viewport. The outer popup is a flex column; `DialogHeader` and `DialogFooter` remain fixed while the middle `DialogBody` scrolls. Do not make the entire popup the scroll region or place a page-local fixed layer over it.
+1. `DialogHeader` / `AlertDialogHeader` — fixed title and description.
+2. `DialogBody` / `AlertDialogBody` — the only scrollable region.
+3. `DialogFooter` / `AlertDialogFooter` — fixed actions, outside the scrolling body.
+
+For a form dialog, wrap all three regions in `DialogForm`. This preserves native form submission while keeping the footer outside the scroll viewport. Do not put `DialogFooter`, `AlertDialogFooter`, `DetailFormLayout`, or `FormActionBar` inside a dialog body.
 
 ```jsx
 <Dialog open={open} onOpenChange={setOpen}>
   <DialogContent size="md">
-    <DialogHeader>
-      <DialogTitle>Edit resource</DialogTitle>
-      <DialogDescription>Update the short operational details.</DialogDescription>
-    </DialogHeader>
-    <DialogBody>
-      <form onSubmit={save} className="space-y-4">
-        {/* fields */}
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button type="submit">Save</Button>
-        </DialogFooter>
-      </form>
-    </DialogBody>
+    <DialogForm onSubmit={save}>
+      <DialogHeader>
+        <DialogTitle>Edit resource</DialogTitle>
+        <DialogDescription>Update the short operational details.</DialogDescription>
+      </DialogHeader>
+      <DialogBody>
+        <div className="space-y-4">
+          <Field>
+            <FieldLabel htmlFor="name">Name</FieldLabel>
+            <Input id="name" value={name} onChange={updateName} />
+          </Field>
+          <DialogFormGrid>
+            <Field>{/* short independent field */}</Field>
+            <Field>{/* another short independent field */}</Field>
+            <Field className="col-span-full">{/* optional wide field */}</Field>
+          </DialogFormGrid>
+        </div>
+      </DialogBody>
+      <DialogFooter
+        layout="standard"
+        cancel={<Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>}
+        primary={<Button type="submit">Save</Button>}
+      />
+    </DialogForm>
   </DialogContent>
 </Dialog>
 ```
 
-For `AlertDialog`, use the corresponding `AlertDialogHeader`, `AlertDialogBody`, and `AlertDialogFooter`. Confirmation-only alerts can omit a body when their description is part of the header.
+`AlertDialog` follows the same region structure. Keep its alert semantics by passing `AlertDialogCancel` and `AlertDialogAction` through the footer slots:
+
+```jsx
+<AlertDialogFooter
+  layout="standard"
+  cancel={<AlertDialogCancel>Cancel</AlertDialogCancel>}
+  primary={<AlertDialogAction variant="destructive">Delete</AlertDialogAction>}
+/>
+```
+
+## Footer action roles and responsive behavior
+
+Every footer explicitly declares `layout` and a single `primary` action. `cancel` is optional, `secondary` accepts at most two actions, and no action priority is inferred from child order or button styling.
+
+- `standard`: on a roomy dialog, all actions stay grouped and right-aligned, with primary rightmost. When the dialog is host-constrained or the natural action group does not fit, actions stack full-width in cancel → secondary → primary order.
+- `wizard`: on a roomy dialog, Cancel sits at the left and secondary + primary remain grouped at the right. In compact mode they stack full-width in reading order.
+- `auth`: a named exception for login/registration flows; the primary action remains centered and full-width.
+- A lone ordinary primary action is content-width and right-aligned when there is room; it becomes full-width when the host constrains the dialog.
+
+The footer observes the actual dialog and footer widths with `ResizeObserver`. It compares the chosen size tier with the dialog's measured width and compares a hidden, inert natural-width measurement of its actions with the available footer width. No viewport or hard-coded rem breakpoint controls footer wrapping. Keep DOM order aligned with compact visual order so keyboard focus proceeds cancel → secondary → primary.
+
+```jsx
+<DialogFooter
+  layout="wizard"
+  cancel={<Button type="button" variant="outline">Cancel</Button>}
+  secondary={<Button type="button" variant="ghost">Save draft</Button>}
+  primary={<Button type="submit">Continue</Button>}
+/>
+```
 
 ## Form layout
 
 - Forms are single-column by default. Use `DialogFormGrid` only for short, independent fields that benefit from side-by-side presentation.
-- The grid switches at the body container's available width, not a viewport breakpoint. Each column has a 14rem minimum; below that threshold it returns to one column. A lone or odd final field spans the full row when appropriate.
-- Names, descriptions, notes, long text, and other wide fields should be full-width. Do not use `sm:grid-cols-*` to lay out modal form fields; use `DialogFormGrid`.
+- The grid responds to the body container, not the viewport; each column needs at least 14rem plus the shared gap. A lone or odd final field spans the full row where appropriate.
+- Names, descriptions, notes, and other long fields should occupy the full row. Do not use viewport `sm:grid-cols-*` classes for modal forms.
 - Select triggers inside modal forms and `DialogFormGrid` are full-width. Toolbar and non-form Select sizing is unchanged.
-- `DetailFormLayout` inside a modal should use `scrollBoundary="parent"`; the modal body's scroll region owns scrolling and the form action bar stays reachable.
-
-```jsx
-<DialogBody>
-  <form onSubmit={save} className="space-y-4">
-    <Field>
-      <FieldLabel htmlFor="name">Name</FieldLabel>
-      <Input id="name" value={name} onChange={updateName} />
-    </Field>
-    <DialogFormGrid>
-      <Field>{/* short field */}</Field>
-      <Field>{/* another short field */}</Field>
-      <Field className="col-span-full">{/* optional wide field */}</Field>
-    </DialogFormGrid>
-    <DialogFooter>{/* actions */}</DialogFooter>
-  </form>
-</DialogBody>
-```
+- `DetailFormLayout` and `FormActionBar` remain available for non-modal detail surfaces. Modal forms use `DialogForm` and semantic footer slots instead.
 
 ## Review checklist
 
-- [ ] The correct size tier is declared, and the caller has no width/height override.
-- [ ] Long content is inside `DialogBody`; the header and actions remain visible in a short window.
-- [ ] Form grids are based on the dialog body width and only pair fields that remain readable at 14rem each.
-- [ ] Select triggers in forms are full-width; list/filter Selects keep their normal sizing.
-- [ ] Escape, backdrop behavior, nested dialogs, focus return, titlebar menus, and disabled detail controls still behave correctly.
+- [ ] The correct `size` tier is declared; no caller width/height override is present.
+- [ ] Header, Body, and Footer are siblings in that order; only Body scrolls.
+- [ ] Form dialogs use one `DialogForm` around all three regions; submit remains a native submit action.
+- [ ] Footer declares `layout` and one primary action; cancel and secondary roles are explicit.
+- [ ] Short forms have no artificial bottom clearance; long forms scroll while header/footer remain visible.
+- [ ] Form grids and Select widths follow the container-based rules above.
+- [ ] Escape, backdrop behavior, nested dialogs, focus return, titlebar menus, and AlertDialog semantics still behave correctly.

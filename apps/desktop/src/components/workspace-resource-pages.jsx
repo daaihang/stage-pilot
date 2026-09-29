@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogBody, DialogForm, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { notify } from "@/components/ui/sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -18,8 +18,6 @@ import { createOrganizationContact, createResource, createVenueSpace, deleteOrga
 import { ResourceTypeDefinition, ResourceTypeManagementPanel } from "@/components/resource-type-management-panel";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { resourcePath, resourceTypePanelPath, workspacePath } from "@/lib/navigation";
-import { DetailFormLayout } from "@/components/detail-form-layout";
-import { FormActionBar } from "@/components/form-action-bar";
 import { FileAttachmentsSection } from "@/components/file-attachments-section";
 import { resolveSelectItems } from "@/lib/select-options";
 
@@ -89,7 +87,7 @@ function CreateResourceDialog({ workspace, type, open, onOpenChange, resourceTyp
     }
   };
 
-  return <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}><DialogContent size="md" className="flex flex-col"><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><DialogBody><DetailFormLayout className="min-h-0 flex-1" scrollBoundary="parent" onSubmit={submit} busy={busy} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={() => onOpenChange(false)} busy={busy} disabled={busy || resourceTypesLoading || !typeId || !resourceTypes.some((item) => item.id === typeId && item.is_active)} submitLabel="创建" busyLabel="创建中…" />}><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={resolvedTypeOptions.items} value={typeId} onValueChange={setTypeId}><SelectTrigger className="h-9 w-full" disabled={resourceTypesLoading}><SelectValue placeholder={resourceTypesLoading ? "正在加载类型…" : options.length ? `选择${cfg.label}` : `请先启用${cfg.label}`} /></SelectTrigger><SelectContent>{resolvedTypeOptions.items.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent></Select>{!resourceTypesLoading && options.length === 0 && <p className="text-xs text-destructive">没有启用的{cfg.label}，请先在类型管理中启用一个类型。</p>}</div></DetailFormLayout></DialogBody></DialogContent></Dialog>;
+  return <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}><DialogContent size="md" className="flex flex-col"><DialogForm onSubmit={submit} aria-busy={busy || undefined}><DialogHeader><DialogTitle>新建{resourceDefinitions[type].singular}</DialogTitle><DialogDescription>创建后进入详情页，可继续完善资料。</DialogDescription></DialogHeader><DialogBody><div className="space-y-4 pr-1"><label className="block space-y-1"><span className="text-sm font-medium">名称</span><Input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={120} /></label><div className="space-y-1"><span className="text-sm font-medium">{cfg.label}</span><Select items={resolvedTypeOptions.items} value={typeId} onValueChange={setTypeId}><SelectTrigger className="h-9 w-full" disabled={resourceTypesLoading}><SelectValue placeholder={resourceTypesLoading ? "正在加载类型…" : options.length ? `选择${cfg.label}` : `请先启用${cfg.label}`} /></SelectTrigger><SelectContent>{resolvedTypeOptions.items.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent></Select>{!resourceTypesLoading && options.length === 0 && <p className="text-xs text-destructive">没有启用的{cfg.label}，请先在类型管理中启用一个类型。</p>}</div></div></DialogBody><DialogFooter layout="standard" cancel={<Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>} primary={<Button type="submit" disabled={busy || resourceTypesLoading || !typeId || !resourceTypes.some((item) => item.id === typeId && item.is_active)}>{busy ? "创建中…" : "创建"}</Button>} /></DialogForm></DialogContent></Dialog>;
 }
 
 export function WorkspaceResourcePage({ workspace, resourceType, selectedResourceId, panel }) {

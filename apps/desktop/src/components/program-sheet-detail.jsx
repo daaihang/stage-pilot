@@ -41,14 +41,7 @@ import { ActivityTimeText as TimeText } from "@/components/time-text";
 import { ProductionProgramPickerDialog } from "@/components/production-program-dialogs";
 import { ProgramSheetItemDialog } from "@/components/program-sheet-item-dialog";
 import { ProgramSheetPreview } from "@/components/program-sheet-preview";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-DialogBody, } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody } from "@/components/ui/dialog";
 import {
   createShareLink,
   listProgramReleases,
@@ -779,11 +772,9 @@ export function ProgramSheetDetail({
               </div>
             ))}
           </div>
-          </DialogBody><DialogFooter>
-            <Button variant="outline" onClick={() => setShareOpen(false)}>
+          </DialogBody><DialogFooter layout="standard" primary={<Button variant="outline" onClick={() => setShareOpen(false)}>
               关闭
-            </Button>
-          </DialogFooter>
+            </Button>} />
         </DialogContent>
       </Dialog>
     </>

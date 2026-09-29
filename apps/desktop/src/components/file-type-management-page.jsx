@@ -16,7 +16,7 @@ import { createFilterQuery } from "@/components/reui/filters/filters-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogBody, DialogForm } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,8 +28,6 @@ import { migrateLegacyFileTypes } from "@/lib/file-type-migration";
 import { FILE_TYPE_SCOPE_META, FILE_TYPE_SCOPES } from "@/lib/file-type-config";
 import { createFileType, deleteFileType, listFileTypes, reorderFileTypes, restoreFileTypes, updateFileType } from "@/lib/resource-api";
 import { roleAtLeast } from "@/lib/workspace-api";
-import { DetailFormLayout } from "@/components/detail-form-layout";
-import { FormActionBar } from "@/components/form-action-bar";
 
 const filterFields = [
   {
@@ -134,16 +132,14 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent size="md" className="flex flex-col">
-        <DialogHeader>
+        <DialogForm onSubmit={submit} aria-busy={busy || undefined}><DialogHeader>
           <DialogTitle>{editing ? "编辑文件类型" : "新建文件类型"}</DialogTitle>
           <DialogDescription>
             {editing
               ? protectedName ? "系统默认类型的名称受保护，但可以调整描述。" : "名称在当前范围内必须唯一。"
               : "自定义类型只会添加到当前选中的文件归属范围。"}
           </DialogDescription>
-        </DialogHeader><DialogBody>
-        <DetailFormLayout className="min-h-0 flex-1" scrollBoundary="parent" onSubmit={submit} error={error} busy={busy} contentClassName="space-y-4 pr-1" actions={<FormActionBar onCancel={() => onOpenChange(false)} busy={busy} submitLabel="保存" busyLabel="保存中…" />}>
-          <label className="block space-y-1">
+        </DialogHeader><DialogBody><div className="space-y-4 pr-1">{error && <div className="mb-4 border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive" role="alert" aria-live="polite">{typeof error === "string" ? error : error.message || String(error)}</div>}<label className="block space-y-1">
             <span className="text-sm font-medium">名称</span>
             <Input
               autoFocus
@@ -171,9 +167,7 @@ function FileTypeDialog({ open, onOpenChange, item, onSubmit }) {
               </span>
               <Switch checked={form.isActive} onCheckedChange={(checked) => setForm((current) => ({ ...current, isActive: checked }))} />
             </label>
-          )}
-        </DetailFormLayout>
-      </DialogBody></DialogContent>
+          )}</div></DialogBody><DialogFooter layout="standard" cancel={<Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>} primary={<Button type="submit" disabled={busy}>{busy ? "保存中…" : "保存"}</Button>} /></DialogForm></DialogContent>
     </Dialog>
   );
 }
@@ -186,12 +180,9 @@ function ConfirmDialog({ open, title, description, confirmLabel, destructive = f
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>
-          <Button type="button" variant={destructive ? "destructive" : "default"} disabled={busy} onClick={onConfirm}>
+        <DialogFooter layout="standard" cancel={<Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>取消</Button>} primary={<Button type="button" variant={destructive ? "destructive" : "default"} disabled={busy} onClick={onConfirm}>
             {busy ? "处理中…" : confirmLabel}
-          </Button>
-        </DialogFooter>
+          </Button>} />
       </DialogContent>
     </Dialog>
   );
