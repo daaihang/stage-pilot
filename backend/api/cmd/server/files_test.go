@@ -58,6 +58,16 @@ func markFileVersionClean(t *testing.T, app *application, fileID, versionID stri
 		WHERE version_id=$1`, versionID); err != nil {
 		t.Fatalf("complete test scan job: %v", err)
 	}
+	if _, err := app.db.Exec(t.Context(), `INSERT INTO file_event_outbox(event_id,event_type,schema_version,aggregate_type,aggregate_id,
+		workspace_id,file_id,version_id,occurred_at,payload)
+		SELECT 'file.version.safe_available:'||v.id,'file.version.safe_available',1,'file_version',v.id,
+			v.workspace_id,v.file_id,v.id,COALESCE(v.scanned_at,v.created_at),
+			jsonb_build_object('event_id','file.version.safe_available:'||v.id,'event_type','file.version.safe_available',
+			'schema_version',1,'workspace_id',v.workspace_id,'file_id',v.file_id,'version_id',v.id,
+			'occurred_at',COALESCE(v.scanned_at,v.created_at),'size_bytes',v.size_bytes,'sha256',NULLIF(v.sha256,''),'content_type',v.content_type)
+		FROM file_versions v WHERE v.id=$1 ON CONFLICT(event_type,version_id) DO NOTHING`, versionID); err != nil {
+		t.Fatalf("write test safe-available event: %v", err)
+	}
 }
 
 func TestFileScanWorkerEndToEnd(t *testing.T) {
