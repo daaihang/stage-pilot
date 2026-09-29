@@ -468,6 +468,13 @@
 }
 
 .app-modal-host [data-slot="dialog-overlay"],
+.app-modal-host [data-slot="alert-dialog-overlay"],
+.app-modal-host [data-slot="dialog-content"],
+.app-modal-host [data-slot="alert-dialog-content"] {
+  --tw-animation-duration: 100ms;
+}
+
+.app-modal-host [data-slot="dialog-overlay"],
 .app-modal-host [data-slot="alert-dialog-overlay"] {
   pointer-events: auto;
 }

@@ -41,7 +41,7 @@ function AlertDialogOverlay({ className, ...props }) {
       data-modal-top={isTop ? "true" : "false"}
       hidden={!isTop}
       className={cn(
-        "absolute inset-0 isolate bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "absolute inset-0 isolate bg-black/10 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className,
       )}
       {...props}

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   calculateModalViewport,
@@ -55,6 +56,15 @@ test("nested modal registration restores the parent dialog after the top dialog 
   const stack = pushModalDialog(pushModalDialog([], outer), inner);
   assert.equal(stack.at(-1), inner);
   assert.equal(removeModalDialog(stack, inner).at(-1), outer);
+});
+
+test("dialog backdrops and popups share one exit animation duration", () => {
+  const stylesheet = readFileSync(new URL("../index.css", import.meta.url), "utf8");
+  const sharedMotionRule = stylesheet.match(/\.app-modal-host \[data-slot="dialog-overlay"\],[\s\S]*?\{\s*--tw-animation-duration:\s*100ms;\s*\}/);
+  assert.ok(sharedMotionRule, "all modal surfaces should share the 100ms animation token");
+  for (const slot of ["dialog-overlay", "alert-dialog-overlay", "dialog-content", "alert-dialog-content"]) {
+    assert.ok(sharedMotionRule[0].includes(`[data-slot="${slot}"]`), `${slot} should use the shared duration`);
+  }
 });
 
 test("dialog usage guard requires a shared size and rejects caller width overrides", () => {

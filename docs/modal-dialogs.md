@@ -5,6 +5,7 @@ This applies to ordinary `Dialog` and `AlertDialog` surfaces in the desktop app.
 ## Host and interaction boundary
 
 - Dialogs render through the application `AppModalLayerProvider` host, not directly over the whole document. On desktop routes the host begins below the native/application titlebar; public campaign and program-sheet routes use the viewport safe-area instead.
+- The backdrop dims and blurs the workspace while leaving the titlebar outside the modal host. Backdrop and popup animations share one 100ms duration; keep that timing synchronized so the page is not exposed while the popup is still exiting.
 - The host covers the main workspace, including an open window-detail surface. When a dialog opens, the workspace becomes `inert`. The titlebar remains available to mouse and keyboard; only its right-side detail controls are disabled until all dialogs close.
 - A normal dialog closes when its own backdrop is pressed. Pressing the titlebar or a titlebar menu does not dismiss it. `AlertDialog` does not close on outside press; its Cancel, action and Escape behavior remain explicit.
 - Only the top registered dialog is interactive. Lower dialogs in a nested stack become `inert` and hidden from assistive technology until the top dialog closes.
