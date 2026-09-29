@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -57,18 +58,30 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 		serverError(w, pgx.ErrNoRows)
 		return
 	}
-	var rows pgx.Rows
-	if trash {
-		rows, err = adapter.ListTrash(r.Context(), app.db, p)
-	} else {
-		rows, err = adapter.List(r.Context(), app.db, p)
+	canSeeRestricted := app.authorizeFileParent(r.Context(), claims(r).Subject, p, "restricted", action)
+	fingerprint := fileFilterFingerprint("attachments", string(kind), p.WorkspaceID, p.ProductionID, p.ID, strings.TrimSpace(r.URL.Query().Get("trash")), fmt.Sprint(canSeeRestricted))
+	limit, cursor, pageErr := filePageParameters(r, fingerprint)
+	if pageErr != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_pagination", pageErr.Error())
+		return
 	}
+	total, err := adapter.Count(r.Context(), app.db, p, trash, canSeeRestricted)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	rows, err := adapter.ListPage(r.Context(), app.db, p, trash, canSeeRestricted, limit, cursor)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	defer rows.Close()
 	items := []map[string]any{}
+	type attachmentCursorItem struct {
+		createdAt time.Time
+		id        string
+	}
+	pageItems := []attachmentCursorItem{}
 	for rows.Next() {
 		var a attachmentAccess
 		var versionID, filename, contentType, scanStatus string
@@ -77,7 +90,8 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 		var hasCleanVersion bool
 		var contentPurged bool
 		var restoreUntil *time.Time
-		if err := rows.Scan(&a.ID, &a.FileID, &a.FileTypeID, &a.SecurityClass, &a.Status, &versionID, &versionNo, &filename, &contentType, &size, &scanStatus, &hasCleanVersion, &restoreUntil, &contentPurged); err != nil {
+		var createdAt time.Time
+		if err := rows.Scan(&a.ID, &a.FileID, &a.FileTypeID, &a.SecurityClass, &a.Status, &versionID, &versionNo, &filename, &contentType, &size, &scanStatus, &hasCleanVersion, &restoreUntil, &contentPurged, &createdAt); err != nil {
 			serverError(w, err)
 			return
 		}
@@ -93,6 +107,7 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 			item["capabilities"] = map[string]bool{"can_restore": restoreUntil != nil && restoreUntil.After(time.Now())}
 		}
 		items = append(items, item)
+		pageItems = append(pageItems, attachmentCursorItem{createdAt: createdAt, id: a.ID})
 	}
 	if err := rows.Err(); err != nil {
 		serverError(w, err)
@@ -102,7 +117,13 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 	if trash {
 		capabilities = map[string]bool{"can_restore": true}
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "total": len(items), "capabilities": capabilities})
+	nextCursor := any(nil)
+	if len(items) > limit {
+		last := pageItems[limit-1]
+		nextCursor = encodeFileListCursor(last.createdAt, last.id, fingerprint)
+		items = items[:limit]
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "next_cursor": nextCursor, "capabilities": capabilities})
 }
 
 func (app *application) listProgramAttachments(w http.ResponseWriter, r *http.Request) {
@@ -278,12 +299,18 @@ func (app *application) listAttachmentVersions(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	items, err := app.listVersionsForFile(r.Context(), a.FileID)
+	fingerprint := fileFilterFingerprint("attachment_versions", a.ID, a.SecurityClass)
+	limit, cursor, pageErr := filePageParameters(r, fingerprint)
+	if pageErr != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_pagination", pageErr.Error())
+		return
+	}
+	items, total, next, err := app.listVersionsForFile(r.Context(), a.FileID, limit, cursor, fingerprint)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "next_cursor": next})
 }
 
 func (app *application) startAttachmentVersion(w http.ResponseWriter, r *http.Request) {
@@ -347,7 +374,11 @@ func (app *application) downloadAttachment(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	app.presignVersion(w, r, a.FileID, versionID)
+	var audit *attachmentAccess
+	if a.SecurityClass == "restricted" {
+		audit = &a
+	}
+	app.presignVersion(w, r, a.FileID, versionID, audit)
 }
 
 func (app *application) detachFile(w http.ResponseWriter, r *http.Request) {
@@ -392,6 +423,13 @@ func (app *application) detachFile(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
+	if a.SecurityClass == "restricted" {
+		if _, err := tx.Exec(r.Context(), `INSERT INTO file_security_audit_events(actor_user_id,action,result,workspace_id,production_id,parent_type,parent_id,attachment_id,file_id,security_class,permission_basis,request_id)
+			VALUES($1,'detach','completed',$2,$3,$4,$5,$6,$7,'restricted','parent_permission',$8)`, claims(r).Subject, a.Parent.WorkspaceID, a.Parent.ProductionID, string(a.Parent.Kind), a.Parent.ID, a.ID, a.FileID, auditRequestID(r)); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		serverError(w, err)
 		return
@@ -431,10 +469,16 @@ func (app *application) restoreAttachment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if _, err := app.resolveFileParent(r.Context(), a.Parent); err != nil || !app.authorizeFileParent(r.Context(), claims(r).Subject, a.Parent, a.SecurityClass, fileAttach) {
+		if a.SecurityClass == "restricted" {
+			app.recordSensitiveFileEventBestEffort(r.Context(), r, claims(r).Subject, "restore", "denied", "authorization_denied", a)
+		}
 		errorJSON(w, http.StatusNotFound, "attachment_not_found", "附件不存在或无权恢复")
 		return
 	}
 	if contentPurged || purgeAfter == nil || !purgeAfter.After(time.Now()) {
+		if a.SecurityClass == "restricted" {
+			app.recordSensitiveFileEventBestEffort(r.Context(), r, claims(r).Subject, "restore", "denied", "restore_window_expired", a)
+		}
 		errorJSON(w, http.StatusConflict, "restore_window_expired", "附件已超过恢复期限，内容已清除或无法恢复")
 		return
 	}
@@ -466,6 +510,13 @@ func (app *application) restoreAttachment(w http.ResponseWriter, r *http.Request
 	if _, err := tx.Exec(r.Context(), `UPDATE file_attachments SET deleted_at=NULL,purge_after=NULL WHERE id=$1 AND deleted_at IS NOT NULL`, a.ID); err != nil {
 		serverError(w, err)
 		return
+	}
+	if a.SecurityClass == "restricted" {
+		if _, err := tx.Exec(r.Context(), `INSERT INTO file_security_audit_events(actor_user_id,action,result,workspace_id,production_id,parent_type,parent_id,attachment_id,file_id,security_class,permission_basis,request_id)
+			VALUES($1,'restore','completed',$2,$3,$4,$5,$6,$7,'restricted','parent_permission',$8)`, claims(r).Subject, a.Parent.WorkspaceID, a.Parent.ProductionID, string(a.Parent.Kind), a.Parent.ID, a.ID, a.FileID, auditRequestID(r)); err != nil {
+			serverError(w, err)
+			return
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		serverError(w, err)

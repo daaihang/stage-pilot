@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -65,6 +66,12 @@ func (app *application) listDeletedFiles(w http.ResponseWriter, r *http.Request)
 	if !app.authorizeFileScope(w, r, workspaceID, productionID, "delete") {
 		return
 	}
+	fingerprint := fileFilterFingerprint("trash", workspaceID, productionValue)
+	limit, cursor, pageErr := filePageParameters(r, fingerprint)
+	if pageErr != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_pagination", pageErr.Error())
+		return
+	}
 	query := `SELECT f.id,f.filename,f.content_type,f.size_bytes,f.deleted_at,f.purge_after,
 		NOT EXISTS(SELECT 1 FROM file_versions v WHERE v.file_id=f.id AND v.object_purged_at IS NULL) AS content_purged
 		FROM files f WHERE f.workspace_id=$1 AND f.deleted_at IS NOT NULL AND f.access_mode='library'
@@ -76,7 +83,29 @@ func (app *application) listDeletedFiles(w http.ResponseWriter, r *http.Request)
 		query += ` AND f.production_id=$2`
 		args = append(args, *productionID)
 	}
-	query += ` ORDER BY f.deleted_at DESC,f.id`
+	countQuery := `SELECT COUNT(*) FROM files f WHERE f.workspace_id=$1 AND f.deleted_at IS NOT NULL AND f.access_mode='library'`
+	countArgs := []any{workspaceID}
+	if productionID == nil {
+		countQuery += ` AND f.production_id IS NULL`
+	} else {
+		countQuery += ` AND f.production_id=$2`
+		countArgs = append(countArgs, *productionID)
+	}
+	var total int64
+	if err := app.db.QueryRow(r.Context(), countQuery, countArgs...).Scan(&total); err != nil {
+		serverError(w, err)
+		return
+	}
+	cursorTime := any(nil)
+	cursorID := ""
+	if cursor != nil {
+		cursorTime = cursor.CreatedAt
+		cursorID = cursor.ID
+	}
+	index := len(args) + 1
+	query = strings.Replace(query, "f.deleted_at,f.purge_after,", "f.deleted_at,f.purge_after,f.created_at,", 1)
+	query += fmt.Sprintf(` AND ($%d::timestamptz IS NULL OR (f.created_at,f.id)<($%d::timestamptz,$%d)) ORDER BY f.created_at DESC,f.id DESC LIMIT $%d`, index, index, index+1, index+2)
+	args = append(args, cursorTime, cursorID, limit+1)
 	rows, err := app.db.Query(r.Context(), query, args...)
 	if err != nil {
 		serverError(w, err)
@@ -84,25 +113,38 @@ func (app *application) listDeletedFiles(w http.ResponseWriter, r *http.Request)
 	}
 	defer rows.Close()
 	items := []map[string]any{}
+	type trashCursorItem struct {
+		createdAt time.Time
+		id        string
+	}
+	pageItems := []trashCursorItem{}
 	for rows.Next() {
 		var id, filename, contentType string
 		var size int64
 		var deletedAt time.Time
 		var purgeAfter *time.Time
 		var purged bool
-		if err := rows.Scan(&id, &filename, &contentType, &size, &deletedAt, &purgeAfter, &purged); err != nil {
+		var createdAt time.Time
+		if err := rows.Scan(&id, &filename, &contentType, &size, &deletedAt, &purgeAfter, &createdAt, &purged); err != nil {
 			serverError(w, err)
 			return
 		}
 		items = append(items, map[string]any{"id": id, "filename": filename, "content_type": contentType,
 			"size_bytes": size, "deleted_at": deletedAt, "content_purged": purged,
 			"restore_until": purgeAfter})
+		pageItems = append(pageItems, trashCursorItem{createdAt: createdAt, id: id})
 	}
 	if err := rows.Err(); err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	nextCursor := any(nil)
+	if len(items) > limit {
+		last := pageItems[limit-1]
+		nextCursor = encodeFileListCursor(last.createdAt, last.id, fingerprint)
+		items = items[:limit]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "next_cursor": nextCursor})
 }
 
 func (app *application) restoreFile(w http.ResponseWriter, r *http.Request) {

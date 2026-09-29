@@ -383,6 +383,13 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 	if !app.authorizeFileScope(w, r, workspaceID, productionID, "read") {
 		return
 	}
+	filterValue := prod
+	fingerprint := fileFilterFingerprint("library", workspaceID, filterValue)
+	limit, cursor, pageErr := filePageParameters(r, fingerprint)
+	if pageErr != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_pagination", pageErr.Error())
+		return
+	}
 	q := `SELECT f.id,f.workspace_id,f.production_id,f.filename,f.content_type,f.size_bytes,f.etag,f.status,f.created_at,f.updated_at,
 		COALESCE(latest.security_status,'pending'),
 		EXISTS(SELECT 1 FROM file_versions current_version WHERE current_version.id=f.current_version_id AND current_version.file_id=f.id AND current_version.security_status='clean' AND current_version.object_purged_at IS NULL)
@@ -395,7 +402,28 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 		q += " AND f.production_id=$2"
 		args = append(args, prod)
 	}
-	q += " ORDER BY f.created_at DESC"
+	countQuery := `SELECT COUNT(*) FROM files f WHERE f.workspace_id=$1 AND f.deleted_at IS NULL AND f.access_mode='library'`
+	countArgs := []any{workspaceID}
+	if productionID == nil {
+		countQuery += ` AND f.production_id IS NULL`
+	} else {
+		countQuery += ` AND f.production_id=$2`
+		countArgs = append(countArgs, prod)
+	}
+	var total int64
+	if err := app.db.QueryRow(r.Context(), countQuery, countArgs...).Scan(&total); err != nil {
+		serverError(w, err)
+		return
+	}
+	cursorTime := any(nil)
+	cursorID := ""
+	if cursor != nil {
+		cursorTime = cursor.CreatedAt
+		cursorID = cursor.ID
+	}
+	index := len(args) + 1
+	q += fmt.Sprintf(" AND ($%d::timestamptz IS NULL OR (f.created_at,f.id)<($%d::timestamptz,$%d)) ORDER BY f.created_at DESC,f.id DESC LIMIT $%d", index, index, index+1, index+2)
+	args = append(args, cursorTime, cursorID, limit+1)
 	rows, err := app.db.Query(r.Context(), q, args...)
 	if err != nil {
 		serverError(w, err)
@@ -417,7 +445,13 @@ func (app *application) listFiles(w http.ResponseWriter, r *http.Request) {
 		items = append(items, f)
 	}
 	capabilities := app.libraryFileCapabilities(r.Context(), claims(r).Subject, workspaceID, productionID)
-	writeJSON(w, 200, map[string]any{"items": items, "total": len(items), "capabilities": map[string]bool{
+	nextCursor := any(nil)
+	if len(items) > limit {
+		last := items[limit-1]
+		nextCursor = encodeFileListCursor(last.CreatedAt, last.ID, fingerprint)
+		items = items[:limit]
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "next_cursor": nextCursor, "capabilities": map[string]bool{
 		"can_upload": capabilities["can_upload_version"], "can_manage_trash": capabilities["can_manage_trash"],
 	}})
 }
@@ -442,7 +476,7 @@ func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, 404, "file_not_ready", "文件尚未通过安全检查")
 		return
 	}
-	app.presignVersion(w, r, r.PathValue("fileId"), versionID)
+	app.presignVersion(w, r, r.PathValue("fileId"), versionID, nil)
 }
 func (app *application) deleteFile(w http.ResponseWriter, r *http.Request) {
 	f, err := app.fileLocation(r)

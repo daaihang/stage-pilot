@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -75,6 +77,8 @@ func (app *application) updateMyAvatar(w http.ResponseWriter, r *http.Request) {
 	userID := claims(r).Subject
 	revision := newID()
 	objectKey := "user-avatars/" + userID + "/" + revision + "." + extension
+	digest := sha256.Sum256(encoded)
+	sha256Hex := hex.EncodeToString(digest[:])
 	if _, err := app.storage.client.PutObject(r.Context(), app.storage.bucket, objectKey, bytes.NewReader(encoded), int64(len(encoded)), minio.PutObjectOptions{ContentType: contentType}); err != nil {
 		serverError(w, err)
 		return
@@ -88,8 +92,9 @@ func (app *application) updateMyAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	var oldKey string
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(avatar_object_key,'') FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&oldKey); err != nil {
+	var oldKey, oldSHA string
+	var oldSize int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(avatar_object_key,''),avatar_size_bytes,avatar_sha256 FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&oldKey, &oldSize, &oldSHA); err != nil {
 		app.removeAvatarObject(ctx, objectKey)
 		if errors.Is(err, pgx.ErrNoRows) {
 			errorJSON(w, http.StatusNotFound, "user_not_found", "用户不存在")
@@ -98,7 +103,14 @@ func (app *application) updateMyAvatar(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	if _, err := tx.Exec(ctx, `UPDATE users SET avatar_object_key=$1,avatar_revision=$2,avatar_url='',updated_at=NOW() WHERE id=$3`, objectKey, revision, userID); err != nil {
+	if oldKey != "" && oldKey != objectKey {
+		if err := queueAvatarReplicaTx(ctx, tx, app.storage.bucket, oldKey, oldSize, oldSHA); err != nil {
+			app.removeAvatarObject(ctx, objectKey)
+			serverError(w, err)
+			return
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET avatar_object_key=$1,avatar_revision=$2,avatar_url='',avatar_size_bytes=$3,avatar_sha256=$4,updated_at=NOW() WHERE id=$5`, objectKey, revision, int64(len(encoded)), sha256Hex, userID); err != nil {
 		app.removeAvatarObject(ctx, objectKey)
 		serverError(w, err)
 		return
@@ -107,9 +119,6 @@ func (app *application) updateMyAvatar(w http.ResponseWriter, r *http.Request) {
 		app.removeAvatarObjectIfNotCurrent(ctx, userID, objectKey)
 		serverError(w, err)
 		return
-	}
-	if oldKey != "" && oldKey != objectKey {
-		app.removeAvatarObject(ctx, oldKey)
 	}
 	usr, err := app.findUser(ctx, userID)
 	if err != nil {
@@ -128,8 +137,9 @@ func (app *application) deleteMyAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	var oldKey string
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(avatar_object_key,'') FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&oldKey); err != nil {
+	var oldKey, oldSHA string
+	var oldSize int64
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(avatar_object_key,''),avatar_size_bytes,avatar_sha256 FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&oldKey, &oldSize, &oldSHA); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			errorJSON(w, http.StatusNotFound, "user_not_found", "用户不存在")
 			return
@@ -137,7 +147,17 @@ func (app *application) deleteMyAvatar(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	if _, err := tx.Exec(ctx, `UPDATE users SET avatar_object_key='',avatar_revision='',avatar_url='',updated_at=NOW() WHERE id=$1`, userID); err != nil {
+	if oldKey != "" {
+		sourceBucket := envOrDefault("S3_BUCKET", "stagepilot")
+		if app.storage != nil {
+			sourceBucket = app.storage.bucket
+		}
+		if err := queueAvatarReplicaTx(ctx, tx, sourceBucket, oldKey, oldSize, oldSHA); err != nil {
+			serverError(w, err)
+			return
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE users SET avatar_object_key='',avatar_revision='',avatar_url='',avatar_size_bytes=0,avatar_sha256='',updated_at=NOW() WHERE id=$1`, userID); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -145,15 +165,21 @@ func (app *application) deleteMyAvatar(w http.ResponseWriter, r *http.Request) {
 		serverError(w, err)
 		return
 	}
-	if oldKey != "" {
-		app.removeAvatarObject(ctx, oldKey)
-	}
 	usr, err := app.findUser(ctx, userID)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, usr)
+}
+
+func queueAvatarReplicaTx(ctx context.Context, tx pgx.Tx, sourceBucket, key string, size int64, sha string) error {
+	if key == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO file_replication_tasks(asset_type,asset_id,source_bucket,source_key,target_bucket,target_key,expected_size,expected_sha256)
+		VALUES('avatar',$1,$2,$1,'',$1,$3,$4) ON CONFLICT(asset_type,asset_id) DO NOTHING`, key, sourceBucket, size, sha)
+	return err
 }
 
 func (app *application) getUserAvatar(w http.ResponseWriter, r *http.Request) {

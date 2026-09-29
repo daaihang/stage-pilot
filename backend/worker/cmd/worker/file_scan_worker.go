@@ -26,6 +26,11 @@ import (
 )
 
 const defaultMaxFileBytes int64 = 2_000_000_000
+const maxAutomaticScanAttempts = 12
+
+func scanNeedsAttention(attempts int) bool {
+	return attempts >= maxAutomaticScanAttempts
+}
 
 type scanTask struct {
 	ID, WorkspaceID, FileID, VersionID, Bucket, ObjectKey, Filename, DeclaredType string
@@ -70,6 +75,9 @@ func claimFileScanTask(ctx context.Context, db *pgxpool.Pool, owner string) (sca
 			lease_until=NOW()+INTERVAL '20 minutes',updated_at=NOW()
 		FROM candidate c WHERE t.id=c.id
 		RETURNING t.id,t.workspace_id,t.file_id,t.version_id,t.attempts
+	), logged AS (
+		INSERT INTO file_scan_attempt_events(task_id,workspace_id,attempt_no,event_type)
+		SELECT id,workspace_id,attempts,'started' FROM claimed RETURNING task_id
 	)
 	SELECT c.id,c.workspace_id,c.file_id,c.version_id,v.bucket,v.object_key,v.filename,v.content_type,v.size_bytes,
 		v.policy_max_bytes,v.allowed_content_types,c.attempts
@@ -99,10 +107,49 @@ func nextRetry(attempt int) time.Duration {
 }
 
 func markScanRetry(ctx context.Context, db *pgxpool.Pool, task scanTask, owner string, cause error) error {
-	_, err := db.Exec(ctx, `UPDATE file_scan_tasks SET status='pending',available_at=NOW()+make_interval(secs=>$1),
-		lease_owner='',lease_until=NULL,last_error=$2,updated_at=NOW()
-		WHERE id=$3 AND status='leased' AND lease_owner=$4`, nextRetry(task.Attempts).Seconds(), cause.Error(), task.ID, owner)
-	return err
+	status := "pending"
+	event := "retry"
+	availableAfter := nextRetry(task.Attempts).Seconds()
+	if scanNeedsAttention(task.Attempts) {
+		status = "needs_attention"
+		event = "needs_attention"
+		availableAfter = 0
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE file_scan_tasks SET status=$1,available_at=NOW()+make_interval(secs=>$2),
+		lease_owner='',lease_until=NULL,last_error=$3,updated_at=NOW()
+		WHERE id=$4 AND status='leased' AND lease_owner=$5`, status, availableAfter, cause.Error(), task.ID, owner)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO file_scan_attempt_events(task_id,workspace_id,attempt_no,event_type,error_code)
+		VALUES($1,$2,$3,$4,$5)`, task.ID, task.WorkspaceID, task.Attempts, event, scanErrorCode(cause)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func scanErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	switch {
+	case isMissingObject(err):
+		return "object_missing"
+	case strings.Contains(strings.ToLower(err.Error()), "timeout"):
+		return "timeout"
+	case strings.Contains(strings.ToLower(err.Error()), "connection"):
+		return "connection_failed"
+	default:
+		return "worker_error"
+	}
 }
 
 func mediaType(value string) string {
@@ -355,14 +402,23 @@ func commitScanResult(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool
 		}
 	}
 	outcome := string(result.Verdict)
-	tag, err := tx.Exec(ctx, `UPDATE file_scan_tasks SET status='completed',lease_owner='',lease_until=NULL,
-		outcome=$1,last_error='',completed_at=NOW(),updated_at=NOW()
-		WHERE id=$2 AND status='leased' AND lease_owner=$3`, outcome, task.ID, owner)
+	status, eventType := "completed", "completed"
+	if result.Reason == "object_missing" || result.Reason == "size_mismatch" {
+		status, eventType = "needs_attention", "needs_attention"
+	}
+	tag, err := tx.Exec(ctx, `UPDATE file_scan_tasks SET status=$1,lease_owner='',lease_until=NULL,
+		outcome=$2,last_error='',completed_at=NOW(),updated_at=NOW()
+		WHERE id=$3 AND status='leased' AND lease_owner=$4`, status, outcome, task.ID, owner)
 	if err != nil {
 		logger.Warn("complete file scan task", "version_id", task.VersionID, "error", err)
 		return
 	}
 	if tag.RowsAffected() != 1 {
+		return
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO file_scan_attempt_events(task_id,workspace_id,attempt_no,event_type,engine,signature_version,error_code)
+		VALUES($1,$2,$3,$4,$5,$6,$7)`, task.ID, task.WorkspaceID, task.Attempts, eventType, result.Engine, result.Sigs, securityReasonCode(result)); err != nil {
+		logger.Warn("record file scan attempt result", "version_id", task.VersionID, "error", err)
 		return
 	}
 	if err := tx.Commit(ctx); err != nil {

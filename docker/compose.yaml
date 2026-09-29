@@ -8,6 +8,10 @@ services:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-stagepilot}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-stagepilot-secret}
       MINIO_API_CORS_ALLOW_ORIGIN: ${STAGEPILOT_S3_CORS_ORIGINS:-http://localhost:1420,http://127.0.0.1:1420,tauri://localhost,https://tauri.localhost}
+      MINIO_AUDIT_WEBHOOK_ENABLE: "on"
+      MINIO_AUDIT_WEBHOOK_ENDPOINT: http://api:8080/internal/storage/audit
+      MINIO_AUDIT_WEBHOOK_AUTH_TOKEN: "Bearer ${MINIO_AUDIT_WEBHOOK_AUTH_TOKEN:-stagepilot-dev-minio-audit-change-me}"
+      MINIO_AUDIT_WEBHOOK_QUEUE_SIZE: 100000
     ports:
       - "${STAGEPILOT_MINIO_PORT:-19000}:9000"
       - "${STAGEPILOT_MINIO_CONSOLE_PORT:-19001}:9001"
@@ -41,8 +45,47 @@ services:
     restart: "no"
     networks: [app]
 
+  minio-replica:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_REPLICA_ACCESS_KEY:-stagepilot-replica}
+      MINIO_ROOT_PASSWORD: ${S3_REPLICA_SECRET_KEY:-stagepilot-replica-secret}
+    ports:
+      - "${STAGEPILOT_REPLICA_MINIO_PORT:-19010}:9000"
+      - "${STAGEPILOT_REPLICA_MINIO_CONSOLE_PORT:-19011}:9001"
+    volumes:
+      - minio-replica-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks: [replica]
+
+  minio-replica-setup:
+    image: minio/mc:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set replica http://minio-replica:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        mc mb --ignore-existing "replica/$${S3_REPLICA_BUCKET}" &&
+        mc mb --ignore-existing "replica/$${S3_REPLICA_BACKUP_BUCKET}"
+    environment:
+      MINIO_ROOT_USER: ${S3_REPLICA_ACCESS_KEY:-stagepilot-replica}
+      MINIO_ROOT_PASSWORD: ${S3_REPLICA_SECRET_KEY:-stagepilot-replica-secret}
+      S3_REPLICA_BUCKET: ${S3_REPLICA_BUCKET:-stagepilot-file-replica}
+      S3_REPLICA_BACKUP_BUCKET: ${S3_REPLICA_BACKUP_BUCKET:-stagepilot-pg-backup}
+    depends_on:
+      minio-replica:
+        condition: service_healthy
+    restart: "no"
+    networks: [replica]
+
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-bookworm
+    command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf", "-c", "wal_level=replica", "-c", "max_wal_senders=6", "-c", "max_replication_slots=4", "-c", "max_slot_wal_keep_size=10GB", "-c", "wal_sender_timeout=60s"]
     environment:
       POSTGRES_DB: ${STAGEPILOT_POSTGRES_DB:-stagepilot}
       POSTGRES_USER: ${STAGEPILOT_POSTGRES_USER:-stagepilot}
@@ -51,6 +94,7 @@ services:
       - "${STAGEPILOT_POSTGRES_PORT:-15432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -96,6 +140,7 @@ services:
       S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
       FILES_MAX_BYTES: ${FILES_MAX_BYTES:-2000000000}
       FILES_WORKSPACE_PHYSICAL_MAX_BYTES: ${FILES_WORKSPACE_PHYSICAL_MAX_BYTES:-100000000000}
+      MINIO_AUDIT_WEBHOOK_AUTH_TOKEN: ${MINIO_AUDIT_WEBHOOK_AUTH_TOKEN:-stagepilot-dev-minio-audit-change-me}
     ports:
       - "${STAGEPILOT_API_PORT:-18080}:8080"
     depends_on:
@@ -125,6 +170,13 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-stagepilot}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-stagepilot-secret}
       S3_USE_SSL: ${S3_USE_SSL:-false}
+      S3_REPLICA_ENDPOINT: ${S3_REPLICA_ENDPOINT:-http://minio-replica:9000}
+      S3_REPLICA_REGION: ${S3_REPLICA_REGION:-us-east-1}
+      S3_REPLICA_BUCKET: ${S3_REPLICA_BUCKET:-stagepilot-file-replica}
+      S3_REPLICA_ACCESS_KEY: ${S3_REPLICA_ACCESS_KEY:-stagepilot-replica}
+      S3_REPLICA_SECRET_KEY: ${S3_REPLICA_SECRET_KEY:-stagepilot-replica-secret}
+      S3_REPLICA_USE_SSL: ${S3_REPLICA_USE_SSL:-false}
+      S3_REPLICA_REQUIRED: ${S3_REPLICA_REQUIRED:-true}
       S3_PATH_STYLE: ${S3_PATH_STYLE:-true}
       S3_UPLOAD_URL_TTL: ${S3_UPLOAD_URL_TTL:-15m}
       FILES_MAX_BYTES: ${FILES_MAX_BYTES:-2000000000}
@@ -136,10 +188,44 @@ services:
         condition: service_completed_successfully
       minio-staging-setup:
         condition: service_completed_successfully
+      minio-replica-setup:
+        condition: service_completed_successfully
       clamav:
         condition: service_started
     restart: unless-stopped
-    networks: [app, scanner]
+    networks: [app, scanner, replica]
+
+  pg-backup:
+    build:
+      context: ..
+      dockerfile: docker/backup/Dockerfile
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: ${STAGEPILOT_POSTGRES_USER:-stagepilot}
+      PGPASSWORD: ${STAGEPILOT_POSTGRES_PASSWORD:-stagepilot}
+      PGDATABASE: ${STAGEPILOT_POSTGRES_DB:-stagepilot}
+      PGSSLMODE: ${PGSSLMODE:-disable}
+      PGAPPNAME: walg
+      WALG_SLOTNAME: walg
+      BASE_BACKUP_RETRY_SECONDS: ${BASE_BACKUP_RETRY_SECONDS:-300}
+      WALG_S3_PREFIX: s3://${S3_REPLICA_BACKUP_BUCKET:-stagepilot-pg-backup}/postgres
+      AWS_ENDPOINT: ${S3_REPLICA_ENDPOINT:-http://minio-replica:9000}
+      AWS_S3_FORCE_PATH_STYLE: "true"
+      AWS_REGION: ${S3_REPLICA_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${S3_REPLICA_ACCESS_KEY:-stagepilot-replica}
+      AWS_SECRET_ACCESS_KEY: ${S3_REPLICA_SECRET_KEY:-stagepilot-replica-secret}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      WAL_WATERMARK_INTERVAL_SECONDS: ${WAL_WATERMARK_INTERVAL_SECONDS:-300}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-replica-setup:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [app, replica]
 
   clamav:
     image: clamav/clamav:1.5.4_base
@@ -159,10 +245,13 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  minio-replica-data:
   clamav-db:
 
 networks:
   app:
     driver: bridge
   scanner:
+    driver: bridge
+  replica:
     driver: bridge

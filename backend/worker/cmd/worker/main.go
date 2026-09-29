@@ -73,6 +73,8 @@ func main() {
 	if storageRetentionReady {
 		go cleanupTicker(ctx, logger, pool, interval)
 		go storageReconcileTicker(ctx, logger, pool, storage, storageBuckets, physicalLimit, durationOrDefault("STORAGE_RECONCILE_INTERVAL", 6*time.Hour))
+		go storageReconcileRequestTicker(ctx, logger, pool, storage, storageBuckets, physicalLimit, interval)
+		go fileReplicationTicker(ctx, logger, pool, storage, bucket, durationOrDefault("FILE_REPLICATION_INTERVAL", interval))
 	} else {
 		logger.Error("file cleanup and reconciliation remain disabled until the formal and staging buckets are distinct and both have versioning disabled")
 	}

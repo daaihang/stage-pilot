@@ -6,6 +6,7 @@ RUN go mod download
 COPY backend/api/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/stagepilot-api ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/storage-retention ./cmd/storage-retention
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/file-ops ./cmd/file-ops
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata \
@@ -13,6 +14,7 @@ RUN apk add --no-cache ca-certificates tzdata \
     && adduser -S -G stagepilot stagepilot
 COPY --from=build /out/stagepilot-api /usr/local/bin/stagepilot-api
 COPY --from=build /out/storage-retention /usr/local/bin/storage-retention
+COPY --from=build /out/file-ops /usr/local/bin/file-ops
 USER stagepilot
 EXPOSE 8080
 ENTRYPOINT ["stagepilot-api"]

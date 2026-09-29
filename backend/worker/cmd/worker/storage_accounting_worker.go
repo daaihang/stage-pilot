@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/minio/minio-go/v7"
@@ -19,12 +23,21 @@ type storedObjectKey struct {
 }
 
 type storageWorkspaceSnapshot struct {
-	workspaceID string
-	bytes       int64
-	unknown     int
-	missing     int
-	parts       map[string]int64
-	keys        map[storedObjectKey]int64
+	workspaceID  string
+	bytes        int64
+	unknown      int
+	missing      int
+	sizeMismatch int
+	parts        map[string]int64
+	keys         map[storedObjectKey]int64
+	expected     map[storedObjectKey]storageObjectExpectation
+	staleParts   map[storedObjectKey]int64
+}
+
+type storageObjectExpectation struct {
+	size      *int64
+	assetType string
+	verify    bool
 }
 
 func settleWorkerReservationTx(ctx context.Context, tx pgx.Tx, workspaceID, reservationID string, releaseQuota, releasePhysical bool, event string) error {
@@ -76,7 +89,11 @@ func settleWorkerReservationTx(ctx context.Context, tx pgx.Tx, workspaceID, rese
 // multipart parts without deleting unknown data. Unknown or missing references
 // block new uploads until an operator resolves the discrepancy.
 func reconcileWorkspaceStorage(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, buckets []string, physicalLimit int64) {
-	rows, err := db.Query(ctx, `SELECT id FROM workspaces WHERE deleted_at IS NULL ORDER BY id`)
+	reconcileWorkspaceStorageFor(ctx, logger, db, client, buckets, physicalLimit, "")
+}
+
+func reconcileWorkspaceStorageFor(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, buckets []string, physicalLimit int64, onlyWorkspace string) {
+	rows, err := db.Query(ctx, `SELECT id FROM workspaces WHERE deleted_at IS NULL AND ($1='' OR id=$1) ORDER BY id`, onlyWorkspace)
 	if err != nil {
 		logger.Warn("list workspaces for storage reconciliation", "error", err)
 		return
@@ -101,32 +118,205 @@ func reconcileWorkspaceStorage(ctx context.Context, logger *slog.Logger, db *pgx
 		if ctx.Err() != nil {
 			return
 		}
+		runID := uuid.NewString()
+		if _, err := db.Exec(ctx, `INSERT INTO storage_reconciliation_runs(id,scope,workspace_id,status) VALUES($1,'workspace',$2,'running')`, runID, id); err != nil {
+			logger.Warn("start workspace storage reconciliation run", "workspace_id", id, "error", err)
+			continue
+		}
 		snapshot, err := inventoryWorkspaceStorage(ctx, db, client, buckets, id)
 		if err != nil {
+			_, _ = db.Exec(ctx, `UPDATE storage_reconciliation_runs SET status='failed',completed_at=NOW(),error_code='inventory_failed' WHERE id=$1`, runID)
 			blockWorkspaceUploads(ctx, db, id, "reconciliation_error")
 			logger.Warn("workspace storage reconciliation failed", "workspace_id", id, "error", err)
 			continue
 		}
+		if err := persistWorkspaceFindings(ctx, db, runID, &snapshot); err != nil {
+			_, _ = db.Exec(ctx, `UPDATE storage_reconciliation_runs SET status='failed',completed_at=NOW(),error_code='finding_write_failed' WHERE id=$1`, runID)
+			blockWorkspaceUploads(ctx, db, id, "reconciliation_error")
+			logger.Warn("persist workspace storage findings", "workspace_id", id, "error", err)
+			continue
+		}
 		if err := applyWorkspaceStorageSnapshot(ctx, db, snapshot, physicalLimit); err != nil {
+			_, _ = db.Exec(ctx, `UPDATE storage_reconciliation_runs SET status='failed',completed_at=NOW(),error_code='snapshot_write_failed' WHERE id=$1`, runID)
 			blockWorkspaceUploads(ctx, db, id, "reconciliation_error")
 			logger.Warn("store workspace storage snapshot", "workspace_id", id, "error", err)
 			continue
 		}
-		if snapshot.unknown > 0 || snapshot.missing > 0 || snapshot.bytes > physicalLimit {
+		if _, err := db.Exec(ctx, `UPDATE storage_reconciliation_runs SET status='completed',completed_at=NOW(),
+			scanned_objects=$2,observed_bytes=$3,orphan_count=$4,missing_count=$5,size_mismatch_count=$6,multipart_count=$7 WHERE id=$1`,
+			runID, len(snapshot.keys), snapshot.bytes, snapshot.unknown, snapshot.missing, snapshot.sizeMismatch, len(snapshot.parts)); err != nil {
+			logger.Warn("complete workspace storage reconciliation run", "workspace_id", id, "error", err)
+		}
+		if snapshot.unknown > 0 || snapshot.missing > 0 || snapshot.sizeMismatch > 0 || snapshot.bytes > physicalLimit {
 			logger.Warn("workspace storage mismatch blocks uploads", "workspace_id", id,
 				"observed_bytes", snapshot.bytes, "unknown_objects", snapshot.unknown,
-				"missing_objects", snapshot.missing, "physical_limit_bytes", physicalLimit)
+				"missing_objects", snapshot.missing, "size_mismatches", snapshot.sizeMismatch, "physical_limit_bytes", physicalLimit)
+		}
+	}
+	if onlyWorkspace == "" {
+		if err := reconcileAvatarStorage(ctx, logger, db, client, buckets[0]); err != nil && ctx.Err() == nil {
+			logger.Warn("avatar object reconciliation failed", "error", err)
 		}
 	}
 }
 
+// Avatars are account assets, not Workspace storage. They are still inventoried
+// so a missing current avatar or an unreferenced object is visible to operators.
+func reconcileAvatarStorage(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, bucket string) error {
+	runID := uuid.NewString()
+	if _, err := db.Exec(ctx, `INSERT INTO storage_reconciliation_runs(id,scope,status) VALUES($1,'avatars','running')`, runID); err != nil {
+		return err
+	}
+	fail := func(err error) error {
+		_, _ = db.Exec(ctx, `UPDATE storage_reconciliation_runs SET status='failed',completed_at=NOW(),error_code='inventory_failed' WHERE id=$1`, runID)
+		return err
+	}
+	type avatarRef struct {
+		key, userID, sha string
+		size             int64
+	}
+	rows, err := db.Query(ctx, `SELECT id,avatar_object_key,avatar_size_bytes,avatar_sha256 FROM users WHERE avatar_object_key<>'' AND deleted_at IS NULL`)
+	if err != nil {
+		return fail(err)
+	}
+	expected := map[string]avatarRef{}
+	for rows.Next() {
+		var item avatarRef
+		if err := rows.Scan(&item.userID, &item.key, &item.size, &item.sha); err != nil {
+			rows.Close()
+			return fail(err)
+		}
+		expected[item.key] = item
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return fail(err)
+	}
+	// An old avatar can remain on the primary while its durable replica is
+	// pending or retained. Such a key is known work, not an orphan.
+	rows, err = db.Query(ctx, `SELECT source_key FROM file_replication_tasks WHERE asset_type='avatar' AND source_bucket=$1 AND source_purged_at IS NULL AND status IN ('pending','leased','replicated','purge_pending')`, bucket)
+	if err != nil {
+		return fail(err)
+	}
+	knownReplicaKeys := map[string]struct{}{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			rows.Close()
+			return fail(err)
+		}
+		knownReplicaKeys[key] = struct{}{}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return fail(err)
+	}
+	observed := map[string]int64{}
+	var totalBytes int64
+	objects := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{Prefix: "user-avatars/", Recursive: true})
+	for object := range objects {
+		if object.Err != nil {
+			return fail(object.Err)
+		}
+		observed[object.Key] = object.Size
+		totalBytes += object.Size
+	}
+	var orphanCount, missingCount, mismatchCount int64
+	for key, size := range observed {
+		ref, isCurrent := expected[key]
+		if !isCurrent {
+			if _, queued := knownReplicaKeys[key]; queued {
+				continue
+			}
+			var consecutive int
+			if err := db.QueryRow(ctx, `INSERT INTO storage_reconciliation_findings(asset_type,finding_type,bucket,object_key,observed_size,first_seen_run_id,last_seen_run_id)
+				VALUES('avatar','orphan',$1,$2,$3,$4,$4)
+				ON CONFLICT(asset_type,finding_type,bucket,object_key) WHERE resolved_at IS NULL DO UPDATE SET
+				last_seen_run_id=EXCLUDED.last_seen_run_id,observed_size=EXCLUDED.observed_size,
+				consecutive_runs=CASE WHEN storage_reconciliation_findings.last_seen_run_id<>EXCLUDED.last_seen_run_id THEN storage_reconciliation_findings.consecutive_runs+1 ELSE storage_reconciliation_findings.consecutive_runs END,
+				confirmed_at=CASE WHEN storage_reconciliation_findings.consecutive_runs+1>=2 THEN COALESCE(storage_reconciliation_findings.confirmed_at,NOW()) ELSE storage_reconciliation_findings.confirmed_at END,
+				updated_at=NOW() RETURNING consecutive_runs`, bucket, key, size, runID).Scan(&consecutive); err != nil {
+				return fail(err)
+			}
+			if consecutive >= 2 {
+				orphanCount++
+			}
+			continue
+		}
+		if ref.size == 0 || ref.sha == "" {
+			object, err := client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+			if err != nil {
+				return fail(err)
+			}
+			digest := sha256.New()
+			readSize, copyErr := io.Copy(digest, object)
+			closeErr := object.Close()
+			if copyErr != nil {
+				return fail(copyErr)
+			}
+			if closeErr != nil {
+				return fail(closeErr)
+			}
+			if readSize != size {
+				return fail(fmt.Errorf("avatar object size changed while hashing"))
+			}
+			ref.size = size
+			ref.sha = hex.EncodeToString(digest.Sum(nil))
+			if _, err := db.Exec(ctx, `UPDATE users SET avatar_size_bytes=$2,avatar_sha256=$3 WHERE id=$1 AND avatar_object_key=$4 AND (avatar_size_bytes=0 OR avatar_sha256='')`, ref.userID, ref.size, ref.sha, key); err != nil {
+				return fail(err)
+			}
+			expected[key] = ref
+		}
+		if ref.size != size {
+			mismatchCount++
+			if err := upsertAvatarFinding(ctx, db, runID, "size_mismatch", bucket, key, &ref.size, &size, true); err != nil {
+				return fail(err)
+			}
+		}
+	}
+	for key, ref := range expected {
+		if _, exists := observed[key]; exists {
+			continue
+		}
+		missingCount++
+		if err := upsertAvatarFinding(ctx, db, runID, "missing", bucket, key, &ref.size, nil, true); err != nil {
+			return fail(err)
+		}
+	}
+	if _, err := db.Exec(ctx, `UPDATE storage_reconciliation_findings SET resolved_at=NOW(),resolution='not_seen_in_complete_reconciliation',updated_at=NOW()
+		WHERE asset_type='avatar' AND resolved_at IS NULL AND last_seen_run_id<>$1`, runID); err != nil {
+		return fail(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE storage_reconciliation_runs SET status='completed',completed_at=NOW(),scanned_objects=$2,observed_bytes=$3,
+		orphan_count=$4,missing_count=$5,size_mismatch_count=$6 WHERE id=$1`, runID, len(observed), totalBytes, orphanCount, missingCount, mismatchCount); err != nil {
+		return err
+	}
+	if orphanCount+missingCount+mismatchCount > 0 {
+		logger.Warn("avatar storage reconciliation found discrepancies", "orphans", orphanCount, "missing", missingCount, "size_mismatches", mismatchCount)
+	}
+	return nil
+}
+
+func upsertAvatarFinding(ctx context.Context, db *pgxpool.Pool, runID, findingType, bucket, key string, expectedSize, observedSize *int64, confirmed bool) error {
+	_, err := db.Exec(ctx, `INSERT INTO storage_reconciliation_findings(asset_type,finding_type,workspace_id,bucket,object_key,expected_size,observed_size,first_seen_run_id,last_seen_run_id,confirmed_at)
+		VALUES('avatar',$1,NULL,$2,$3,$4,$5,$6,$6,CASE WHEN $7 THEN NOW() ELSE NULL END)
+		ON CONFLICT(asset_type,finding_type,bucket,object_key) WHERE resolved_at IS NULL DO UPDATE SET
+		last_seen_run_id=EXCLUDED.last_seen_run_id,expected_size=EXCLUDED.expected_size,observed_size=EXCLUDED.observed_size,
+		confirmed_at=CASE WHEN $7 THEN COALESCE(storage_reconciliation_findings.confirmed_at,NOW()) ELSE storage_reconciliation_findings.confirmed_at END,
+		consecutive_runs=CASE WHEN storage_reconciliation_findings.last_seen_run_id<>EXCLUDED.last_seen_run_id THEN storage_reconciliation_findings.consecutive_runs+1 ELSE storage_reconciliation_findings.consecutive_runs END,updated_at=NOW()`,
+		findingType, bucket, key, expectedSize, observedSize, runID, confirmed)
+	return err
+}
+
 func inventoryWorkspaceStorage(ctx context.Context, db *pgxpool.Pool, client *minio.Client, buckets []string, workspaceID string) (storageWorkspaceSnapshot, error) {
-	snapshot := storageWorkspaceSnapshot{workspaceID: workspaceID, parts: map[string]int64{}, keys: map[storedObjectKey]int64{}}
-	rows, err := db.Query(ctx, `SELECT bucket,object_key FROM (
-		SELECT bucket,object_key FROM file_versions WHERE workspace_id=$1 AND object_purged_at IS NULL
-		UNION SELECT staging_bucket,staging_key FROM file_upload_sessions WHERE workspace_id=$1 AND object_purged_at IS NULL
-		UNION SELECT bucket,object_key FROM file_copy_attempts WHERE workspace_id=$1 AND status='pending' AND object_purged_at IS NULL
-		UNION SELECT f.bucket,f.object_key FROM files f WHERE f.workspace_id=$1 AND f.deleted_at IS NULL AND f.object_purged_at IS NULL
+	snapshot := storageWorkspaceSnapshot{workspaceID: workspaceID, parts: map[string]int64{}, keys: map[storedObjectKey]int64{}, expected: map[storedObjectKey]storageObjectExpectation{}, staleParts: map[storedObjectKey]int64{}}
+	rows, err := db.Query(ctx, `SELECT bucket,object_key,expected_size,asset_type,verify_missing FROM (
+		SELECT bucket,object_key,size_bytes,'file_version'::text AS asset_type,TRUE AS verify_missing FROM file_versions WHERE workspace_id=$1 AND object_purged_at IS NULL
+		UNION SELECT staging_bucket,staging_key,expected_size,'upload_staging'::text,FALSE FROM file_upload_sessions WHERE workspace_id=$1 AND object_purged_at IS NULL
+		UNION SELECT bucket,object_key,NULL::bigint,'copy_attempt'::text,FALSE FROM file_copy_attempts WHERE workspace_id=$1 AND status='pending' AND object_purged_at IS NULL
+		UNION SELECT f.bucket,f.object_key,f.size_bytes,'legacy_file'::text,TRUE FROM files f WHERE f.workspace_id=$1 AND f.deleted_at IS NULL AND f.object_purged_at IS NULL
 			AND f.status IN ('pending','uploaded','abandoned')
 			AND f.created_at<NOW()-INTERVAL '1 hour'
 			AND NOT EXISTS(SELECT 1 FROM file_versions v WHERE v.file_id=f.id)
@@ -135,14 +325,14 @@ func inventoryWorkspaceStorage(ctx context.Context, db *pgxpool.Pool, client *mi
 	if err != nil {
 		return snapshot, err
 	}
-	expected := map[storedObjectKey]struct{}{}
 	for rows.Next() {
 		var item storedObjectKey
-		if err := rows.Scan(&item.bucket, &item.key); err != nil {
+		var expectation storageObjectExpectation
+		if err := rows.Scan(&item.bucket, &item.key, &expectation.size, &expectation.assetType, &expectation.verify); err != nil {
 			rows.Close()
 			return snapshot, err
 		}
-		expected[item] = struct{}{}
+		snapshot.expected[item] = expectation
 	}
 	err = rows.Err()
 	rows.Close()
@@ -159,20 +349,82 @@ func inventoryWorkspaceStorage(ctx context.Context, db *pgxpool.Pool, client *mi
 			ref := storedObjectKey{bucket: bucket, key: object.Key}
 			snapshot.keys[ref] = object.Size
 			snapshot.bytes += object.Size
-			if _, ok := expected[ref]; !ok {
-				snapshot.unknown++
-			}
-		}
-	}
-	for ref := range expected {
-		if _, ok := snapshot.keys[ref]; !ok {
-			snapshot.missing++
 		}
 	}
 	if err := inventoryWorkspaceMultipart(ctx, db, client, buckets, workspaceID, prefix, &snapshot); err != nil {
 		return snapshot, err
 	}
 	return snapshot, nil
+}
+
+func persistWorkspaceFindings(ctx context.Context, db *pgxpool.Pool, runID string, snapshot *storageWorkspaceSnapshot) error {
+	for key, size := range snapshot.keys {
+		expectation, exists := snapshot.expected[key]
+		if !exists {
+			var consecutive int
+			if err := db.QueryRow(ctx, `INSERT INTO storage_reconciliation_findings(asset_type,finding_type,workspace_id,bucket,object_key,observed_size,first_seen_run_id,last_seen_run_id)
+				VALUES('file_version','orphan',$1,$2,$3,$4,$5,$5)
+				ON CONFLICT(asset_type,finding_type,bucket,object_key) WHERE resolved_at IS NULL DO UPDATE SET
+				last_seen_run_id=EXCLUDED.last_seen_run_id,observed_size=EXCLUDED.observed_size,
+				consecutive_runs=CASE WHEN storage_reconciliation_findings.last_seen_run_id<>EXCLUDED.last_seen_run_id THEN storage_reconciliation_findings.consecutive_runs+1 ELSE storage_reconciliation_findings.consecutive_runs END,
+				confirmed_at=CASE WHEN storage_reconciliation_findings.consecutive_runs+1>=2 THEN COALESCE(storage_reconciliation_findings.confirmed_at,NOW()) ELSE storage_reconciliation_findings.confirmed_at END,
+				updated_at=NOW() RETURNING consecutive_runs`, snapshot.workspaceID, key.bucket, key.key, size, runID).Scan(&consecutive); err != nil {
+				return err
+			}
+			if consecutive >= 2 {
+				snapshot.unknown++
+			}
+			continue
+		}
+		if expectation.size != nil && *expectation.size != size {
+			snapshot.sizeMismatch++
+			if err := upsertReconciliationFinding(ctx, db, runID, snapshot.workspaceID, expectation.assetType, "size_mismatch", key, expectation.size, &size, true); err != nil {
+				return err
+			}
+		}
+	}
+	for key, expectation := range snapshot.expected {
+		if !expectation.verify {
+			continue
+		}
+		if _, exists := snapshot.keys[key]; !exists {
+			snapshot.missing++
+			if err := upsertReconciliationFinding(ctx, db, runID, snapshot.workspaceID, expectation.assetType, "missing", key, expectation.size, nil, true); err != nil {
+				return err
+			}
+		}
+	}
+	for key, size := range snapshot.staleParts {
+		var consecutive int
+		if err := db.QueryRow(ctx, `INSERT INTO storage_reconciliation_findings(asset_type,finding_type,workspace_id,bucket,object_key,observed_size,first_seen_run_id,last_seen_run_id)
+			VALUES('multipart','stale_multipart',$1,$2,$3,$4,$5,$5)
+			ON CONFLICT(asset_type,finding_type,bucket,object_key) WHERE resolved_at IS NULL DO UPDATE SET
+			last_seen_run_id=EXCLUDED.last_seen_run_id,observed_size=EXCLUDED.observed_size,
+			consecutive_runs=CASE WHEN storage_reconciliation_findings.last_seen_run_id<>EXCLUDED.last_seen_run_id THEN storage_reconciliation_findings.consecutive_runs+1 ELSE storage_reconciliation_findings.consecutive_runs END,
+			confirmed_at=CASE WHEN storage_reconciliation_findings.consecutive_runs+1>=2 THEN COALESCE(storage_reconciliation_findings.confirmed_at,NOW()) ELSE storage_reconciliation_findings.confirmed_at END,
+			updated_at=NOW() RETURNING consecutive_runs`, snapshot.workspaceID, key.bucket, key.key, size, runID).Scan(&consecutive); err != nil {
+			return err
+		}
+		if consecutive >= 2 {
+			snapshot.unknown++
+		}
+	}
+	if _, err := db.Exec(ctx, `UPDATE storage_reconciliation_findings SET resolved_at=NOW(),resolution='not_seen_in_complete_reconciliation',updated_at=NOW()
+		WHERE workspace_id=$1 AND resolved_at IS NULL AND last_seen_run_id<>$2`, snapshot.workspaceID, runID); err != nil {
+		return err
+	}
+	return nil
+}
+
+func upsertReconciliationFinding(ctx context.Context, db *pgxpool.Pool, runID, workspaceID, assetType, findingType string, key storedObjectKey, expectedSize, observedSize *int64, confirmed bool) error {
+	_, err := db.Exec(ctx, `INSERT INTO storage_reconciliation_findings(asset_type,finding_type,workspace_id,bucket,object_key,expected_size,observed_size,first_seen_run_id,last_seen_run_id,confirmed_at)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,CASE WHEN $9 THEN NOW() ELSE NULL END)
+		ON CONFLICT(asset_type,finding_type,bucket,object_key) WHERE resolved_at IS NULL DO UPDATE SET
+		last_seen_run_id=EXCLUDED.last_seen_run_id,expected_size=EXCLUDED.expected_size,observed_size=EXCLUDED.observed_size,
+		confirmed_at=CASE WHEN $9 THEN COALESCE(storage_reconciliation_findings.confirmed_at,NOW()) ELSE storage_reconciliation_findings.confirmed_at END,
+		consecutive_runs=CASE WHEN storage_reconciliation_findings.last_seen_run_id<>EXCLUDED.last_seen_run_id THEN storage_reconciliation_findings.consecutive_runs+1 ELSE storage_reconciliation_findings.consecutive_runs END,updated_at=NOW()`,
+		assetType, findingType, workspaceID, key.bucket, key.key, expectedSize, observedSize, runID, confirmed)
+	return err
 }
 
 func inventoryWorkspaceMultipart(ctx context.Context, db *pgxpool.Pool, client *minio.Client, buckets []string, workspaceID, prefix string, snapshot *storageWorkspaceSnapshot) error {
@@ -208,8 +460,9 @@ func inventoryWorkspaceMultipart(ctx context.Context, db *pgxpool.Pool, client *
 				if upload.Err != nil {
 					return upload.Err
 				}
-				if expected, ok := known[upload.UploadID]; !ok || expected.bucket != bucket || expected.key != upload.Key {
-					snapshot.unknown++
+				_, knownUpload := known[upload.UploadID]
+				if knownUpload && (known[upload.UploadID].bucket != bucket || known[upload.UploadID].key != upload.Key) {
+					knownUpload = false
 				}
 				marker := 0
 				for {
@@ -228,6 +481,9 @@ func inventoryWorkspaceMultipart(ctx context.Context, db *pgxpool.Pool, client *
 						return fmt.Errorf("multipart part listing did not advance")
 					}
 					marker = parts.NextPartNumberMarker
+				}
+				if !knownUpload {
+					snapshot.staleParts[storedObjectKey{bucket: bucket, key: "multipart/" + upload.UploadID}] = snapshot.parts[upload.UploadID]
 				}
 			}
 			if !listed.IsTruncated {
@@ -331,6 +587,8 @@ func applyWorkspaceStorageSnapshot(ctx context.Context, db *pgxpool.Pool, snapsh
 		reason = "orphan_objects"
 	case snapshot.missing > 0:
 		reason = "missing_objects"
+	case snapshot.sizeMismatch > 0:
+		reason = "object_size_mismatch"
 	case physicalLimit <= 0 || snapshot.bytes+physicalReserved > physicalLimit:
 		reason = "physical_limit"
 	}
@@ -470,6 +728,16 @@ func processFilePurgeTask(ctx context.Context, db *pgxpool.Pool, client fileObje
 		}
 		return tx.Commit(ctx)
 	}
+	if os.Getenv("S3_REPLICA_REQUIRED") == "true" {
+		var replicaStatus string
+		replicaErr := tx.QueryRow(ctx, `SELECT status FROM file_replication_tasks WHERE asset_type='file_version' AND asset_id=$1 FOR UPDATE`, task.versionID).Scan(&replicaStatus)
+		if replicaErr != nil || replicaStatus != "replicated" {
+			if _, err := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='pending',available_at=NOW()+INTERVAL '5 minutes',lease_owner='',lease_until=NULL,last_error='replica_not_ready',updated_at=NOW() WHERE version_id=$1`, task.versionID); err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
+	}
 	if task.cause == "retention_expired" {
 		var expired bool
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(purge_after,deleted_at+INTERVAL '30 days')<=NOW()
@@ -504,6 +772,10 @@ func processFilePurgeTask(ctx context.Context, db *pgxpool.Pool, client fileObje
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE file_versions SET object_purged_at=NOW(),quota_charged=FALSE WHERE id=$1 AND object_purged_at IS NULL`, task.versionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE file_replication_tasks SET status='purge_pending',source_purged_at=NOW(),replica_purge_after=NOW()+INTERVAL '30 days',updated_at=NOW()
+		WHERE asset_type='file_version' AND asset_id=$1 AND status='replicated'`, task.versionID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE workspace_storage_accounts SET physical_used_bytes=GREATEST(0,physical_used_bytes-$2),
@@ -552,6 +824,12 @@ func purgeStoredVersion(ctx context.Context, db *pgxpool.Pool, client fileObject
 	if err != nil {
 		return err
 	}
+	if os.Getenv("S3_REPLICA_REQUIRED") == "true" {
+		var replicaStatus string
+		if err := tx.QueryRow(ctx, `SELECT status FROM file_replication_tasks WHERE asset_type='file_version' AND asset_id=$1 FOR UPDATE`, versionID).Scan(&replicaStatus); err != nil || replicaStatus != "replicated" {
+			return nil
+		}
+	}
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `INSERT INTO workspace_storage_accounts(workspace_id) VALUES($1) ON CONFLICT DO NOTHING`, workspaceID); err != nil {
 		return err
@@ -593,6 +871,10 @@ func purgeStoredVersion(ctx context.Context, db *pgxpool.Pool, client fileObject
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE file_versions SET object_purged_at=NOW(),quota_charged=FALSE WHERE id=$1 AND object_purged_at IS NULL`, versionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE file_replication_tasks SET status='purge_pending',source_purged_at=NOW(),replica_purge_after=NOW()+INTERVAL '30 days',updated_at=NOW()
+		WHERE asset_type='file_version' AND asset_id=$1 AND status='replicated'`, versionID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE workspace_storage_accounts SET physical_used_bytes=GREATEST(0,physical_used_bytes-$2),
@@ -669,6 +951,79 @@ func storageReconcileTicker(ctx context.Context, logger *slog.Logger, db *pgxpoo
 			return
 		case <-ticker.C:
 			reconcile()
+		}
+	}
+}
+
+func storageReconcileRequestTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, buckets []string, physicalLimit int64, interval time.Duration) {
+	if client == nil || physicalLimit <= 0 {
+		return
+	}
+	process := func() {
+		rows, err := db.Query(ctx, `WITH selected AS (
+			SELECT id FROM storage_reconciliation_requests WHERE status='pending' OR (status='leased' AND started_at<NOW()-INTERVAL '15 minutes')
+			ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 10
+		) UPDATE storage_reconciliation_requests r SET status='leased',started_at=NOW(),last_error=''
+		FROM selected s WHERE r.id=s.id RETURNING r.id,COALESCE(r.workspace_id,''),r.started_at`)
+		if err != nil {
+			logger.Warn("claim manual storage reconciliation requests", "error", err)
+			return
+		}
+		type request struct {
+			id, workspace string
+			startedAt     time.Time
+		}
+		requests := []request{}
+		for rows.Next() {
+			var item request
+			if err := rows.Scan(&item.id, &item.workspace, &item.startedAt); err != nil {
+				rows.Close()
+				logger.Warn("read reconciliation request", "error", err)
+				return
+			}
+			requests = append(requests, item)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil || len(requests) == 0 {
+			if err != nil {
+				logger.Warn("read reconciliation requests", "error", err)
+			}
+			return
+		}
+		if err := validateWorkerStorageBuckets(ctx, client, buckets); err != nil {
+			for _, item := range requests {
+				_, _ = db.Exec(ctx, `UPDATE storage_reconciliation_requests SET status='failed',completed_at=NOW(),last_error='storage_not_ready' WHERE id=$1`, item.id)
+			}
+			logger.Error("manual storage reconciliation skipped because storage is unsafe", "error", err)
+			return
+		}
+		for _, item := range requests {
+			reconcileWorkspaceStorageFor(ctx, logger, db, client, buckets, physicalLimit, item.workspace)
+			var failed bool
+			if err := db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM storage_reconciliation_runs WHERE status='failed' AND started_at>=$1
+				AND (($2='' AND scope IN ('workspace','avatars')) OR (scope='workspace' AND workspace_id=$2)))`, item.startedAt, item.workspace).Scan(&failed); err != nil {
+				logger.Warn("check reconciliation request result", "request_id", item.id, "error", err)
+				continue
+			}
+			status, lastError := "completed", ""
+			if failed {
+				status, lastError = "failed", "reconciliation_run_failed"
+			}
+			if _, err := db.Exec(ctx, `UPDATE storage_reconciliation_requests SET status=$2,completed_at=NOW(),last_error=$3 WHERE id=$1`, item.id, status, lastError); err != nil {
+				logger.Warn("complete reconciliation request", "request_id", item.id, "error", err)
+			}
+		}
+	}
+	process()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			process()
 		}
 	}
 }

@@ -1,0 +1,21 @@
+DROP TRIGGER IF EXISTS file_ops_audit_append_only ON file_ops_audit_events;
+DROP TRIGGER IF EXISTS file_security_audit_append_only ON file_security_audit_events;
+DROP TRIGGER IF EXISTS file_object_access_append_only ON file_object_access_events;
+DROP FUNCTION IF EXISTS reject_file_ops_audit_mutation();
+DROP TABLE IF EXISTS file_object_access_events;
+DROP TABLE IF EXISTS file_backup_status;
+DROP TABLE IF EXISTS file_replication_watermarks;
+DROP TABLE IF EXISTS file_replication_tasks;
+DROP TABLE IF EXISTS file_ops_audit_events;
+DROP TABLE IF EXISTS file_security_audit_events;
+DROP TABLE IF EXISTS storage_reconciliation_findings;
+DROP TABLE IF EXISTS storage_reconciliation_requests;
+DROP TABLE IF EXISTS storage_reconciliation_runs;
+DROP TABLE IF EXISTS file_scan_attempt_events;
+ALTER TABLE users DROP COLUMN IF EXISTS avatar_sha256;
+ALTER TABLE users DROP COLUMN IF EXISTS avatar_size_bytes;
+UPDATE file_scan_tasks SET status='pending' WHERE status='needs_attention';
+ALTER TABLE file_scan_tasks DROP CONSTRAINT IF EXISTS file_scan_tasks_status_check;
+ALTER TABLE file_scan_tasks ADD CONSTRAINT file_scan_tasks_status_check
+    CHECK (status IN ('pending','leased','completed'));
+UPDATE app_metadata SET value='{"version":54}'::jsonb,updated_at=NOW() WHERE key='schema';

@@ -114,6 +114,7 @@ func (app *application) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", app.health)
 	mux.HandleFunc("GET /readyz", app.ready)
+	mux.HandleFunc("POST /internal/storage/audit", app.ingestStorageAuditEvent)
 	mux.HandleFunc("POST /auth/register", app.register)
 	mux.HandleFunc("POST /auth/login", app.login)
 	mux.HandleFunc("POST /auth/refresh", app.refresh)

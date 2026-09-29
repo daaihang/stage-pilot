@@ -55,6 +55,15 @@ func TestScanRetryBackoffIsExponentialAndBounded(t *testing.T) {
 	}
 }
 
+func TestScanFailuresEscalateAfterTwelveAttempts(t *testing.T) {
+	if scanNeedsAttention(11) {
+		t.Fatal("11 failed attempts must remain eligible for automatic retry")
+	}
+	if !scanNeedsAttention(12) || !scanNeedsAttention(13) {
+		t.Fatal("12 or more failed attempts must require operator attention")
+	}
+}
+
 func TestScanContentHashesExactStreamAndRecordsDetectedType(t *testing.T) {
 	data := []byte("hello stagepilot")
 	scanner := newClamAVScanner(startFakeClamd(t, "stream: OK"), time.Second)

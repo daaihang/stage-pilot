@@ -98,6 +98,9 @@ func (app *application) loadAttachmentAccess(ctx context.Context, attachmentID s
 func (app *application) requireAttachmentAction(w http.ResponseWriter, r *http.Request, action fileAction) (attachmentAccess, bool) {
 	a, err := app.loadAttachmentAccess(r.Context(), r.PathValue("attachmentId"))
 	if err != nil || !app.authorizeFileParent(r.Context(), claims(r).Subject, a.Parent, a.SecurityClass, action) {
+		if action == fileDownload || action == fileDetach {
+			app.auditDeniedAttachmentAction(r, action, r.PathValue("attachmentId"), a)
+		}
 		errorJSON(w, http.StatusNotFound, "attachment_not_found", "附件不存在或无权访问")
 		return attachmentAccess{}, false
 	}

@@ -1,6 +1,13 @@
 import { request } from "@/lib/auth";
 
 const base = (workspaceId, suffix = "") => `/v1/workspaces/${workspaceId}/files${suffix}`;
+const withPage = (url, page = {}) => {
+  const params = new URLSearchParams();
+  if (page.limit) params.set("limit", String(page.limit));
+  if (page.cursor) params.set("cursor", page.cursor);
+  const query = params.toString();
+  return query ? `${url}${url.includes("?") ? "&" : "?"}${query}` : url;
+};
 const fallbackKey = () => `${Date.now()}-${Math.random()}-${Math.random()}`;
 function uploadKey(scope, payload) {
   const identity = [payload.filename || "", payload.size_bytes || 0, payload.last_modified || 0].join(":");
@@ -27,8 +34,8 @@ async function requestIdempotently(path, options, scope, payload, idempotencyKey
   const result = await request(path, { ...options, headers: { ...(options.headers || {}), "Idempotency-Key": key } });
   return { ...result, _resumeKey: key };
 }
-export const listFiles = (workspaceId, productionId = "workspace") => request(`${base(workspaceId)}?production_id=${encodeURIComponent(productionId)}`);
-export const listDeletedFiles = (workspaceId, productionId = "workspace") => request(`${base(workspaceId, "/trash")}?production_id=${encodeURIComponent(productionId)}`);
+export const listFiles = (workspaceId, productionId = "workspace", page = {}) => request(withPage(`${base(workspaceId)}?production_id=${encodeURIComponent(productionId)}`, page));
+export const listDeletedFiles = (workspaceId, productionId = "workspace", page = {}) => request(withPage(`${base(workspaceId, "/trash")}?production_id=${encodeURIComponent(productionId)}`, page));
 export const restoreFile = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}/restore`), { method: "POST" });
 export const getMyWorkspaceStorage = () => request("/v1/me/workspace-storage");
 export const createFileUpload = (workspaceId, payload, idempotencyKey) => requestIdempotently(base(workspaceId), { method: "POST", body: JSON.stringify(payload) }, `workspace:${workspaceId}:${payload.production_id || "workspace"}`, payload, idempotencyKey);
@@ -39,12 +46,12 @@ export const deleteFile = (workspaceId, fileId) => request(base(workspaceId, `/$
 const programAttachments = (workspaceId, programId) => `/v1/workspaces/${workspaceId}/programs/${programId}/attachments`;
 const productionProgramAttachments = (productionId, programId) => `/v1/productions/${productionId}/programs/${programId}/attachments`;
 const attachmentBase = (attachmentId) => `/v1/attachments/${attachmentId}`;
-export const listProgramAttachments = (workspaceId, programId, trash = false) => request(`${programAttachments(workspaceId, programId)}${trash ? "?trash=true" : ""}`);
+export const listProgramAttachments = (workspaceId, programId, trash = false, page = {}) => request(withPage(`${programAttachments(workspaceId, programId)}${trash ? "?trash=true" : ""}`, page));
 export const createProgramAttachment = (workspaceId, programId, payload, idempotencyKey) => requestIdempotently(programAttachments(workspaceId, programId), { method: "POST", body: JSON.stringify(payload) }, `program:${workspaceId}:${programId}`, payload, idempotencyKey);
-export const listProductionProgramAttachments = (productionId, programId, trash = false) => request(`${productionProgramAttachments(productionId, programId)}${trash ? "?trash=true" : ""}`);
+export const listProductionProgramAttachments = (productionId, programId, trash = false, page = {}) => request(withPage(`${productionProgramAttachments(productionId, programId)}${trash ? "?trash=true" : ""}`, page));
 export const createProductionProgramAttachment = (productionId, programId, payload, idempotencyKey) => requestIdempotently(productionProgramAttachments(productionId, programId), { method: "POST", body: JSON.stringify(payload) }, `production-program:${productionId}:${programId}`, payload, idempotencyKey);
 export const copyProductionProgramAttachment = (productionId, programId, payload) => requestIdempotently(`${productionProgramAttachments(productionId, programId)}/copy`, { method: "POST", body: JSON.stringify(payload) }, `production-copy:${productionId}:${programId}:${payload.attachment_id}:${payload.version_id || "current"}`, payload);
-export const listAttachmentVersions = (attachmentId) => request(`${attachmentBase(attachmentId)}/versions`);
+export const listAttachmentVersions = (attachmentId, page = {}) => request(withPage(`${attachmentBase(attachmentId)}/versions`, page));
 export const startAttachmentVersion = (attachmentId, payload, idempotencyKey) => requestIdempotently(`${attachmentBase(attachmentId)}/versions`, { method: "POST", body: JSON.stringify(payload) }, `attachment-version:${attachmentId}`, payload, idempotencyKey);
 export const completeUploadSession = (uploadId) => request(`/v1/file-upload-sessions/${uploadId}/complete`, { method: "POST" });
 export const cancelUploadSession = (uploadId) => request(`/v1/file-upload-sessions/${uploadId}`, { method: "DELETE" });
@@ -65,7 +72,7 @@ export async function waitForUploadSession(uploadId, { timeoutMs = 120_000, inte
 export const downloadAttachment = (attachmentId, versionId) => request(`${attachmentBase(attachmentId)}/download${versionId ? `?version_id=${encodeURIComponent(versionId)}` : ""}`);
 export const detachAttachment = (attachmentId) => request(attachmentBase(attachmentId), { method: "DELETE" });
 export const restoreAttachment = (attachmentId) => request(`${attachmentBase(attachmentId)}/restore`, { method: "POST" });
-export const listFileVersions = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}/versions`));
+export const listFileVersions = (workspaceId, fileId, page = {}) => request(withPage(base(workspaceId, `/${fileId}/versions`), page));
 export const startFileVersion = (workspaceId, fileId, payload, idempotencyKey) => requestIdempotently(base(workspaceId, `/${fileId}/versions`), { method: "POST", body: JSON.stringify(payload) }, `file-version:${workspaceId}:${fileId}`, payload, idempotencyKey);
 export const downloadFileVersion = (workspaceId, fileId, versionId) => request(base(workspaceId, `/${fileId}/versions/${versionId}/download`));
 

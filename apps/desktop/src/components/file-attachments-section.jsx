@@ -27,6 +27,10 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
   const [restricted, setRestricted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [versionItems, setVersionItems] = useState({});
+  const [nextCursor, setNextCursor] = useState(null);
+  const [sourceNextCursor, setSourceNextCursor] = useState(null);
+  const [versionNextCursors, setVersionNextCursors] = useState({});
+  const [loadingMore, setLoadingMore] = useState(false);
   const [confirmDetach, setConfirmDetach] = useState(null);
   const [showTrash, setShowTrash] = useState(false);
 
@@ -35,6 +39,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
       ? await listProductionProgramAttachments(production.id, programId, showTrash)
       : await listProgramAttachments(workspace.id, programId, showTrash);
     setItems(result.items || []);
+    setNextCursor(result.next_cursor || null);
     setCapabilities(result.capabilities || {});
   }, [isProduction, production?.id, programId, showTrash, workspace.id]);
 
@@ -57,7 +62,7 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
   useEffect(() => {
     if (!isProduction || !sourceProgramId || !workspace?.role) return;
     listProgramAttachments(workspace.id, sourceProgramId)
-      .then((result) => setSourceItems(result.items || []))
+      .then((result) => { setSourceItems(result.items || []); setSourceNextCursor(result.next_cursor || null); })
       .catch((error) => notify.error("无法加载来源节目附件", { description: error?.message || String(error) }));
   }, [isProduction, sourceProgramId, workspace?.id, workspace?.role]);
 
@@ -83,12 +88,51 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
   };
 
   const showVersions = async (item) => {
-    if (versionItems[item.id]) { setVersionItems((current) => ({ ...current, [item.id]: null })); return; }
+    if (versionItems[item.id]) { setVersionItems((current) => ({ ...current, [item.id]: null })); setVersionNextCursors((current) => ({ ...current, [item.id]: null })); return; }
     try {
       const result = await listAttachmentVersions(item.id);
       setVersionItems((current) => ({ ...current, [item.id]: result.items || [] }));
+      setVersionNextCursors((current) => ({ ...current, [item.id]: result.next_cursor || null }));
       notify.info("已加载版本历史");
     } catch (error) { notify.error("无法加载版本历史", { description: error?.message || String(error) }); }
+  };
+
+  const loadMoreAttachments = async (source = false) => {
+    const cursor = source ? sourceNextCursor : nextCursor;
+    if (!cursor || loadingMore) return;
+    const toast = notify.loading(source ? "正在加载更多来源附件…" : "正在加载更多附件…");
+    setLoadingMore(true);
+    try {
+      const result = source
+        ? await listProgramAttachments(workspace.id, sourceProgramId, false, { cursor })
+        : isProduction
+          ? await listProductionProgramAttachments(production.id, programId, showTrash, { cursor })
+          : await listProgramAttachments(workspace.id, programId, showTrash, { cursor });
+      if (source) {
+        setSourceItems((current) => [...current, ...(result.items || [])]);
+        setSourceNextCursor(result.next_cursor || null);
+      } else {
+        setItems((current) => [...current, ...(result.items || [])]);
+        setNextCursor(result.next_cursor || null);
+      }
+      notify.success(source ? "已加载更多来源附件" : "已加载更多附件", { id: toast });
+    } catch (error) {
+      notify.error(source ? "加载来源附件失败" : "加载更多附件失败", { id: toast, description: error?.message || String(error) });
+    } finally { setLoadingMore(false); }
+  };
+
+  const loadMoreVersions = async (item) => {
+    const cursor = versionNextCursors[item.id];
+    if (!cursor || loadingMore) return;
+    const toast = notify.loading("正在加载更多版本…");
+    setLoadingMore(true);
+    try {
+      const result = await listAttachmentVersions(item.id, { cursor });
+      setVersionItems((current) => ({ ...current, [item.id]: [...(current[item.id] || []), ...(result.items || [])] }));
+      setVersionNextCursors((current) => ({ ...current, [item.id]: result.next_cursor || null }));
+      notify.success("已加载更多版本", { id: toast });
+    } catch (error) { notify.error("加载更多版本失败", { id: toast, description: error?.message || String(error) }); }
+    finally { setLoadingMore(false); }
   };
 
   const download = async (item, versionId) => {
@@ -148,8 +192,10 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
         {item.capabilities?.can_upload_version && (isTauriRuntime ? <Button type="button" variant="link" size="sm" onClick={() => void uploadVersion(item)}><FileUp className="size-3.5" />上传新版</Button>
           : <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-primary"><FileUp className="size-3.5" />上传新版<input type="file" className="hidden" onChange={(event) => uploadVersion(item, event)} /></label>)}
         {versionItems[item.id]?.map((version) => <div key={version.id} className="mt-2 flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "processing" ? "检查中" : version.scan_status === "rejected" ? "未通过" : "可用"}</span><Button size="sm" variant="ghost" disabled={version.scan_status !== "ready"} onClick={() => download(item, version.id)}>下载</Button></div>)}
+        {versionNextCursors[item.id] && <div className="pl-3 pt-1"><Button size="sm" variant="link" disabled={loadingMore} onClick={() => loadMoreVersions(item)}>{loadingMore ? "正在加载…" : "加载更多版本"}</Button></div>}
       </div>) : <p className="text-sm text-muted-foreground">{showTrash ? "回收站为空" : "暂无附件"}</p>}
-      {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="space-y-1"><div className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="ghost" onClick={() => showVersions(source)}><Clock3 />历史版本</Button><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy || !source.capabilities?.can_download}><Copy />复制当前版</Button></div>{versionItems[source.id]?.map((version) => <div key={version.id} className="flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "ready" ? "可用" : version.scan_status === "processing" ? "检查中" : "未通过"}</span><Button size="sm" variant="outline" onClick={() => copy(source, version.id)} disabled={busy || version.scan_status !== "ready"}>复制此版本</Button></div>)}</div>)}</div>}
+      {nextCursor && <div className="flex justify-center"><Button variant="outline" size="sm" onClick={() => loadMoreAttachments(false)} disabled={loadingMore}>{loadingMore ? "正在加载…" : showTrash ? "加载更多回收站附件" : "加载更多附件"}</Button></div>}
+      {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="space-y-1"><div className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="ghost" onClick={() => showVersions(source)}><Clock3 />历史版本</Button><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy || !source.capabilities?.can_download}><Copy />复制当前版</Button></div>{versionItems[source.id]?.map((version) => <div key={version.id} className="flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "ready" ? "可用" : version.scan_status === "processing" ? "检查中" : "未通过"}</span><Button size="sm" variant="outline" onClick={() => copy(source, version.id)} disabled={busy || version.scan_status !== "ready"}>复制此版本</Button></div>)}</div>)}{sourceNextCursor && <div className="flex justify-center"><Button size="sm" variant="outline" onClick={() => loadMoreAttachments(true)} disabled={loadingMore}>{loadingMore ? "正在加载…" : "加载更多来源附件"}</Button></div>}</div>}
       {confirmDetach && <div role="alertdialog" aria-label="确认解除附件关联" className="space-y-2 rounded-md border p-3 text-sm"><p>解除“{confirmDetach.filename}”的关联？配额会立即释放，文件和全部历史版本仍保留 30 天供恢复。</p><div className="flex gap-2"><Button size="sm" variant="destructive" onClick={detach}>确认解除</Button><Button size="sm" variant="outline" onClick={() => setConfirmDetach(null)}>取消</Button></div></div>}
     </CardContent>
   </Card>;

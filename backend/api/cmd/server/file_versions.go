@@ -194,11 +194,21 @@ func (app *application) finalizeLegacyFile(ctx context.Context, s *objectStorage
 	return true, nil
 }
 
-func (app *application) listVersionsForFile(ctx context.Context, fileID string) ([]fileVersion, error) {
+func (app *application) listVersionsForFile(ctx context.Context, fileID string, limit int, cursor *fileListCursor, fingerprint string) ([]fileVersion, int64, *string, error) {
+	var total int64
+	if err := app.db.QueryRow(ctx, `SELECT COUNT(*) FROM file_versions WHERE file_id=$1`, fileID).Scan(&total); err != nil {
+		return nil, 0, nil, err
+	}
+	cursorAt := any(nil)
+	cursorID := ""
+	if cursor != nil {
+		cursorAt = cursor.CreatedAt
+		cursorID = cursor.ID
+	}
 	rows, err := app.db.Query(ctx, `SELECT id,file_id,version_no,filename,content_type,size_bytes,created_by,created_at,source_file_id,source_version_id,security_status
-		FROM file_versions WHERE file_id=$1 ORDER BY version_no DESC`, fileID)
+		FROM file_versions WHERE file_id=$1 AND ($2::timestamptz IS NULL OR (created_at,id)<($2::timestamptz,$3)) ORDER BY created_at DESC,id DESC LIMIT $4`, fileID, cursorAt, cursorID, limit+1)
 	if err != nil {
-		return nil, err
+		return nil, 0, nil, err
 	}
 	defer rows.Close()
 	items := []fileVersion{}
@@ -206,12 +216,22 @@ func (app *application) listVersionsForFile(ctx context.Context, fileID string) 
 		var v fileVersion
 		var securityStatus string
 		if err := rows.Scan(&v.ID, &v.FileID, &v.VersionNo, &v.Filename, &v.ContentType, &v.SizeBytes, &v.CreatedBy, &v.CreatedAt, &v.SourceFileID, &v.SourceVersion, &securityStatus); err != nil {
-			return nil, err
+			return nil, 0, nil, err
 		}
 		v.ScanStatus = publicScanStatus(securityStatus)
 		items = append(items, v)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, nil, err
+	}
+	var next *string
+	if len(items) > limit {
+		last := items[limit-1]
+		encoded := encodeFileListCursor(last.CreatedAt, last.ID, fingerprint)
+		next = &encoded
+		items = items[:limit]
+	}
+	return items, total, next, nil
 }
 
 func (app *application) createFileUploadSession(ctx context.Context, s *objectStorage, workspaceID, fileID, userID, filename, contentType string, size int64, policy fileUploadPolicy, idempotencyKey string) (map[string]any, error) {
@@ -395,12 +415,18 @@ func (app *application) listFileVersions(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	items, err := app.listVersionsForFile(r.Context(), id)
+	fingerprint := fileFilterFingerprint("file_versions", r.PathValue("id"), id)
+	limit, cursor, pageErr := filePageParameters(r, fingerprint)
+	if pageErr != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_pagination", pageErr.Error())
+		return
+	}
+	items, total, next, err := app.listVersionsForFile(r.Context(), id, limit, cursor, fingerprint)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
+	writeJSON(w, 200, map[string]any{"items": items, "total": total, "next_cursor": next})
 }
 
 func (app *application) startFileVersion(w http.ResponseWriter, r *http.Request) {
@@ -443,28 +469,35 @@ func (app *application) downloadFileVersion(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	app.presignVersion(w, r, id, r.PathValue("versionId"))
+	app.presignVersion(w, r, id, r.PathValue("versionId"), nil)
 }
 
-func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, fileID, versionID string) {
+func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, fileID, versionID string, audit *attachmentAccess) bool {
 	var bucket, key, filename, sha256, etag string
 	var sizeBytes int64
 	err := app.db.QueryRow(r.Context(), `SELECT bucket,object_key,filename,size_bytes,sha256,etag FROM file_versions WHERE id=$1 AND file_id=$2 AND security_status='clean' AND object_purged_at IS NULL`, versionID, fileID).Scan(&bucket, &key, &filename, &sizeBytes, &sha256, &etag)
 	if err != nil {
 		errorJSON(w, 404, "version_not_found", "文件版本不存在")
-		return
+		return false
 	}
 	s := app.storageRequired(w)
 	if s == nil {
-		return
+		return false
 	}
 	u, err := s.presignClient.PresignedGetObject(r.Context(), bucket, key, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""}})
 	if err != nil {
 		serverError(w, err)
-		return
+		return false
+	}
+	if audit != nil {
+		if err := app.recordSensitiveFileEvent(r.Context(), r, claims(r).Subject, "download_granted", "allowed", "parent_permission", *audit, versionID); err != nil {
+			serverError(w, err)
+			return false
+		}
 	}
 	writeJSON(w, 200, map[string]any{"url": u.String(), "expires_in": 300, "version_id": versionID,
 		"filename": filename, "size_bytes": sizeBytes, "sha256": sha256, "etag": etag})
+	return true
 }
 
 func publicScanStatus(status string) string {
