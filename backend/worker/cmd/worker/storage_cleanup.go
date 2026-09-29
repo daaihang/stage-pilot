@@ -2,53 +2,31 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 type fileObjectRemover interface {
-	RemoveObject(context.Context, string, string, minio.RemoveObjectOptions) error
+	RemoveObject(context.Context, objectstore.ObjectRef) error
 }
 
 type fileMultipartUploadAborter interface {
-	AbortMultipartUpload(context.Context, string, string, string) error
+	AbortMultipart(context.Context, objectstore.ObjectRef, string) error
 }
 
 type fileMultipartPartLister interface {
-	ListObjectParts(context.Context, string, string, string, int, int) (minio.ListObjectPartsResult, error)
-}
-
-type minioFileCleanupClient struct{ *minio.Client }
-
-func (c minioFileCleanupClient) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
-	return (minio.Core{Client: c.Client}).AbortMultipartUpload(ctx, bucket, key, uploadID)
-}
-
-func (c minioFileCleanupClient) ListObjectParts(ctx context.Context, bucket, key, uploadID string, marker, maxParts int) (minio.ListObjectPartsResult, error) {
-	return (minio.Core{Client: c.Client}).ListObjectParts(ctx, bucket, key, uploadID, marker, maxParts)
+	ListParts(context.Context, objectstore.ObjectRef, string, int, int) (objectstore.PartsPage, error)
 }
 
 // cleanupFiles reclaims unfinished uploads, expired quarantined versions, and
 // soft-deleted file versions whose retention deadline has elapsed.
-func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool) {
-	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "http://"), "https://")
-	if endpoint == "" {
-		return
-	}
-	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), ""),
-		Secure: os.Getenv("S3_USE_SSL") == "true", Region: envOrDefault("S3_REGION", "us-east-1"),
-		BucketLookup: minio.BucketLookupPath,
-	})
-	if err != nil {
-		logger.Warn("create object storage cleanup client", "error", err)
+func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client objectstore.Client) {
+	if client == nil {
 		return
 	}
 	bucket := envOrDefault("S3_BUCKET", "stagepilot")
@@ -62,9 +40,8 @@ func cleanupFiles(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool) {
 	if uploadTTL+time.Hour > staleAfter {
 		staleAfter = uploadTTL + time.Hour
 	}
-	cleaner := minioFileCleanupClient{Client: client}
-	cleanupFilesWithClient(ctx, logger, db, cleaner, staleAfter)
-	cleanupUploadSessionsWithClient(ctx, logger, db, cleaner, staleAfter)
+	cleanupFilesWithClient(ctx, logger, db, client, staleAfter)
+	cleanupUploadSessionsWithClient(ctx, logger, db, client, staleAfter)
 	cleanupCopyAttemptsWithClient(ctx, logger, db, client, staleAfter)
 	freezeLegacyFileVersions(ctx, logger, db, client, uploadTTL+time.Hour)
 	cleanupExpiredFileVersions(ctx, logger, db, client)
@@ -170,6 +147,7 @@ func cleanupUploadSessionsWithClient(ctx context.Context, logger *slog.Logger, d
 			_ = tx.Rollback(ctx)
 			continue
 		}
+		ref := objectstore.ObjectRef{Bucket: item.bucket, Key: item.key}
 		if item.multipartID != nil {
 			aborter, canAbort := client.(fileMultipartUploadAborter)
 			lister, canVerify := client.(fileMultipartPartLister)
@@ -178,21 +156,21 @@ func cleanupUploadSessionsWithClient(ctx context.Context, logger *slog.Logger, d
 				logger.Warn("multipart cleanup adapter cannot verify abort", "upload_id", item.id)
 				continue
 			}
-			if err := aborter.AbortMultipartUpload(ctx, item.bucket, item.key, *item.multipartID); err != nil && minio.ToErrorResponse(err).Code != "NoSuchUpload" {
+			if err := aborter.AbortMultipart(ctx, ref, *item.multipartID); err != nil && !errors.Is(err, objectstore.ErrMultipartNotFound) {
 				_ = tx.Commit(ctx)
 				logger.Warn("abort incomplete multipart upload", "upload_id", item.id, "error", err)
 				continue
 			}
 			// S3 can still finish an in-flight part after an abort. Do not release
 			// physical headroom while storage still reports the multipart upload.
-			parts, listErr := lister.ListObjectParts(ctx, item.bucket, item.key, *item.multipartID, 0, 1)
-			if listErr == nil || minio.ToErrorResponse(listErr).Code != "NoSuchUpload" {
+			parts, listErr := lister.ListParts(ctx, ref, *item.multipartID, 0, 1)
+			if listErr == nil || !errors.Is(listErr, objectstore.ErrMultipartNotFound) {
 				_ = tx.Commit(ctx)
-				logger.Warn("multipart upload still needs cleanup", "upload_id", item.id, "parts", len(parts.ObjectParts), "error", listErr)
+				logger.Warn("multipart upload still needs cleanup", "upload_id", item.id, "parts", len(parts.Parts), "error", listErr)
 				continue
 			}
 		}
-		if err := client.RemoveObject(ctx, item.bucket, item.key, minio.RemoveObjectOptions{}); err != nil {
+		if err := client.RemoveObject(ctx, ref); err != nil {
 			_ = tx.Commit(ctx)
 			logger.Warn("remove expired staging object", "upload_id", item.id, "error", err)
 			continue
@@ -266,7 +244,7 @@ func cleanupCopyAttemptsWithClient(ctx context.Context, logger *slog.Logger, db 
 			_ = tx.Rollback(ctx)
 			continue
 		}
-		if err := client.RemoveObject(ctx, item.bucket, item.key, minio.RemoveObjectOptions{}); err != nil {
+		if err := client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: item.bucket, Key: item.key}); err != nil {
 			_ = tx.Commit(ctx)
 			logger.Warn("remove uncommitted file copy", "copy_id", item.id, "error", err)
 			continue
@@ -289,7 +267,10 @@ func cleanupCopyAttemptsWithClient(ctx context.Context, logger *slog.Logger, db 
 	}
 }
 
-func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, minAge time.Duration) {
+func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client interface {
+	objectstore.ObjectReader
+	objectstore.ObjectWriter
+}, minAge time.Duration) {
 	rows, err := db.Query(ctx, `SELECT id,workspace_id,bucket,object_key,etag,size_bytes FROM file_versions
 		WHERE version_no=1 AND frozen_at IS NULL AND created_at < $1 ORDER BY created_at,id LIMIT 30`, time.Now().Add(-minAge))
 	if err != nil {
@@ -320,7 +301,7 @@ func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 		if ctx.Err() != nil {
 			return
 		}
-		stat, err := client.StatObject(ctx, item.bucket, item.key, minio.StatObjectOptions{})
+		stat, err := client.StatObject(ctx, objectstore.ObjectRef{Bucket: item.bucket, Key: item.key})
 		if err != nil {
 			if isMissingObject(err) {
 				rejectLegacyFileVersion(ctx, logger, db, item.id, "object_missing")
@@ -339,33 +320,16 @@ func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 			logger.Warn("record legacy freeze attempt", "version_id", item.id, "error", err)
 			continue
 		}
-		src := minio.CopySrcOptions{Bucket: item.bucket, Object: item.key, MatchETag: strings.Trim(stat.ETag, `"`)}
-		dst := minio.CopyDestOptions{Bucket: item.bucket, Object: key}
-		if item.size <= 5_000_000_000 {
-			_, err = client.CopyObject(ctx, dst, src)
-		} else {
-			parts := []minio.CopySrcOptions{}
-			for start := int64(0); start < item.size; start += 1 << 30 {
-				end := start + (1 << 30) - 1
-				if end >= item.size {
-					end = item.size - 1
-				}
-				part := src
-				part.MatchRange, part.Start, part.End = true, start, end
-				parts = append(parts, part)
-			}
-			_, err = client.ComposeObject(ctx, dst, parts...)
-		}
+		copied, err := client.CopyObject(ctx, objectstore.ObjectRef{Bucket: item.bucket, Key: item.key}, objectstore.ObjectRef{Bucket: item.bucket, Key: key}, stat.ETag, item.size)
 		if err != nil {
 			logger.Warn("copy legacy version", "version_id", item.id, "error", err)
 			continue
 		}
-		copied, e := client.StatObject(ctx, item.bucket, key, minio.StatObjectOptions{})
-		if e != nil || copied.Size != item.size {
-			logger.Warn("verify legacy version copy", "version_id", item.id, "error", e)
+		if copied.Size != item.size {
+			logger.Warn("verify legacy version copy", "version_id", item.id, "expected_size", item.size, "actual_size", copied.Size)
 			continue
 		}
-		copiedETag := strings.Trim(copied.ETag, `"`)
+		copiedETag := copied.ETag
 		tx, err := db.Begin(ctx)
 		if err != nil {
 			logger.Warn("begin legacy freeze", "error", err)
@@ -391,7 +355,7 @@ func freezeLegacyFileVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 		}
 		if err != nil {
 			logger.Warn("commit legacy freeze", "version_id", item.id, "error", err)
-			_ = client.RemoveObject(ctx, item.bucket, key, minio.RemoveObjectOptions{})
+			_ = client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: item.bucket, Key: key})
 		}
 	}
 }
@@ -439,7 +403,7 @@ func cleanupFilesWithClient(ctx context.Context, logger *slog.Logger, db *pgxpoo
 			logger.Warn("record abandoned object attempt", "file_id", file.id, "error", err)
 			continue
 		}
-		if err := client.RemoveObject(ctx, file.bucket, file.key, minio.RemoveObjectOptions{}); err != nil {
+		if err := client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: file.bucket, Key: file.key}); err != nil {
 			logger.Warn("remove abandoned object", "file_id", file.id, "error", err)
 			continue
 		}
@@ -492,7 +456,7 @@ func purgeQuarantinedVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 			logger.Warn("mark quarantine cleanup attempt", "version_id", id, "error", err)
 			continue
 		}
-		if err = client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+		if err = client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: bucket, Key: key}); err != nil {
 			_ = tx.Commit(ctx)
 			logger.Warn("purge expired quarantined object", "version_id", id, "error", err)
 			continue
@@ -508,8 +472,8 @@ func purgeQuarantinedVersions(ctx context.Context, logger *slog.Logger, db *pgxp
 	}
 }
 
-func cleanupTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, interval time.Duration) {
-	cleanupFiles(ctx, logger, db)
+func cleanupTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client objectstore.Client, interval time.Duration) {
+	cleanupFiles(ctx, logger, db, client)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -517,7 +481,7 @@ func cleanupTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, i
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			cleanupFiles(ctx, logger, db)
+			cleanupFiles(ctx, logger, db, client)
 		}
 	}
 }

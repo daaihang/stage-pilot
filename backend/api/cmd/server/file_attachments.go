@@ -53,11 +53,7 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 		errorJSON(w, 404, "parent_not_found", "节目不存在或无权访问")
 		return
 	}
-	adapter := app.fileParentAdapter(kind)
-	if adapter == nil {
-		serverError(w, pgx.ErrNoRows)
-		return
-	}
+	repository := app.fileAttachments()
 	canSeeRestricted := app.authorizeFileParent(r.Context(), claims(r).Subject, p, "restricted", action)
 	fingerprint := fileFilterFingerprint("attachments", string(kind), p.WorkspaceID, p.ProductionID, p.ID, strings.TrimSpace(r.URL.Query().Get("trash")), fmt.Sprint(canSeeRestricted))
 	limit, cursor, pageErr := filePageParameters(r, fingerprint)
@@ -65,12 +61,12 @@ func (app *application) listAttachments(w http.ResponseWriter, r *http.Request, 
 		errorJSON(w, http.StatusBadRequest, "invalid_pagination", pageErr.Error())
 		return
 	}
-	total, err := adapter.Count(r.Context(), app.db, p, trash, canSeeRestricted)
+	total, err := repository.Count(r.Context(), p, trash, canSeeRestricted)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	rows, err := adapter.ListPage(r.Context(), app.db, p, trash, canSeeRestricted, limit, cursor)
+	rows, err := repository.ListPage(r.Context(), p, trash, canSeeRestricted, limit, cursor)
 	if err != nil {
 		serverError(w, err)
 		return
@@ -260,7 +256,7 @@ func (app *application) createAttachment(w http.ResponseWriter, r *http.Request,
 		serverError(w, err)
 		return
 	}
-	err = adapter.Attach(r.Context(), tx, attachmentID, p)
+	err = app.fileAttachments().Attach(r.Context(), tx, attachmentID, p)
 	if err != nil {
 		serverError(w, err)
 		return

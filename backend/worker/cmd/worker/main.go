@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
 )
 
 func main() {
@@ -58,7 +58,7 @@ func main() {
 	storageRetentionReady := false
 	if storage != nil {
 		for _, name := range storageBuckets {
-			if err := storage.MakeBucket(ctx, name, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil && minio.ToErrorResponse(err).Code != "BucketAlreadyOwnedByYou" {
+			if err := storage.EnsureBucket(ctx, name, envOrDefault("S3_REGION", "us-east-1")); err != nil {
 				logger.Error("ensure file storage bucket", "bucket", name, "error", err)
 			}
 		}
@@ -71,7 +71,7 @@ func main() {
 
 	logger.Info("worker started", "interval", interval)
 	if storageRetentionReady {
-		go cleanupTicker(ctx, logger, pool, interval)
+		go cleanupTicker(ctx, logger, pool, storage, interval)
 		go storageReconcileTicker(ctx, logger, pool, storage, storageBuckets, physicalLimit, durationOrDefault("STORAGE_RECONCILE_INTERVAL", 6*time.Hour))
 		go storageReconcileRequestTicker(ctx, logger, pool, storage, storageBuckets, physicalLimit, interval)
 		go fileReplicationTicker(ctx, logger, pool, storage, bucket, durationOrDefault("FILE_REPLICATION_INTERVAL", interval))
@@ -83,30 +83,30 @@ func main() {
 	logger.Info("worker stopped")
 }
 
-func validateWorkerBucketVersioningDisabled(bucket string, config minio.BucketVersioningConfiguration) error {
-	if config.Status != "" {
-		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, config.Status)
+func validateWorkerBucketVersioningDisabled(bucket, status string) error {
+	if status != "" {
+		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, status)
 	}
 	return nil
 }
 
-func validateWorkerStorageBuckets(ctx context.Context, client *minio.Client, buckets []string) error {
+func validateWorkerStorageBuckets(ctx context.Context, client objectstore.BucketAdmin, buckets []string) error {
 	if client == nil || len(buckets) != 2 || buckets[0] == "" || buckets[1] == "" || buckets[0] == buckets[1] {
 		return fmt.Errorf("formal and staging buckets must both exist and be distinct")
 	}
 	for _, bucket := range buckets {
-		config, err := client.GetBucketVersioning(ctx, bucket)
+		status, err := client.BucketVersioningStatus(ctx, bucket)
 		if err != nil {
 			return fmt.Errorf("check bucket %q versioning: %w", bucket, err)
 		}
-		if err := validateWorkerBucketVersioningDisabled(bucket, config); err != nil {
+		if err := validateWorkerBucketVersioningDisabled(bucket, status); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func fileScanTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, storage *minio.Client, scanner fileScanner, interval time.Duration, maxBytes int64) {
+func fileScanTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, storage objectstore.ObjectReader, scanner fileScanner, interval time.Duration, maxBytes int64) {
 	if storage == nil {
 		return
 	}

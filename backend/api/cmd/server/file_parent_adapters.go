@@ -3,10 +3,6 @@ package main
 import (
 	"context"
 	"net/http"
-	"strings"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // fileParentAdapter is the only boundary between generic attachment use cases
@@ -17,9 +13,6 @@ type fileParentAdapter interface {
 	Resolve(context.Context, fileParent) (fileParent, error)
 	Authorize(context.Context, string, fileParent, string, fileAction) bool
 	UploadPolicy(context.Context, fileParent) (fileUploadPolicy, error)
-	Attach(context.Context, pgx.Tx, string, fileParent) error
-	ListPage(context.Context, *pgxpool.Pool, fileParent, bool, bool, int, *fileListCursor) (pgx.Rows, error)
-	Count(context.Context, *pgxpool.Pool, fileParent, bool, bool) (int64, error)
 }
 
 type programAttachmentAdapter struct{ app *application }
@@ -66,35 +59,6 @@ func (a programAttachmentAdapter) UploadPolicy(ctx context.Context, parent fileP
 	return fileUploadPolicy{MaxBytes: hardMaxFileBytes}, nil
 }
 
-func (a programAttachmentAdapter) Attach(ctx context.Context, tx pgx.Tx, attachmentID string, parent fileParent) error {
-	_, err := tx.Exec(ctx, `INSERT INTO program_file_attachments(attachment_id,workspace_id,program_id) VALUES($1,$2,$3)`, attachmentID, parent.WorkspaceID, parent.ID)
-	return err
-}
-
-func (a programAttachmentAdapter) ListPage(ctx context.Context, db *pgxpool.Pool, parent fileParent, trash, restricted bool, limit int, cursor *fileListCursor) (pgx.Rows, error) {
-	query := attachmentListQuery
-	if trash {
-		query = strings.Replace(query, "a.deleted_at IS NULL AND f.deleted_at IS NULL", "a.deleted_at IS NOT NULL AND f.deleted_at IS NOT NULL", 1)
-	}
-	cursorAt, cursorID := any(nil), ""
-	if cursor != nil {
-		cursorAt, cursorID = cursor.CreatedAt, cursor.ID
-	}
-	query += ` AND (a.security_class='standard' OR $3::boolean) AND ($4::timestamptz IS NULL OR (a.created_at,a.id)<($4::timestamptz,$5)) ORDER BY a.created_at DESC,a.id DESC LIMIT $6`
-	return db.Query(ctx, query, parent.WorkspaceID, parent.ID, restricted, cursorAt, cursorID, limit+1)
-}
-
-func (a programAttachmentAdapter) Count(ctx context.Context, db *pgxpool.Pool, parent fileParent, trash, restricted bool) (int64, error) {
-	state := "a.deleted_at IS NULL AND f.deleted_at IS NULL"
-	if trash {
-		state = "a.deleted_at IS NOT NULL AND f.deleted_at IS NOT NULL"
-	}
-	query := `SELECT COUNT(*) FROM file_attachments a JOIN files f ON f.id=a.file_id AND f.workspace_id=a.workspace_id JOIN program_file_attachments x ON x.attachment_id=a.id WHERE x.workspace_id=$1 AND x.program_id=$2 AND ` + state + ` AND (a.security_class='standard' OR $3::boolean)`
-	var total int64
-	err := db.QueryRow(ctx, query, parent.WorkspaceID, parent.ID, restricted).Scan(&total)
-	return total, err
-}
-
 func (a productionProgramAttachmentAdapter) FromRoute(r *http.Request) (fileParent, error) {
 	parent := fileParent{Kind: productionProgramFileParent, ID: r.PathValue("programId"), ProductionID: r.PathValue("productionId")}
 	if err := a.app.db.QueryRow(r.Context(), `SELECT workspace_id FROM productions WHERE id=$1 AND deleted_at IS NULL`, parent.ProductionID).Scan(&parent.WorkspaceID); err != nil {
@@ -131,50 +95,4 @@ func (a productionProgramAttachmentAdapter) UploadPolicy(ctx context.Context, pa
 	}
 	_ = resolved
 	return fileUploadPolicy{MaxBytes: hardMaxFileBytes}, nil
-}
-
-func (a productionProgramAttachmentAdapter) Attach(ctx context.Context, tx pgx.Tx, attachmentID string, parent fileParent) error {
-	_, err := tx.Exec(ctx, `INSERT INTO production_program_file_attachments(attachment_id,workspace_id,production_id,production_program_id) VALUES($1,$2,$3,$4)`, attachmentID, parent.WorkspaceID, parent.ProductionID, parent.ID)
-	return err
-}
-
-const attachmentListQuery = `SELECT a.id,a.file_id,a.file_type_id,a.security_class,f.status,
-	COALESCE(published.id,latest.id,''),COALESCE(published.version_no,latest.version_no,0),
-	COALESCE(published.filename,latest.filename,f.filename),COALESCE(published.content_type,latest.content_type,f.content_type),
-	COALESCE(published.size_bytes,latest.size_bytes,f.size_bytes),COALESCE(latest.security_status,'pending'),published.id IS NOT NULL,
-	COALESCE(a.purge_after,f.purge_after),NOT EXISTS(SELECT 1 FROM file_versions purged WHERE purged.file_id=f.id AND purged.object_purged_at IS NULL),a.created_at
-	FROM file_attachments a
-	JOIN files f ON f.id=a.file_id AND f.workspace_id=a.workspace_id
-	LEFT JOIN file_versions published ON published.id=f.current_version_id AND published.file_id=f.id AND published.security_status='clean' AND published.object_purged_at IS NULL
-	LEFT JOIN LATERAL (SELECT v.id,v.version_no,v.filename,v.content_type,v.size_bytes,v.security_status
-		FROM file_versions v WHERE v.file_id=f.id ORDER BY v.version_no DESC LIMIT 1) latest ON TRUE
-	JOIN program_file_attachments x ON x.attachment_id=a.id
-	WHERE x.workspace_id=$1 AND x.program_id=$2 AND a.deleted_at IS NULL AND f.deleted_at IS NULL`
-
-func (a productionProgramAttachmentAdapter) ListPage(ctx context.Context, db *pgxpool.Pool, parent fileParent, trash, restricted bool, limit int, cursor *fileListCursor) (pgx.Rows, error) {
-	query := strings.Replace(attachmentListQuery,
-		`JOIN program_file_attachments x ON x.attachment_id=a.id
-	WHERE x.workspace_id=$1 AND x.program_id=$2`,
-		`JOIN production_program_file_attachments x ON x.attachment_id=a.id
-	WHERE x.workspace_id=$1 AND x.production_program_id=$2 AND x.production_id=$3`, 1)
-	if trash {
-		query = strings.Replace(query, "a.deleted_at IS NULL AND f.deleted_at IS NULL", "a.deleted_at IS NOT NULL AND f.deleted_at IS NOT NULL", 1)
-	}
-	cursorAt, cursorID := any(nil), ""
-	if cursor != nil {
-		cursorAt, cursorID = cursor.CreatedAt, cursor.ID
-	}
-	query += ` AND (a.security_class='standard' OR $4::boolean) AND ($5::timestamptz IS NULL OR (a.created_at,a.id)<($5::timestamptz,$6)) ORDER BY a.created_at DESC,a.id DESC LIMIT $7`
-	return db.Query(ctx, query, parent.WorkspaceID, parent.ID, parent.ProductionID, restricted, cursorAt, cursorID, limit+1)
-}
-
-func (a productionProgramAttachmentAdapter) Count(ctx context.Context, db *pgxpool.Pool, parent fileParent, trash, restricted bool) (int64, error) {
-	state := "a.deleted_at IS NULL AND f.deleted_at IS NULL"
-	if trash {
-		state = "a.deleted_at IS NOT NULL AND f.deleted_at IS NOT NULL"
-	}
-	query := `SELECT COUNT(*) FROM file_attachments a JOIN files f ON f.id=a.file_id AND f.workspace_id=a.workspace_id JOIN production_program_file_attachments x ON x.attachment_id=a.id WHERE x.workspace_id=$1 AND x.production_program_id=$2 AND x.production_id=$3 AND ` + state + ` AND (a.security_class='standard' OR $4::boolean)`
-	var total int64
-	err := db.QueryRow(ctx, query, parent.WorkspaceID, parent.ID, parent.ProductionID, restricted).Scan(&total)
-	return total, err
 }

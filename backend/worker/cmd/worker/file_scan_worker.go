@@ -18,11 +18,10 @@ import (
 	"strings"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 const defaultMaxFileBytes int64 = 2_000_000_000
@@ -40,17 +39,19 @@ type scanTask struct {
 	Attempts                                                                      int
 }
 
-func newWorkerStorageClient() (*minio.Client, error) {
-	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "http://"), "https://")
-	if endpoint == "" {
-		return nil, errors.New("S3_ENDPOINT is not configured")
-	}
-	return minio.New(endpoint, &minio.Options{
-		Creds:        credentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), ""),
-		Secure:       os.Getenv("S3_USE_SSL") == "true",
-		Region:       envOrDefault("S3_REGION", "us-east-1"),
-		BucketLookup: minio.BucketLookupPath,
+func newWorkerStorageClient() (objectstore.Client, error) {
+	client, err := objectstore.NewMinIO(objectstore.MinIOConfig{
+		Endpoint:  os.Getenv("S3_ENDPOINT"),
+		AccessKey: os.Getenv("S3_ACCESS_KEY"),
+		SecretKey: os.Getenv("S3_SECRET_KEY"),
+		Secure:    os.Getenv("S3_USE_SSL") == "true",
+		Region:    envOrDefault("S3_REGION", "us-east-1"),
+		PathStyle: true,
 	})
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
 }
 
 func maxFileBytesFromEnv() int64 {
@@ -270,8 +271,7 @@ func scanContent(ctx context.Context, scanner fileScanner, source io.Reader, tas
 }
 
 func isMissingObject(err error) bool {
-	var response minio.ErrorResponse
-	return errors.As(err, &response) && (response.Code == "NoSuchKey" || response.Code == "NoSuchBucket")
+	return errors.Is(err, objectstore.ErrObjectNotFound)
 }
 
 func rejectLegacyFileVersion(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, versionID, reason string) {
@@ -300,12 +300,13 @@ func rejectLegacyFileVersion(ctx context.Context, logger *slog.Logger, db *pgxpo
 	}
 }
 
-func processFileScanTask(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, storage *minio.Client, scanner fileScanner, task scanTask, owner string, maxBytes int64) {
+func processFileScanTask(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, storage objectstore.ObjectReader, scanner fileScanner, task scanTask, owner string, maxBytes int64) {
 	if task.SizeBytes > maxBytes || task.SizeBytes <= 0 {
 		commitScanResult(ctx, logger, db, task, owner, scanResult{Verdict: scanUnsupported, Reason: "size_limit"}, "", "application/octet-stream")
 		return
 	}
-	info, err := storage.StatObject(ctx, task.Bucket, task.ObjectKey, minio.StatObjectOptions{})
+	ref := objectstore.ObjectRef{Bucket: task.Bucket, Key: task.ObjectKey}
+	info, err := storage.StatObject(ctx, ref)
 	if err != nil {
 		if isMissingObject(err) {
 			commitScanResult(ctx, logger, db, task, owner, scanResult{Verdict: scanUnsupported, Reason: "object_missing"}, "", "application/octet-stream")
@@ -323,7 +324,7 @@ func processFileScanTask(ctx context.Context, logger *slog.Logger, db *pgxpool.P
 	}
 	inspectCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	object, err := storage.GetObject(inspectCtx, task.Bucket, task.ObjectKey, minio.GetObjectOptions{})
+	object, err := storage.OpenObject(inspectCtx, ref)
 	if err != nil {
 		if isMissingObject(err) {
 			commitScanResult(inspectCtx, logger, db, task, owner, scanResult{Verdict: scanUnsupported, Reason: "object_missing"}, "", "application/octet-stream")
@@ -400,6 +401,24 @@ func commitScanResult(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool
 			logger.Warn("publish clean file version", "version_id", task.VersionID, "error", err)
 			return
 		}
+		eventID := "file.version.safe_available:" + task.VersionID
+		occurredAt := time.Now().UTC()
+		payload, marshalErr := json.Marshal(map[string]any{
+			"event_id": eventID, "event_type": "file.version.safe_available", "schema_version": 1,
+			"workspace_id": task.WorkspaceID, "file_id": task.FileID, "version_id": task.VersionID,
+			"occurred_at": occurredAt, "size_bytes": size, "sha256": hash, "content_type": contentType,
+		})
+		if marshalErr != nil {
+			logger.Warn("encode safe available file event", "version_id", task.VersionID, "error", marshalErr)
+			return
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO file_event_outbox(event_id,event_type,schema_version,aggregate_type,aggregate_id,
+			workspace_id,file_id,version_id,occurred_at,payload)
+			VALUES($1,'file.version.safe_available',1,'file_version',$2,$3,$4,$2,$5,$6::jsonb)
+			ON CONFLICT(event_type,version_id) DO NOTHING`, eventID, task.VersionID, task.WorkspaceID, task.FileID, occurredAt, string(payload)); err != nil {
+			logger.Warn("persist safe available file event", "version_id", task.VersionID, "error", err)
+			return
+		}
 	}
 	outcome := string(result.Verdict)
 	status, eventType := "completed", "completed"
@@ -446,7 +465,7 @@ func securityReasonCode(result scanResult) string {
 	}
 }
 
-func processFileScanQueue(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, storage *minio.Client, scanner fileScanner, maxBytes int64) {
+func processFileScanQueue(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, storage objectstore.ObjectReader, scanner fileScanner, maxBytes int64) {
 	owner := uuid.NewString()
 	for i := 0; i < 8; i++ {
 		task, err := claimFileScanTask(ctx, db, owner)

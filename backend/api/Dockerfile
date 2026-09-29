@@ -1,9 +1,10 @@
 FROM golang:1.26-alpine AS build
 
 WORKDIR /src
-COPY backend/api/go.mod backend/api/go.sum ./
+COPY backend/api/ ./backend/api/
+COPY backend/storage/ ./backend/storage/
+WORKDIR /src/backend/api
 RUN go mod download
-COPY backend/api/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/stagepilot-api ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/storage-retention ./cmd/storage-retention
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/file-ops ./cmd/file-ops

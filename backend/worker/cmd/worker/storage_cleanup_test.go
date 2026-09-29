@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 type testObjectRemover struct {
@@ -26,7 +25,7 @@ type testObjectRemover struct {
 	abortCalls       map[string]int
 }
 
-func (r *testObjectRemover) AbortMultipartUpload(_ context.Context, _, _, uploadID string) error {
+func (r *testObjectRemover) AbortMultipart(_ context.Context, _ objectstore.ObjectRef, uploadID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.abortCalls == nil {
@@ -36,14 +35,14 @@ func (r *testObjectRemover) AbortMultipartUpload(_ context.Context, _, _, upload
 	return nil
 }
 
-func (r *testObjectRemover) ListObjectParts(_ context.Context, _, _, uploadID string, _, _ int) (minio.ListObjectPartsResult, error) {
+func (r *testObjectRemover) ListParts(_ context.Context, _ objectstore.ObjectRef, uploadID string, _, _ int) (objectstore.PartsPage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.multipartVisible[uploadID] > 0 {
 		r.multipartVisible[uploadID]--
-		return minio.ListObjectPartsResult{}, nil
+		return objectstore.PartsPage{}, nil
 	}
-	return minio.ListObjectPartsResult{}, minio.ErrorResponse{Code: "NoSuchUpload"}
+	return objectstore.PartsPage{}, objectstore.ErrMultipartNotFound
 }
 
 func TestValidateWorkerBucketVersioningDisabled(t *testing.T) {
@@ -52,7 +51,7 @@ func TestValidateWorkerBucketVersioningDisabled(t *testing.T) {
 		wantError    bool
 	}{{name: "unversioned"}, {name: "enabled", status: "Enabled", wantError: true}, {name: "suspended", status: "Suspended", wantError: true}} {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateWorkerBucketVersioningDisabled("files", minio.BucketVersioningConfiguration{Status: test.status})
+			err := validateWorkerBucketVersioningDisabled("files", test.status)
 			if (err != nil) != test.wantError {
 				t.Fatalf("validate versioning status %q error = %v", test.status, err)
 			}
@@ -69,8 +68,7 @@ func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "http://"), "https://")
-	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), ""), Secure: os.Getenv("S3_USE_SSL") == "true", BucketLookup: minio.BucketLookupPath})
+	client, err := objectstore.NewMinIO(objectstore.MinIOConfig{Endpoint: os.Getenv("S3_ENDPOINT"), AccessKey: os.Getenv("S3_ACCESS_KEY"), SecretKey: os.Getenv("S3_SECRET_KEY"), Secure: os.Getenv("S3_USE_SSL") == "true", Region: envOrDefault("S3_REGION", "us-east-1"), PathStyle: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +85,8 @@ func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `INSERT INTO workspaces(id,name,slug) VALUES($1,'Freeze test',$2)`, workspaceID, unique); err != nil {
 		t.Fatal(err)
 	}
-	info, err := client.PutObject(t.Context(), bucket, oldKey, strings.NewReader("first"), 5, minio.PutObjectOptions{ContentType: "text/plain"})
+	oldRef := objectstore.ObjectRef{Bucket: bucket, Key: oldKey}
+	info, err := client.PutObject(t.Context(), oldRef, strings.NewReader("first"), 5, "text/plain")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,9 +100,9 @@ func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
 		_, _ = pool.Exec(ctx, `DELETE FROM file_copy_attempts WHERE workspace_id=$1`, workspaceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM workspaces WHERE id=$1`, workspaceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
-		_ = client.RemoveObject(ctx, bucket, oldKey, minio.RemoveObjectOptions{})
+		_ = client.RemoveObject(ctx, oldRef)
 		if finalKey != "" {
-			_ = client.RemoveObject(ctx, bucket, finalKey, minio.RemoveObjectOptions{})
+			_ = client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: bucket, Key: finalKey})
 		}
 	})
 	if _, err := pool.Exec(t.Context(), `INSERT INTO files(id,workspace_id,bucket,object_key,filename,content_type,size_bytes,etag,status,created_by,created_at)
@@ -128,7 +127,7 @@ func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
 		t.Fatalf("legacy version not frozen: %q", finalKey)
 	}
 	for _, key := range []string{oldKey, finalKey} {
-		object, err := client.GetObject(t.Context(), bucket, key, minio.GetObjectOptions{})
+		object, err := client.OpenObject(t.Context(), objectstore.ObjectRef{Bucket: bucket, Key: key})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,18 +139,18 @@ func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
 	}
 }
 
-func (r *testObjectRemover) RemoveObject(_ context.Context, bucket, key string, _ minio.RemoveObjectOptions) error {
-	if bucket != "test-file-cleanup-bucket" {
-		return fmt.Errorf("unexpected bucket %q", bucket)
+func (r *testObjectRemover) RemoveObject(_ context.Context, ref objectstore.ObjectRef) error {
+	if ref.Bucket != "test-file-cleanup-bucket" {
+		return fmt.Errorf("unexpected bucket %q", ref.Bucket)
 	}
 	if r.started != nil {
-		r.started <- key
+		r.started <- ref.Key
 		<-r.release
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.calls[key]++
-	if r.failOnce[key] && r.calls[key] == 1 {
+	r.calls[ref.Key]++
+	if r.failOnce[ref.Key] && r.calls[ref.Key] == 1 {
 		return fmt.Errorf("temporary storage failure")
 	}
 	return nil

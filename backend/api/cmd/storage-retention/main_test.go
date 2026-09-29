@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
 )
 
 func TestRetentionOperatorInputs(t *testing.T) {
@@ -34,7 +33,7 @@ func TestRetentionStorageVersioningMustBeDisabled(t *testing.T) {
 		wantError    bool
 	}{{name: "unversioned"}, {name: "enabled", status: "Enabled", wantError: true}, {name: "suspended", status: "Suspended", wantError: true}} {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateBucketVersioningDisabled("stagepilot", minio.BucketVersioningConfiguration{Status: test.status})
+			err := validateBucketVersioningDisabled("stagepilot", test.status)
 			if (err != nil) != test.wantError {
 				t.Fatalf("validate versioning status %q error = %v", test.status, err)
 			}

@@ -8,13 +8,12 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/jackc/pgx/v5"
-	"github.com/minio/minio-go/v7"
 )
 
 type fileVersion struct {
@@ -64,41 +63,17 @@ func findIdempotentFileUpload(ctx context.Context, db interface {
 // The signed URL only writes a staging key. A server-side copy pins the bytes
 // at a never-presigned version key before any database pointer is published.
 func copyImmutableObject(ctx context.Context, s *objectStorage, sourceBucket, sourceKey, sourceETag string, size int64, destinationKey string) (string, error) {
-	src := minio.CopySrcOptions{Bucket: sourceBucket, Object: sourceKey, MatchETag: sourceETag}
-	dst := minio.CopyDestOptions{Bucket: s.bucket, Object: destinationKey}
-	var info minio.UploadInfo
-	var err error
-	if size <= 5_000_000_000 {
-		info, err = s.client.CopyObject(ctx, dst, src)
-	} else {
-		parts := make([]minio.CopySrcOptions, 0, int(size/(1<<30))+1)
-		for start := int64(0); start < size; start += 1 << 30 {
-			end := start + (1 << 30) - 1
-			if end >= size {
-				end = size - 1
-			}
-			part := src
-			part.MatchRange, part.Start, part.End = true, start, end
-			parts = append(parts, part)
-		}
-		info, err = s.client.ComposeObject(ctx, dst, parts...)
-	}
+	info, err := s.client.CopyObject(ctx,
+		objectstore.ObjectRef{Bucket: sourceBucket, Key: sourceKey},
+		objectstore.ObjectRef{Bucket: s.bucket, Key: destinationKey}, sourceETag, size)
 	if err != nil {
 		return "", err
-	}
-	stat, err := s.client.StatObject(ctx, s.bucket, destinationKey, minio.StatObjectOptions{})
-	if err != nil || stat.Size != size {
-		_ = s.client.RemoveObject(ctx, s.bucket, destinationKey, minio.RemoveObjectOptions{})
-		return "", fmt.Errorf("immutable object size mismatch: %w", err)
-	}
-	if stat.ETag != "" {
-		return strings.Trim(stat.ETag, `"`), nil
 	}
 	return strings.Trim(info.ETag, `"`), nil
 }
 
 func removeUncommittedCopy(ctx context.Context, s *objectStorage, key string) {
-	_ = s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+	_ = s.client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: s.bucket, Key: key})
 }
 
 func (app *application) recordCopyAttempt(ctx context.Context, workspaceID string, s *objectStorage, versionID string) error {
@@ -327,26 +302,26 @@ func (app *application) createFileUploadSession(ctx context.Context, s *objectSt
 	}
 	var multipartID *string
 	if transport == "multipart" {
-		createdID, createErr := s.core.NewMultipartUpload(ctx, s.stagingBucket, key, minio.PutObjectOptions{Checksum: minio.ChecksumSHA256})
+		createdID, createErr := s.client.BeginMultipart(ctx, objectstore.ObjectRef{Bucket: s.stagingBucket, Key: key})
 		if createErr != nil {
 			return nil, fmt.Errorf("start multipart upload: %w", createErr)
 		}
 		multipartID = &createdID
 		if _, err := tx.Exec(ctx, `UPDATE file_upload_sessions SET multipart_upload_id=$2 WHERE id=$1`, id, createdID); err != nil {
-			_ = s.core.AbortMultipartUpload(context.Background(), s.stagingBucket, key, createdID)
+			_ = s.client.AbortMultipart(context.Background(), objectstore.ObjectRef{Bucket: s.stagingBucket, Key: key}, createdID)
 			return nil, err
 		}
 	}
 	upload, err := app.uploadTransportDescriptor(ctx, s, s.stagingBucket, id, key, size, transport, multipartID)
 	if err != nil {
 		if multipartID != nil {
-			_ = s.core.AbortMultipartUpload(context.Background(), s.stagingBucket, key, *multipartID)
+			_ = s.client.AbortMultipart(context.Background(), objectstore.ObjectRef{Bucket: s.stagingBucket, Key: key}, *multipartID)
 		}
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		if multipartID != nil {
-			_ = s.core.AbortMultipartUpload(context.Background(), s.stagingBucket, key, *multipartID)
+			_ = s.client.AbortMultipart(context.Background(), objectstore.ObjectRef{Bucket: s.stagingBucket, Key: key}, *multipartID)
 		}
 		return nil, err
 	}
@@ -357,31 +332,18 @@ func (app *application) createFileUploadSession(ctx context.Context, s *objectSt
 
 func (app *application) uploadTransportDescriptor(ctx context.Context, s *objectStorage, bucket, id, key string, size int64, transport string, multipartID *string) (map[string]any, error) {
 	if transport == "legacy_put" {
-		u, err := s.presignClient.PresignedPutObject(ctx, bucket, key, s.ttl)
+		u, err := s.client.PresignPut(ctx, objectstore.ObjectRef{Bucket: bucket, Key: key}, s.ttl)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"id": id, "upload_id": id, "transport": "legacy_put", "url": u.String(), "method": "PUT", "expires_in": int64(s.ttl.Seconds())}, nil
+		return map[string]any{"id": id, "upload_id": id, "transport": "legacy_put", "url": u.URL.String(), "method": u.Method, "expires_in": int64(s.ttl.Seconds())}, nil
 	}
 	if transport == "post" {
-		policy := minio.NewPostPolicy()
-		if err := policy.SetBucket(bucket); err != nil {
-			return nil, err
-		}
-		if err := policy.SetKey(key); err != nil {
-			return nil, err
-		}
-		if err := policy.SetExpires(time.Now().Add(s.ttl)); err != nil {
-			return nil, err
-		}
-		if err := policy.SetContentLengthRange(size, size); err != nil {
-			return nil, err
-		}
-		u, fields, err := s.presignClient.PresignedPostPolicy(ctx, policy)
+		u, err := s.client.PresignPost(ctx, objectstore.ObjectRef{Bucket: bucket, Key: key}, "", size, size, s.ttl)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"id": id, "upload_id": id, "transport": "post", "url": u.String(), "method": "POST", "fields": fields, "expires_in": int64(s.ttl.Seconds())}, nil
+		return map[string]any{"id": id, "upload_id": id, "transport": "post", "url": u.URL.String(), "method": u.Method, "fields": u.Fields, "expires_in": int64(s.ttl.Seconds())}, nil
 	}
 	if transport == "multipart" && multipartID != nil {
 		parts := int(math.Ceil(float64(size) / float64(multipartPartBytes)))
@@ -484,7 +446,8 @@ func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, f
 	if s == nil {
 		return false
 	}
-	u, err := s.presignClient.PresignedGetObject(r.Context(), bucket, key, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""}})
+	u, err := s.client.PresignGet(r.Context(), objectstore.ObjectRef{Bucket: bucket, Key: key}, 5*time.Minute,
+		map[string]string{"response-content-disposition": "attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""})
 	if err != nil {
 		serverError(w, err)
 		return false
@@ -495,7 +458,7 @@ func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, f
 			return false
 		}
 	}
-	writeJSON(w, 200, map[string]any{"url": u.String(), "expires_in": 300, "version_id": versionID,
+	writeJSON(w, 200, map[string]any{"url": u.URL.String(), "expires_in": 300, "version_id": versionID,
 		"filename": filename, "size_bytes": sizeBytes, "sha256": sha256, "etag": etag})
 	return true
 }
@@ -651,17 +614,13 @@ func (app *application) signFileUploadPart(w http.ResponseWriter, r *http.Reques
 		serverError(w, err)
 		return
 	}
-	params := url.Values{"uploadId": []string{*multipartID}, "partNumber": []string{strconv.Itoa(partNumber)}}
-	headers := http.Header{
-		"X-Amz-Checksum-Sha256": []string{in.SHA256},
-		"Content-Length":        []string{strconv.FormatInt(partSize, 10)},
-	}
-	u, err := s.presignClient.PresignHeader(r.Context(), http.MethodPut, bucket, key, linkTTL, params, headers)
+	u, err := s.client.PresignPart(r.Context(), objectstore.ObjectRef{Bucket: bucket, Key: key}, *multipartID,
+		objectstore.UploadPartSpec{PartNumber: partNumber, Size: partSize, ChecksumSHA256: in.SHA256}, linkTTL)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"url": u.String(), "method": http.MethodPut, "headers": map[string]string{"x-amz-checksum-sha256": in.SHA256}, "part_number": partNumber, "size_bytes": partSize, "expires_in": int64(linkTTL.Seconds())})
+	writeJSON(w, http.StatusOK, map[string]any{"url": u.URL.String(), "method": u.Method, "headers": u.Headers, "part_number": partNumber, "size_bytes": partSize, "expires_in": int64(linkTTL.Seconds())})
 }
 
 func (app *application) listVerifiedUploadParts(w http.ResponseWriter, r *http.Request) {
@@ -707,22 +666,23 @@ func (app *application) listVerifiedUploadParts(w http.ResponseWriter, r *http.R
 	if s == nil {
 		return
 	}
-	parts, err := s.core.ListObjectParts(r.Context(), bucket, key, *multipartID, 0, 1000)
+	ref := objectstore.ObjectRef{Bucket: bucket, Key: key}
+	parts, err := s.client.ListParts(r.Context(), ref, *multipartID, 0, 1000)
 	if err != nil {
 		serverError(w, err)
 		return
 	}
-	actual := map[int]minio.ObjectPart{}
-	for _, part := range parts.ObjectParts {
+	actual := map[int]objectstore.ObjectPart{}
+	for _, part := range parts.Parts {
 		actual[part.PartNumber] = part
 	}
 	for parts.IsTruncated {
-		parts, err = s.core.ListObjectParts(r.Context(), bucket, key, *multipartID, parts.NextPartNumberMarker, 1000)
+		parts, err = s.client.ListParts(r.Context(), ref, *multipartID, parts.NextPartNumberMarker, 1000)
 		if err != nil {
 			serverError(w, err)
 			return
 		}
-		for _, part := range parts.ObjectParts {
+		for _, part := range parts.Parts {
 			actual[part.PartNumber] = part
 		}
 	}
@@ -753,58 +713,59 @@ func (app *application) listVerifiedUploadParts(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]any{"items": verified, "total": len(verified), "expected_size": size})
 }
 
-func (app *application) completeMultipartStagingObject(ctx context.Context, s *objectStorage, sessionID, uploadID, bucket, key string, size int64) (minio.UploadInfo, error) {
+func (app *application) completeMultipartStagingObject(ctx context.Context, s *objectStorage, sessionID, uploadID, bucket, key string, size int64) (objectstore.ObjectInfo, error) {
 	partCount := int(math.Ceil(float64(size) / float64(multipartPartBytes)))
-	rows, err := s.core.ListObjectParts(ctx, bucket, key, uploadID, 0, 1000)
+	ref := objectstore.ObjectRef{Bucket: bucket, Key: key}
+	rows, err := s.client.ListParts(ctx, ref, uploadID, 0, 1000)
 	if err != nil {
-		return minio.UploadInfo{}, err
+		return objectstore.ObjectInfo{}, err
 	}
-	partsByNumber := make(map[int]minio.ObjectPart, partCount)
-	for _, part := range rows.ObjectParts {
+	partsByNumber := make(map[int]objectstore.ObjectPart, partCount)
+	for _, part := range rows.Parts {
 		partsByNumber[part.PartNumber] = part
 	}
 	for rows.IsTruncated {
-		rows, err = s.core.ListObjectParts(ctx, bucket, key, uploadID, rows.NextPartNumberMarker, 1000)
+		rows, err = s.client.ListParts(ctx, ref, uploadID, rows.NextPartNumberMarker, 1000)
 		if err != nil {
-			return minio.UploadInfo{}, err
+			return objectstore.ObjectInfo{}, err
 		}
-		for _, part := range rows.ObjectParts {
+		for _, part := range rows.Parts {
 			partsByNumber[part.PartNumber] = part
 		}
 	}
 	if len(partsByNumber) != partCount {
-		return minio.UploadInfo{}, storageError(http.StatusConflict, "multipart_incomplete", "仍有文件分段未上传")
+		return objectstore.ObjectInfo{}, storageError(http.StatusConflict, "multipart_incomplete", "仍有文件分段未上传")
 	}
 	manifestRows, err := app.db.Query(ctx, `SELECT part_number,expected_size,sha256_base64 FROM file_upload_session_parts
 		WHERE upload_session_id=$1 ORDER BY part_number`, sessionID)
 	if err != nil {
-		return minio.UploadInfo{}, err
+		return objectstore.ObjectInfo{}, err
 	}
 	defer manifestRows.Close()
-	completeParts := make([]minio.CompletePart, 0, partCount)
+	completeParts := make([]objectstore.CompletedPart, 0, partCount)
 	for expectedPart := 1; expectedPart <= partCount; expectedPart++ {
 		var number int
 		var expectedSize int64
 		var expectedSHA256 string
 		if !manifestRows.Next() {
-			return minio.UploadInfo{}, storageError(http.StatusConflict, "multipart_incomplete", "文件分段校验信息不完整")
+			return objectstore.ObjectInfo{}, storageError(http.StatusConflict, "multipart_incomplete", "文件分段校验信息不完整")
 		}
 		if err := manifestRows.Scan(&number, &expectedSize, &expectedSHA256); err != nil {
-			return minio.UploadInfo{}, err
+			return objectstore.ObjectInfo{}, err
 		}
 		part, ok := partsByNumber[expectedPart]
 		if !ok || number != expectedPart || part.PartNumber != expectedPart || part.Size != expectedSize || part.ChecksumSHA256 == "" || part.ChecksumSHA256 != expectedSHA256 {
-			return minio.UploadInfo{}, storageError(http.StatusConflict, "multipart_part_mismatch", "文件分段大小或校验值不匹配")
+			return objectstore.ObjectInfo{}, storageError(http.StatusConflict, "multipart_part_mismatch", "文件分段大小或校验值不匹配")
 		}
-		completeParts = append(completeParts, minio.CompletePart{PartNumber: part.PartNumber, ETag: part.ETag, ChecksumSHA256: part.ChecksumSHA256})
+		completeParts = append(completeParts, objectstore.CompletedPart{PartNumber: part.PartNumber, ETag: part.ETag, ChecksumSHA256: part.ChecksumSHA256})
 	}
 	if manifestRows.Next() {
-		return minio.UploadInfo{}, storageError(http.StatusConflict, "multipart_part_mismatch", "存在超出预期的文件分段")
+		return objectstore.ObjectInfo{}, storageError(http.StatusConflict, "multipart_part_mismatch", "存在超出预期的文件分段")
 	}
 	if err := manifestRows.Err(); err != nil {
-		return minio.UploadInfo{}, err
+		return objectstore.ObjectInfo{}, err
 	}
-	return s.core.CompleteMultipartUpload(ctx, bucket, key, uploadID, completeParts, minio.PutObjectOptions{})
+	return s.client.CompleteMultipart(ctx, ref, uploadID, completeParts)
 }
 
 func (app *application) cancelFileUploadSession(w http.ResponseWriter, r *http.Request) {
@@ -1004,7 +965,7 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 			// A previous completion may have atomically assembled the staging
 			// object but failed before its database commit. That object is still
 			// server-owned and can safely resume the immutable-copy step.
-			staging, statErr := s.client.StatObject(r.Context(), bucket, key, minio.StatObjectOptions{})
+			staging, statErr := s.client.StatObject(r.Context(), objectstore.ObjectRef{Bucket: bucket, Key: key})
 			if statErr != nil || staging.Size != expected {
 				if !writeFileStorageError(w, err) {
 					serverError(w, err)
@@ -1013,7 +974,7 @@ func (app *application) completeFileUploadSession(w http.ResponseWriter, r *http
 			}
 		}
 	}
-	info, err := s.client.StatObject(r.Context(), bucket, key, minio.StatObjectOptions{})
+	info, err := s.client.StatObject(r.Context(), objectstore.ObjectRef{Bucket: bucket, Key: key})
 	if err != nil || info.Size != expected || info.Size > s.maxBytes || info.Size > hardMaxFileBytes || currentPolicy.MaxBytes > 0 && info.Size > currentPolicy.MaxBytes {
 		errorJSON(w, 400, "upload_missing", "上传对象不存在或大小不匹配")
 		return

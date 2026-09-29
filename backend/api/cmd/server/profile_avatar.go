@@ -18,8 +18,8 @@ import (
 	"strings"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/jackc/pgx/v5"
-	"github.com/minio/minio-go/v7"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
@@ -79,7 +79,7 @@ func (app *application) updateMyAvatar(w http.ResponseWriter, r *http.Request) {
 	objectKey := "user-avatars/" + userID + "/" + revision + "." + extension
 	digest := sha256.Sum256(encoded)
 	sha256Hex := hex.EncodeToString(digest[:])
-	if _, err := app.storage.client.PutObject(r.Context(), app.storage.bucket, objectKey, bytes.NewReader(encoded), int64(len(encoded)), minio.PutObjectOptions{ContentType: contentType}); err != nil {
+	if _, err := app.storage.client.PutObject(r.Context(), objectstore.ObjectRef{Bucket: app.storage.bucket, Key: objectKey}, bytes.NewReader(encoded), int64(len(encoded)), contentType); err != nil {
 		serverError(w, err)
 		return
 	}
@@ -206,21 +206,26 @@ func (app *application) getUserAvatar(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, http.StatusServiceUnavailable, "storage_unavailable", "头像存储暂不可用")
 		return
 	}
-	object, err := app.storage.client.GetObject(ctx, app.storage.bucket, objectKey, minio.GetObjectOptions{})
+	ref := objectstore.ObjectRef{Bucket: app.storage.bucket, Key: objectKey}
+	info, err := app.storage.client.StatObject(ctx, ref)
 	if err != nil {
-		serverError(w, err)
-		return
-	}
-	defer object.Close()
-	info, err := object.Stat()
-	if err != nil {
-		if minio.ToErrorResponse(err).Code == "NoSuchKey" {
+		if errors.Is(err, objectstore.ErrObjectNotFound) {
 			errorJSON(w, http.StatusNotFound, "avatar_not_found", "头像不存在")
 			return
 		}
 		serverError(w, err)
 		return
 	}
+	object, err := app.storage.client.OpenObject(ctx, ref)
+	if err != nil {
+		if errors.Is(err, objectstore.ErrObjectNotFound) {
+			errorJSON(w, http.StatusNotFound, "avatar_not_found", "头像不存在")
+			return
+		}
+		serverError(w, err)
+		return
+	}
+	defer object.Close()
 	contentType := "image/png"
 	if strings.HasSuffix(objectKey, ".jpg") {
 		contentType = "image/jpeg"
@@ -285,7 +290,7 @@ func (app *application) removeAvatarObject(ctx context.Context, objectKey string
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := app.storage.client.RemoveObject(cleanupCtx, app.storage.bucket, objectKey, minio.RemoveObjectOptions{}); err != nil && app.logger != nil {
+	if err := app.storage.client.RemoveObject(cleanupCtx, objectstore.ObjectRef{Bucket: app.storage.bucket, Key: objectKey}); err != nil && app.logger != nil {
 		app.logger.Warn("remove obsolete user avatar object", "error", err)
 	}
 }

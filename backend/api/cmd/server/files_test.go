@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/minio/minio-go/v7"
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 )
 
 func fileTestID(t *testing.T, response map[string]any) string {
@@ -35,7 +35,7 @@ func TestValidateBucketVersioningDisabled(t *testing.T) {
 		wantError    bool
 	}{{name: "unversioned"}, {name: "enabled", status: "Enabled", wantError: true}, {name: "suspended", status: "Suspended", wantError: true}} {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateBucketVersioningDisabled("files", minio.BucketVersioningConfiguration{Status: test.status})
+			err := validateBucketVersioningDisabled("files", test.status)
 			if (err != nil) != test.wantError {
 				t.Fatalf("validate versioning status %q error = %v", test.status, err)
 			}
@@ -149,6 +149,22 @@ func TestFileScanWorkerEndToEnd(t *testing.T) {
 						if descriptor.VersionID != status.VersionID || descriptor.Filename != sample.name+".txt" || descriptor.SizeBytes != int64(len(sample.content)) || descriptor.SHA256 != hex.EncodeToString(sha[:]) || descriptor.ETag == "" {
 							t.Fatalf("incomplete download descriptor: %+v", descriptor)
 						}
+					}
+					var events int
+					var eventType, eventID, eventHash string
+					var leaksStorageLocation bool
+					if err := app.db.QueryRow(t.Context(), `SELECT COUNT(*),COALESCE(MAX(event_type),''),COALESCE(MAX(event_id),''),
+						COALESCE(MAX(payload->>'sha256'),''),COALESCE(BOOL_OR(payload ? 'object_key' OR payload ? 'bucket'),FALSE)
+						FROM file_event_outbox WHERE version_id=$1`, status.VersionID).Scan(&events, &eventType, &eventID, &eventHash, &leaksStorageLocation); err != nil {
+						t.Fatal(err)
+					}
+					if status.Status == "ready" {
+						sha := sha256.Sum256([]byte(sample.content))
+						if events != 1 || eventType != "file.version.safe_available" || eventID != "file.version.safe_available:"+status.VersionID || eventHash != hex.EncodeToString(sha[:]) || leaksStorageLocation {
+							t.Fatalf("safe-available outbox event = count %d type %q id %q sha %q leaks location=%v", events, eventType, eventID, eventHash, leaksStorageLocation)
+						}
+					} else if events != 0 {
+						t.Fatalf("rejected version emitted %d safe-available events", events)
 					}
 					return
 				}
@@ -431,11 +447,11 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	if err := app.db.QueryRow(t.Context(), `SELECT object_key FROM files WHERE id=$1 AND deleted_at IS NOT NULL`, productionFileID).Scan(&objectKey); err != nil {
 		t.Fatalf("soft-deleted file row missing: %v", err)
 	}
-	if _, err := storage.client.StatObject(t.Context(), storage.bucket, objectKey, minio.StatObjectOptions{}); err != nil {
+	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: objectKey}); err != nil {
 		t.Fatalf("soft-deleted object removed: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = storage.client.RemoveObject(context.Background(), storage.bucket, objectKey, minio.RemoveObjectOptions{})
+		_ = storage.client.RemoveObject(context.Background(), objectstore.ObjectRef{Bucket: storage.bucket, Key: objectKey})
 	})
 	productionTrash := authedRequest(t, app, editorToken, http.MethodGet, base+"/trash?production_id="+productionID, nil)
 	if productionTrash.Code != http.StatusOK || !bytes.Contains(productionTrash.Body.Bytes(), []byte(productionFileID)) {
@@ -504,12 +520,9 @@ func TestMultipartUploadMinIOEnforcesPartChecksumsAndSettlesLedger(t *testing.T)
 		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_scan_tasks SET status='completed',lease_owner='',lease_until=NULL,
 			outcome='test_cleanup',completed_at=NOW(),updated_at=NOW() WHERE version_id IN (SELECT id FROM file_versions WHERE file_id=$1)`, fileID)
 		for _, bucket := range []string{storage.bucket, storage.stagingBucket} {
-			rows := storage.client.ListObjects(cleanupCtx, bucket, minio.ListObjectsOptions{Prefix: "ws/" + workspaceID + "/", Recursive: true})
-			for object := range rows {
-				if object.Err == nil {
-					_ = storage.client.RemoveObject(cleanupCtx, bucket, object.Key, minio.RemoveObjectOptions{})
-				}
-			}
+			_ = storage.client.WalkObjects(cleanupCtx, bucket, "ws/"+workspaceID+"/", func(object objectstore.ObjectInfo) error {
+				return storage.client.RemoveObject(cleanupCtx, objectstore.ObjectRef{Bucket: bucket, Key: object.Key})
+			})
 		}
 		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_versions SET object_purged_at=COALESCE(object_purged_at,NOW()),quota_charged=FALSE WHERE file_id=$1`, fileID)
 		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_upload_sessions SET object_purged_at=COALESCE(object_purged_at,NOW()) WHERE id=$1`, uploadID)

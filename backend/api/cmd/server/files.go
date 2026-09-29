@@ -4,21 +4,17 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/minio/minio-go/v7"
-	minioCredentials "github.com/minio/minio-go/v7/pkg/credentials"
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 )
 
 type objectStorage struct {
-	client           *minio.Client
-	presignClient    *minio.Client
-	core             minio.Core
+	client           objectstore.Client
 	bucket           string
 	stagingBucket    string
 	ttl              time.Duration
@@ -31,50 +27,34 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("S3_ENDPOINT is not configured")
 	}
-	endpoint = strings.TrimPrefix(strings.TrimPrefix(endpoint, "http://"), "https://")
 	secure := os.Getenv("S3_USE_SSL") == "true"
-	lookup := minio.BucketLookupAuto
-	if os.Getenv("S3_PATH_STYLE") == "true" {
-		lookup = minio.BucketLookupPath
-	}
-	creds := minioCredentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), "")
-	client, err := minio.New(endpoint, &minio.Options{Creds: creds, Secure: secure, Region: envOrDefault("S3_REGION", "us-east-1"), BucketLookup: lookup})
+	region := envOrDefault("S3_REGION", "us-east-1")
+	client, err := objectstore.NewMinIO(objectstore.MinIOConfig{
+		Endpoint: endpoint, PublicEndpoint: os.Getenv("S3_PUBLIC_ENDPOINT"),
+		AccessKey: os.Getenv("S3_ACCESS_KEY"), SecretKey: os.Getenv("S3_SECRET_KEY"),
+		Region: region, Secure: secure, PathStyle: os.Getenv("S3_PATH_STYLE") == "true",
+	})
 	if err != nil {
 		return nil, err
 	}
 	bucket := envOrDefault("S3_BUCKET", "stagepilot")
-	if err := client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil {
-		code := minio.ToErrorResponse(err).Code
-		if code != "BucketAlreadyOwnedByYou" {
-			return nil, err
-		}
+	if err := client.EnsureBucket(ctx, bucket, region); err != nil {
+		return nil, err
 	}
 	stagingBucket := envOrDefault("S3_STAGING_BUCKET", bucket+"-staging")
 	if stagingBucket == bucket {
 		return nil, fmt.Errorf("S3_STAGING_BUCKET must be separate from S3_BUCKET")
 	}
-	if err := client.MakeBucket(ctx, stagingBucket, minio.MakeBucketOptions{Region: envOrDefault("S3_REGION", "us-east-1")}); err != nil {
-		code := minio.ToErrorResponse(err).Code
-		if code != "BucketAlreadyOwnedByYou" {
-			return nil, err
-		}
+	if err := client.EnsureBucket(ctx, stagingBucket, region); err != nil {
+		return nil, err
 	}
 	for _, name := range []string{bucket, stagingBucket} {
-		versioning, err := client.GetBucketVersioning(ctx, name)
+		versioning, err := client.BucketVersioningStatus(ctx, name)
 		if err != nil {
 			return nil, fmt.Errorf("check object bucket %q versioning: %w", name, err)
 		}
 		if err := validateBucketVersioningDisabled(name, versioning); err != nil {
 			return nil, err
-		}
-	}
-	public := os.Getenv("S3_PUBLIC_ENDPOINT")
-	if public == "" {
-		public = endpoint
-		if secure {
-			public = "https://" + public
-		} else {
-			public = "http://" + public
 		}
 	}
 	ttl := 15 * time.Minute
@@ -89,20 +69,12 @@ func newObjectStorage(ctx context.Context) (*objectStorage, error) {
 	if err != nil || physicalMax <= 0 {
 		return nil, fmt.Errorf("FILES_WORKSPACE_PHYSICAL_MAX_BYTES must be configured as a positive byte count")
 	}
-	publicURL, err := url.Parse(public)
-	if err != nil || publicURL.Host == "" {
-		return nil, fmt.Errorf("invalid S3_PUBLIC_ENDPOINT")
-	}
-	publicClient, err := minio.New(publicURL.Host, &minio.Options{Creds: creds, Secure: publicURL.Scheme == "https", Region: envOrDefault("S3_REGION", "us-east-1"), BucketLookup: lookup})
-	if err != nil {
-		return nil, err
-	}
-	return &objectStorage{client: client, presignClient: publicClient, core: minio.Core{Client: client}, bucket: bucket, stagingBucket: stagingBucket, ttl: ttl, maxBytes: max, physicalMaxBytes: physicalMax}, nil
+	return &objectStorage{client: client, bucket: bucket, stagingBucket: stagingBucket, ttl: ttl, maxBytes: max, physicalMaxBytes: physicalMax}, nil
 }
 
-func validateBucketVersioningDisabled(bucket string, config minio.BucketVersioningConfiguration) error {
-	if config.Status != "" {
-		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, config.Status)
+func validateBucketVersioningDisabled(bucket, status string) error {
+	if status != "" {
+		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, status)
 	}
 	return nil
 }
@@ -334,13 +306,13 @@ func (app *application) completeFile(w http.ResponseWriter, r *http.Request) {
 	if s == nil {
 		return
 	}
-	info, err := s.client.StatObject(r.Context(), f.Bucket, f.ObjectKey, minio.StatObjectOptions{})
+	info, err := s.client.StatObject(r.Context(), objectstore.ObjectRef{Bucket: f.Bucket, Key: f.ObjectKey})
 	if err != nil {
 		errorJSON(w, 400, "upload_missing", "对象尚未上传")
 		return
 	}
 	if info.Size != f.SizeBytes || info.Size > s.maxBytes {
-		_ = s.client.RemoveObject(r.Context(), f.Bucket, f.ObjectKey, minio.RemoveObjectOptions{})
+		_ = s.client.RemoveObject(r.Context(), objectstore.ObjectRef{Bucket: f.Bucket, Key: f.ObjectKey})
 		errorJSON(w, 400, "size_mismatch", "上传文件大小与声明不一致")
 		return
 	}

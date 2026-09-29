@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -15,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/minio/minio-go/v7"
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 )
 
 func TestNormalizeAvatarResizesAndReencodes(t *testing.T) {
@@ -226,7 +227,7 @@ func TestProfileAvatarUploadReplaceAndRemove(t *testing.T) {
 	if firstKey == secondKey || !strings.Contains(secondUser.AvatarURL, "v=") {
 		t.Fatalf("avatar replacement keys/url = %q / %q", secondKey, secondUser.AvatarURL)
 	}
-	if _, err := storage.client.StatObject(t.Context(), storage.bucket, firstKey, minio.StatObjectOptions{}); minio.ToErrorResponse(err).Code != "NoSuchKey" {
+	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: firstKey}); !errors.Is(err, objectstore.ErrObjectNotFound) {
 		t.Fatalf("old avatar object should be removed, stat error = %v", err)
 	}
 
@@ -243,7 +244,7 @@ func TestProfileAvatarUploadReplaceAndRemove(t *testing.T) {
 	if removed.Code != http.StatusOK || !strings.Contains(removed.Body.String(), `"avatar_url":""`) {
 		t.Fatalf("remove avatar = %d: %s", removed.Code, removed.Body.String())
 	}
-	if _, err := storage.client.StatObject(t.Context(), storage.bucket, secondKey, minio.StatObjectOptions{}); minio.ToErrorResponse(err).Code != "NoSuchKey" {
+	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: secondKey}); !errors.Is(err, objectstore.ErrObjectNotFound) {
 		t.Fatalf("removed avatar object should be deleted, stat error = %v", err)
 	}
 	if response := authedRequest(t, app, token, http.MethodGet, secondUser.AvatarURL, nil); response.Code != http.StatusNotFound {

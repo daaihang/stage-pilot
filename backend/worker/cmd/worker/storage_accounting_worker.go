@@ -11,10 +11,10 @@ import (
 	"os"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
 )
 
 type storedObjectKey struct {
@@ -88,11 +88,11 @@ func settleWorkerReservationTx(ctx context.Context, tx pgx.Tx, workspaceID, rese
 // reconcileWorkspaceStorage inventories content objects and incomplete
 // multipart parts without deleting unknown data. Unknown or missing references
 // block new uploads until an operator resolves the discrepancy.
-func reconcileWorkspaceStorage(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, buckets []string, physicalLimit int64) {
+func reconcileWorkspaceStorage(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client objectstore.Client, buckets []string, physicalLimit int64) {
 	reconcileWorkspaceStorageFor(ctx, logger, db, client, buckets, physicalLimit, "")
 }
 
-func reconcileWorkspaceStorageFor(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, buckets []string, physicalLimit int64, onlyWorkspace string) {
+func reconcileWorkspaceStorageFor(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client objectstore.Client, buckets []string, physicalLimit int64, onlyWorkspace string) {
 	rows, err := db.Query(ctx, `SELECT id FROM workspaces WHERE deleted_at IS NULL AND ($1='' OR id=$1) ORDER BY id`, onlyWorkspace)
 	if err != nil {
 		logger.Warn("list workspaces for storage reconciliation", "error", err)
@@ -162,7 +162,7 @@ func reconcileWorkspaceStorageFor(ctx context.Context, logger *slog.Logger, db *
 
 // Avatars are account assets, not Workspace storage. They are still inventoried
 // so a missing current avatar or an unreferenced object is visible to operators.
-func reconcileAvatarStorage(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, bucket string) error {
+func reconcileAvatarStorage(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client objectstore.Client, bucket string) error {
 	runID := uuid.NewString()
 	if _, err := db.Exec(ctx, `INSERT INTO storage_reconciliation_runs(id,scope,status) VALUES($1,'avatars','running')`, runID); err != nil {
 		return err
@@ -215,13 +215,12 @@ func reconcileAvatarStorage(ctx context.Context, logger *slog.Logger, db *pgxpoo
 	}
 	observed := map[string]int64{}
 	var totalBytes int64
-	objects := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{Prefix: "user-avatars/", Recursive: true})
-	for object := range objects {
-		if object.Err != nil {
-			return fail(object.Err)
-		}
+	if err := client.WalkObjects(ctx, bucket, "user-avatars/", func(object objectstore.ObjectInfo) error {
 		observed[object.Key] = object.Size
 		totalBytes += object.Size
+		return nil
+	}); err != nil {
+		return fail(err)
 	}
 	var orphanCount, missingCount, mismatchCount int64
 	for key, size := range observed {
@@ -246,7 +245,7 @@ func reconcileAvatarStorage(ctx context.Context, logger *slog.Logger, db *pgxpoo
 			continue
 		}
 		if ref.size == 0 || ref.sha == "" {
-			object, err := client.GetObject(ctx, bucket, key, minio.GetObjectOptions{})
+			object, err := client.OpenObject(ctx, objectstore.ObjectRef{Bucket: bucket, Key: key})
 			if err != nil {
 				return fail(err)
 			}
@@ -310,10 +309,10 @@ func upsertAvatarFinding(ctx context.Context, db *pgxpool.Pool, runID, findingTy
 	return err
 }
 
-func inventoryWorkspaceStorage(ctx context.Context, db *pgxpool.Pool, client *minio.Client, buckets []string, workspaceID string) (storageWorkspaceSnapshot, error) {
+func inventoryWorkspaceStorage(ctx context.Context, db *pgxpool.Pool, client objectstore.Client, buckets []string, workspaceID string) (storageWorkspaceSnapshot, error) {
 	snapshot := storageWorkspaceSnapshot{workspaceID: workspaceID, parts: map[string]int64{}, keys: map[storedObjectKey]int64{}, expected: map[storedObjectKey]storageObjectExpectation{}, staleParts: map[storedObjectKey]int64{}}
 	rows, err := db.Query(ctx, `SELECT bucket,object_key,expected_size,asset_type,verify_missing FROM (
-		SELECT bucket,object_key,size_bytes,'file_version'::text AS asset_type,TRUE AS verify_missing FROM file_versions WHERE workspace_id=$1 AND object_purged_at IS NULL
+		SELECT bucket,object_key,size_bytes AS expected_size,'file_version'::text AS asset_type,TRUE AS verify_missing FROM file_versions WHERE workspace_id=$1 AND object_purged_at IS NULL
 		UNION SELECT staging_bucket,staging_key,expected_size,'upload_staging'::text,FALSE FROM file_upload_sessions WHERE workspace_id=$1 AND object_purged_at IS NULL
 		UNION SELECT bucket,object_key,NULL::bigint,'copy_attempt'::text,FALSE FROM file_copy_attempts WHERE workspace_id=$1 AND status='pending' AND object_purged_at IS NULL
 		UNION SELECT f.bucket,f.object_key,f.size_bytes,'legacy_file'::text,TRUE FROM files f WHERE f.workspace_id=$1 AND f.deleted_at IS NULL AND f.object_purged_at IS NULL
@@ -341,14 +340,13 @@ func inventoryWorkspaceStorage(ctx context.Context, db *pgxpool.Pool, client *mi
 	}
 	prefix := "ws/" + workspaceID + "/"
 	for _, bucket := range buckets {
-		objects := client.ListObjects(ctx, bucket, minio.ListObjectsOptions{Prefix: prefix, Recursive: true})
-		for object := range objects {
-			if object.Err != nil {
-				return snapshot, object.Err
-			}
+		if err := client.WalkObjects(ctx, bucket, prefix, func(object objectstore.ObjectInfo) error {
 			ref := storedObjectKey{bucket: bucket, key: object.Key}
 			snapshot.keys[ref] = object.Size
 			snapshot.bytes += object.Size
+			return nil
+		}); err != nil {
+			return snapshot, err
 		}
 	}
 	if err := inventoryWorkspaceMultipart(ctx, db, client, buckets, workspaceID, prefix, &snapshot); err != nil {
@@ -427,7 +425,7 @@ func upsertReconciliationFinding(ctx context.Context, db *pgxpool.Pool, runID, w
 	return err
 }
 
-func inventoryWorkspaceMultipart(ctx context.Context, db *pgxpool.Pool, client *minio.Client, buckets []string, workspaceID, prefix string, snapshot *storageWorkspaceSnapshot) error {
+func inventoryWorkspaceMultipart(ctx context.Context, db *pgxpool.Pool, client objectstore.Client, buckets []string, workspaceID, prefix string, snapshot *storageWorkspaceSnapshot) error {
 	type session struct{ bucket, key string }
 	rows, err := db.Query(ctx, `SELECT staging_bucket,staging_key,multipart_upload_id FROM file_upload_sessions
 		WHERE workspace_id=$1 AND multipart_upload_id IS NOT NULL AND object_purged_at IS NULL`, workspaceID)
@@ -448,29 +446,25 @@ func inventoryWorkspaceMultipart(ctx context.Context, db *pgxpool.Pool, client *
 	if err != nil {
 		return err
 	}
-	core := minio.Core{Client: client}
 	for _, bucket := range buckets {
 		keyMarker, uploadMarker := "", ""
 		for {
-			listed, err := core.ListMultipartUploads(ctx, bucket, prefix, keyMarker, uploadMarker, "", 1000)
+			listed, err := client.ListMultipartUploads(ctx, bucket, prefix, keyMarker, uploadMarker, 1000)
 			if err != nil {
 				return err
 			}
 			for _, upload := range listed.Uploads {
-				if upload.Err != nil {
-					return upload.Err
-				}
 				_, knownUpload := known[upload.UploadID]
 				if knownUpload && (known[upload.UploadID].bucket != bucket || known[upload.UploadID].key != upload.Key) {
 					knownUpload = false
 				}
 				marker := 0
 				for {
-					parts, err := core.ListObjectParts(ctx, bucket, upload.Key, upload.UploadID, marker, 1000)
+					parts, err := client.ListParts(ctx, objectstore.ObjectRef{Bucket: bucket, Key: upload.Key}, upload.UploadID, marker, 1000)
 					if err != nil {
 						return err
 					}
-					for _, part := range parts.ObjectParts {
+					for _, part := range parts.Parts {
 						snapshot.bytes += part.Size
 						snapshot.parts[upload.UploadID] += part.Size
 					}
@@ -755,7 +749,7 @@ func processFilePurgeTask(ctx context.Context, db *pgxpool.Pool, client fileObje
 	if _, err := tx.Exec(ctx, `UPDATE file_versions SET object_cleanup_attempted_at=NOW() WHERE id=$1`, task.versionID); err != nil {
 		return err
 	}
-	if err := client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+	if err := client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: bucket, Key: key}); err != nil {
 		wait := nextRetry(task.attempts)
 		if _, updateErr := tx.Exec(ctx, `UPDATE file_purge_tasks SET status='pending',available_at=NOW()+make_interval(secs=>$2),
 			lease_owner='',lease_until=NULL,last_error=$3,updated_at=NOW() WHERE version_id=$1`, task.versionID, wait.Seconds(), trimPurgeError(err.Error())); updateErr != nil {
@@ -864,7 +858,7 @@ func purgeStoredVersion(ctx context.Context, db *pgxpool.Pool, client fileObject
 	if _, err := tx.Exec(ctx, `UPDATE file_versions SET object_cleanup_attempted_at=NOW() WHERE id=$1`, versionID); err != nil {
 		return err
 	}
-	if err := client.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
+	if err := client.RemoveObject(ctx, objectstore.ObjectRef{Bucket: bucket, Key: key}); err != nil {
 		if commitErr := tx.Commit(ctx); commitErr != nil {
 			return commitErr
 		}
@@ -930,7 +924,7 @@ func purgeQuarantinedVersionsWithAccounting(ctx context.Context, logger *slog.Lo
 	}
 }
 
-func storageReconcileTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, buckets []string, physicalLimit int64, interval time.Duration) {
+func storageReconcileTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client objectstore.Client, buckets []string, physicalLimit int64, interval time.Duration) {
 	if client == nil || len(buckets) == 0 || physicalLimit <= 0 {
 		logger.Warn("storage reconciliation disabled: object storage bucket or physical limit missing")
 		return
@@ -955,7 +949,7 @@ func storageReconcileTicker(ctx context.Context, logger *slog.Logger, db *pgxpoo
 	}
 }
 
-func storageReconcileRequestTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client *minio.Client, buckets []string, physicalLimit int64, interval time.Duration) {
+func storageReconcileRequestTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, client objectstore.Client, buckets []string, physicalLimit int64, interval time.Duration) {
 	if client == nil || physicalLimit <= 0 {
 		return
 	}

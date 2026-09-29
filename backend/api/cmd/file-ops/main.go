@@ -11,11 +11,10 @@ import (
 	"strings"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 type options struct {
@@ -314,12 +313,15 @@ func listFindings(ctx context.Context, db *pgxpool.Pool, workspace string) (any,
 	}
 	return map[string]any{"items": items, "limit": 500}, rows.Err()
 }
-func s3Client() (*minio.Client, error) {
-	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "http://"), "https://")
-	if endpoint == "" {
-		return nil, errors.New("S3_ENDPOINT is required")
+func s3Client() (objectstore.Client, error) {
+	client, err := objectstore.NewMinIO(objectstore.MinIOConfig{
+		Endpoint: os.Getenv("S3_ENDPOINT"), AccessKey: os.Getenv("S3_ACCESS_KEY"), SecretKey: os.Getenv("S3_SECRET_KEY"),
+		Secure: os.Getenv("S3_USE_SSL") == "true", Region: env("S3_REGION", "us-east-1"), PathStyle: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create object storage adapter: %w", err)
 	}
-	return minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), ""), Secure: os.Getenv("S3_USE_SSL") == "true", Region: env("S3_REGION", "us-east-1"), BucketLookup: minio.BucketLookupPath})
+	return client, nil
 }
 func recheckFinding(ctx context.Context, db *pgxpool.Pool, o options) error {
 	var assetType, findingType, bucket, key string
@@ -342,11 +344,11 @@ func recheckFinding(ctx context.Context, db *pgxpool.Pool, o options) error {
 	exists := false
 	var actual int64
 	if key != "" {
-		info, statErr := client.StatObject(ctx, bucket, key, minio.StatObjectOptions{})
+		info, statErr := client.StatObject(ctx, objectstore.ObjectRef{Bucket: bucket, Key: key})
 		if statErr == nil {
 			exists = true
 			actual = info.Size
-		} else if minio.ToErrorResponse(statErr).Code != "NoSuchKey" && minio.ToErrorResponse(statErr).Code != "NoSuchBucket" {
+		} else if !errors.Is(statErr, objectstore.ErrObjectNotFound) {
 			return statErr
 		}
 	}

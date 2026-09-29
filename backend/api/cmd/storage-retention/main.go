@@ -12,10 +12,9 @@ import (
 	"strings"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 type options struct {
@@ -101,8 +100,7 @@ func main() {
 }
 
 func checkStorage(ctx context.Context) error {
-	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_ENDPOINT"), "http://"), "https://")
-	if endpoint == "" {
+	if strings.TrimSpace(os.Getenv("S3_ENDPOINT")) == "" {
 		return fmt.Errorf("S3_ENDPOINT is required")
 	}
 	formalBucket := envOrDefault("S3_BUCKET", "stagepilot")
@@ -110,23 +108,19 @@ func checkStorage(ctx context.Context) error {
 	if formalBucket == stagingBucket {
 		return fmt.Errorf("S3_STAGING_BUCKET must be separate from S3_BUCKET")
 	}
-	lookup := minio.BucketLookupAuto
-	if os.Getenv("S3_PATH_STYLE") == "true" {
-		lookup = minio.BucketLookupPath
-	}
-	client, err := minio.New(endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(os.Getenv("S3_ACCESS_KEY"), os.Getenv("S3_SECRET_KEY"), ""),
-		Secure: os.Getenv("S3_USE_SSL") == "true", Region: envOrDefault("S3_REGION", "us-east-1"), BucketLookup: lookup,
+	client, err := objectstore.NewMinIO(objectstore.MinIOConfig{
+		Endpoint: os.Getenv("S3_ENDPOINT"), AccessKey: os.Getenv("S3_ACCESS_KEY"), SecretKey: os.Getenv("S3_SECRET_KEY"),
+		Secure: os.Getenv("S3_USE_SSL") == "true", Region: envOrDefault("S3_REGION", "us-east-1"), PathStyle: os.Getenv("S3_PATH_STYLE") == "true",
 	})
 	if err != nil {
 		return err
 	}
 	for _, bucket := range []string{formalBucket, stagingBucket} {
-		config, err := client.GetBucketVersioning(ctx, bucket)
+		status, err := client.BucketVersioningStatus(ctx, bucket)
 		if err != nil {
 			return fmt.Errorf("inspect bucket %q versioning: %w", bucket, err)
 		}
-		if err := validateBucketVersioningDisabled(bucket, config); err != nil {
+		if err := validateBucketVersioningDisabled(bucket, status); err != nil {
 			return err
 		}
 	}
@@ -135,9 +129,9 @@ func checkStorage(ctx context.Context) error {
 	})
 }
 
-func validateBucketVersioningDisabled(bucket string, config minio.BucketVersioningConfiguration) error {
-	if config.Status != "" {
-		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, config.Status)
+func validateBucketVersioningDisabled(bucket, status string) error {
+	if status != "" {
+		return fmt.Errorf("object bucket %q must have versioning disabled (status %q)", bucket, status)
 	}
 	return nil
 }

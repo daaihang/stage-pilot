@@ -1,9 +1,10 @@
 FROM golang:1.26-alpine AS build
 
 WORKDIR /src
-COPY backend/worker/go.mod backend/worker/go.sum ./
+COPY backend/worker/ ./backend/worker/
+COPY backend/storage/ ./backend/storage/
+WORKDIR /src/backend/worker
 RUN go mod download
-COPY backend/worker/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/stagepilot-worker ./cmd/worker
 
 FROM alpine:3.22

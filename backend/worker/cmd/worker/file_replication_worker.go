@@ -13,9 +13,8 @@ import (
 	"strings"
 	"time"
 
+	objectstore "github.com/daaihang/stagepilot/backend/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 type replicaTask struct {
@@ -27,13 +26,16 @@ type replicaTask struct {
 	Attempts                                                             int
 }
 
-func newReplicaStorageClient() (*minio.Client, string, error) {
-	endpoint := strings.TrimPrefix(strings.TrimPrefix(os.Getenv("S3_REPLICA_ENDPOINT"), "http://"), "https://")
+func newReplicaStorageClient() (objectstore.Client, string, error) {
+	endpoint := strings.TrimSpace(os.Getenv("S3_REPLICA_ENDPOINT"))
 	bucket := strings.TrimSpace(os.Getenv("S3_REPLICA_BUCKET"))
 	if endpoint == "" || bucket == "" {
 		return nil, bucket, errors.New("S3_REPLICA_ENDPOINT and S3_REPLICA_BUCKET are required")
 	}
-	client, err := minio.New(endpoint, &minio.Options{Creds: credentials.NewStaticV4(os.Getenv("S3_REPLICA_ACCESS_KEY"), os.Getenv("S3_REPLICA_SECRET_KEY"), ""), Secure: os.Getenv("S3_REPLICA_USE_SSL") == "true", Region: envOrDefault("S3_REPLICA_REGION", "us-east-1"), BucketLookup: minio.BucketLookupPath})
+	client, err := objectstore.NewMinIO(objectstore.MinIOConfig{
+		Endpoint: endpoint, AccessKey: os.Getenv("S3_REPLICA_ACCESS_KEY"), SecretKey: os.Getenv("S3_REPLICA_SECRET_KEY"),
+		Secure: os.Getenv("S3_REPLICA_USE_SSL") == "true", Region: envOrDefault("S3_REPLICA_REGION", "us-east-1"), PathStyle: true,
+	})
 	return client, bucket, err
 }
 
@@ -98,10 +100,12 @@ func streamHash(reader io.Reader) (hash.Hash, io.Reader) {
 	return h, io.TeeReader(reader, h)
 }
 
-func processReplicaTask(ctx context.Context, db *pgxpool.Pool, source, destination *minio.Client, task replicaTask, owner string) error {
+func processReplicaTask(ctx context.Context, db *pgxpool.Pool, source, destination objectstore.Client, task replicaTask, owner string) error {
 	workCtx, cancel := context.WithTimeout(ctx, 45*time.Minute)
 	defer cancel()
-	info, err := source.StatObject(workCtx, task.SourceBucket, task.SourceKey, minio.StatObjectOptions{})
+	sourceRef := objectstore.ObjectRef{Bucket: task.SourceBucket, Key: task.SourceKey}
+	targetRef := objectstore.ObjectRef{Bucket: task.TargetBucket, Key: task.TargetKey}
+	info, err := source.StatObject(workCtx, sourceRef)
 	if err != nil {
 		return retryReplicaTask(ctx, db, task, owner, err)
 	}
@@ -114,12 +118,12 @@ func processReplicaTask(ctx context.Context, db *pgxpool.Pool, source, destinati
 	if info.Size != task.ExpectedSize {
 		return needsAttentionReplicaTask(ctx, db, task, owner, "source_size_mismatch")
 	}
-	object, err := source.GetObject(workCtx, task.SourceBucket, task.SourceKey, minio.GetObjectOptions{})
+	object, err := source.OpenObject(workCtx, sourceRef)
 	if err != nil {
 		return retryReplicaTask(ctx, db, task, owner, err)
 	}
 	hasher, stream := streamHash(object)
-	_, putErr := destination.PutObject(workCtx, task.TargetBucket, task.TargetKey, stream, task.ExpectedSize, minio.PutObjectOptions{ContentType: info.ContentType})
+	_, putErr := destination.PutObject(workCtx, targetRef, stream, task.ExpectedSize, info.ContentType)
 	closeErr := object.Close()
 	if putErr != nil {
 		return retryReplicaTask(ctx, db, task, owner, putErr)
@@ -131,11 +135,11 @@ func processReplicaTask(ctx context.Context, db *pgxpool.Pool, source, destinati
 	if task.ExpectedSHA256 != "" && actualHash != task.ExpectedSHA256 {
 		return needsAttentionReplicaTask(ctx, db, task, owner, "source_sha256_mismatch")
 	}
-	verified, err := destination.GetObject(workCtx, task.TargetBucket, task.TargetKey, minio.GetObjectOptions{})
+	verified, err := destination.OpenObject(workCtx, targetRef)
 	if err != nil {
 		return retryReplicaTask(ctx, db, task, owner, err)
 	}
-	verifiedInfo, err := verified.Stat()
+	verifiedInfo, err := destination.StatObject(workCtx, targetRef)
 	if err != nil {
 		verified.Close()
 		return retryReplicaTask(ctx, db, task, owner, err)
@@ -181,7 +185,7 @@ func replicationWatermark(ctx context.Context, db *pgxpool.Pool) error {
 	return err
 }
 
-func purgeReplicas(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, source, destination *minio.Client, sourceBucket string) {
+func purgeReplicas(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, source, destination objectstore.ObjectWriter, sourceBucket string) {
 	if _, err := db.Exec(ctx, `UPDATE file_replication_tasks t SET status='purge_pending',source_purged_at=NOW(),replica_purge_after=NOW()+INTERVAL '30 days',lease_owner='',lease_until=NULL,updated_at=NOW()
 		WHERE t.status='replicated' AND t.asset_type='file_version' AND EXISTS(SELECT 1 FROM file_versions v WHERE v.id=t.asset_id AND v.object_purged_at IS NOT NULL)`); err != nil {
 		logger.Warn("queue retained replica expiry", "error", err)
@@ -216,12 +220,12 @@ func purgeReplicas(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, s
 		return
 	}
 	for _, item := range items {
-		if err := destination.RemoveObject(ctx, item.targetBucket, item.targetKey, minio.RemoveObjectOptions{}); err != nil {
+		if err := destination.RemoveObject(ctx, objectstore.ObjectRef{Bucket: item.targetBucket, Key: item.targetKey}); err != nil {
 			logger.Warn("delete expired replica", "task_id", item.id, "error", err)
 			continue
 		}
 		if item.sourceBucket != "" {
-			if err := source.RemoveObject(ctx, item.sourceBucket, item.sourceKey, minio.RemoveObjectOptions{}); err != nil {
+			if err := source.RemoveObject(ctx, objectstore.ObjectRef{Bucket: item.sourceBucket, Key: item.sourceKey}); err != nil {
 				logger.Warn("delete source object after replica retention", "task_id", item.id, "error", err)
 				continue
 			}
@@ -232,18 +236,18 @@ func purgeReplicas(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, s
 	}
 }
 
-func fileReplicationTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, source *minio.Client, sourceBucket string, interval time.Duration) {
+func fileReplicationTicker(ctx context.Context, logger *slog.Logger, db *pgxpool.Pool, source objectstore.Client, sourceBucket string, interval time.Duration) {
 	replica, targetBucket, err := newReplicaStorageClient()
 	if err != nil {
 		logger.Warn("secondary object storage is not configured; disaster replication is disabled", "error", err)
 		return
 	}
-	if err := replica.MakeBucket(ctx, targetBucket, minio.MakeBucketOptions{Region: envOrDefault("S3_REPLICA_REGION", "us-east-1")}); err != nil && minio.ToErrorResponse(err).Code != "BucketAlreadyOwnedByYou" {
+	if err := replica.EnsureBucket(ctx, targetBucket, envOrDefault("S3_REPLICA_REGION", "us-east-1")); err != nil {
 		logger.Error("ensure secondary bucket", "error", err)
 		return
 	}
-	config, err := replica.GetBucketVersioning(ctx, targetBucket)
-	if err != nil || config.Status != "" {
+	versioning, err := replica.BucketVersioningStatus(ctx, targetBucket)
+	if err != nil || versioning != "" {
 		logger.Error("secondary bucket must exist with versioning disabled", "bucket", targetBucket, "error", err)
 		return
 	}

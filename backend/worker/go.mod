@@ -1,13 +1,18 @@
 module github.com/daaihang/stagepilot/backend/worker
 
-go 1.26
+go 1.26.0
 
-require github.com/jackc/pgx/v5 v5.7.6
+require (
+	github.com/daaihang/stagepilot/backend/storage v0.0.0
+	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.7.6
+)
+
+replace github.com/daaihang/stagepilot/backend/storage => ../storage
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
@@ -19,7 +24,6 @@ require (
 	github.com/minio/minio-go/v7 v7.3.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/rs/xid v1.6.0 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
