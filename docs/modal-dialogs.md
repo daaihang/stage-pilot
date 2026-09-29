@@ -5,10 +5,10 @@ This applies to ordinary `Dialog` and `AlertDialog` surfaces in the desktop app.
 ## Host and interaction boundary
 
 - Dialogs render through the application `AppModalLayerProvider` host, not directly over the whole document. On desktop routes the host begins below the native/application titlebar; public campaign and program-sheet routes use the viewport safe-area instead.
-- The backdrop dims and blurs the workspace while leaving the titlebar outside the modal host. Backdrop and popup animations share one 100ms duration; keep that timing synchronized so the page is not exposed while the popup is still exiting.
+- The backdrop dims and blurs the workspace while leaving the titlebar outside the modal host. Dialog and AlertDialog use the shared modal transition: open for 250ms from scale 0.96 and opacity 0, close for 150ms back to scale 0.96 and opacity 0, with `cubic-bezier(0.22, 1, 0.36, 1)`. The backdrop fades on the same durations; reduced-motion preference disables both transitions.
 - The host covers the main workspace, including an open window-detail surface. When a dialog opens, the workspace becomes `inert`. The titlebar remains available to mouse and keyboard; only its right-side detail controls are disabled until all dialogs close.
 - A normal dialog closes when its own backdrop is pressed. Pressing the titlebar or a titlebar menu does not dismiss it. `AlertDialog` does not close on outside press; its Cancel, action and Escape behavior remain explicit.
-- Only the top registered dialog is interactive. Lower dialogs in a nested stack become `inert` and hidden from assistive technology until the top dialog closes.
+- Only the top registered dialog is interactive. Lower dialogs in a nested stack become `inert` and hidden from assistive technology until the top dialog's close transition completes. The shell remains isolated through that transition; route unmount still releases registrations immediately.
 - Route-owned dialogs should remain mounted under their route so navigation naturally dismisses them. Application-level dialogs must be under the app-level modal provider.
 
 ## Size and height

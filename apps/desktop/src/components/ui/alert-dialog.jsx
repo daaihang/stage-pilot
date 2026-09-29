@@ -8,10 +8,15 @@ import { useModalBodyClearance } from "@/components/modal-body-clearance"
 
 const alertDialogSizes = { sm: "24rem", md: "32rem", lg: "42rem", xl: "52rem" }
 
-function AlertDialog({ open: openProp, defaultOpen, onOpenChange, modal: _modal, disablePointerDismissal: _disablePointerDismissal, ...props }) {
-  const { open, handleOpenChange, isTop } = useTrackedDialogState({ open: openProp, defaultOpen, onOpenChange })
+function AlertDialog({ open: openProp, defaultOpen, onOpenChange, onOpenChangeComplete, modal: _modal, disablePointerDismissal: _disablePointerDismissal, ...props }) {
+  const { open, handleOpenChange, handleOpenChangeComplete, isTop } = useTrackedDialogState({
+    open: openProp,
+    defaultOpen,
+    onOpenChange,
+    onOpenChangeComplete,
+  })
   return (
-    <ModalDialogScopeContext.Provider value={{ isTop, requestClose: () => {} }}>
+    <ModalDialogScopeContext.Provider value={{ isTop, open, requestClose: () => {} }}>
       <DialogPrimitive.Root
         data-slot="alert-dialog"
         open={open}
@@ -19,6 +24,7 @@ function AlertDialog({ open: openProp, defaultOpen, onOpenChange, modal: _modal,
         modal={false}
         disablePointerDismissal
         {...props}
+        onOpenChangeComplete={handleOpenChangeComplete}
       />
     </ModalDialogScopeContext.Provider>
   )
@@ -34,14 +40,14 @@ function AlertDialogPortal({ container, ...props }) {
 }
 
 function AlertDialogOverlay({ className, ...props }) {
-  const { isTop } = React.useContext(ModalDialogScopeContext)
+  const { isTop, open } = React.useContext(ModalDialogScopeContext)
   return (
     <DialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       data-modal-top={isTop ? "true" : "false"}
       hidden={!isTop}
       className={cn(
-        "absolute inset-0 isolate bg-black/10 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "app-modal-backdrop absolute inset-0 isolate bg-black/10 supports-backdrop-filter:backdrop-blur-xs",
         className,
       )}
       {...props}
@@ -59,10 +65,10 @@ function AlertDialogContent({ className, children, size = "sm", style, ...props 
         data-slot="alert-dialog-content"
         data-modal-top={isTop ? "true" : "false"}
         role="alertdialog"
-        inert={!isTop ? "" : undefined}
-        aria-hidden={!isTop || undefined}
+        inert={!isTop || !open ? "" : undefined}
+        aria-hidden={!isTop || !open || undefined}
         className={cn(
-          "app-dialog-content absolute top-1/2 left-1/2 z-10 flex min-h-0 -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-none bg-popover p-4 text-xs/relaxed text-popover-foreground ring-1 ring-foreground/10 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:zoom-out-95",
+          "app-dialog-content absolute top-1/2 left-1/2 z-10 flex min-h-0 -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-none bg-popover p-4 text-xs/relaxed text-popover-foreground ring-1 ring-foreground/10 outline-none",
           className,
         )}
         style={{ ...style, "--app-dialog-max-width": alertDialogSizes[normalizedSize] }}

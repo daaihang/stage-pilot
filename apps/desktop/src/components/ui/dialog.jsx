@@ -13,14 +13,20 @@ function Dialog({
   open: openProp,
   defaultOpen,
   onOpenChange,
+  onOpenChangeComplete,
   modal: _modal,
   disablePointerDismissal: _disablePointerDismissal,
   ...props
 }) {
-  const { open, handleOpenChange, isTop } = useTrackedDialogState({ open: openProp, defaultOpen, onOpenChange })
+  const { open, handleOpenChange, handleOpenChangeComplete, isTop } = useTrackedDialogState({
+    open: openProp,
+    defaultOpen,
+    onOpenChange,
+    onOpenChangeComplete,
+  })
   const requestClose = React.useCallback(() => handleOpenChange(false), [handleOpenChange])
   return (
-    <ModalDialogScopeContext.Provider value={{ requestClose, isTop }}>
+    <ModalDialogScopeContext.Provider value={{ requestClose, isTop, open }}>
       <DialogPrimitive.Root
         data-slot="dialog"
         open={open}
@@ -28,6 +34,7 @@ function Dialog({
         modal={false}
         disablePointerDismissal
         {...props}
+        onOpenChangeComplete={handleOpenChangeComplete}
       />
     </ModalDialogScopeContext.Provider>
   )
@@ -65,7 +72,7 @@ function DialogOverlay({
       data-modal-top={isTop ? "true" : "false"}
       hidden={!isTop}
       className={cn(
-        "absolute inset-0 isolate bg-black/10 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "app-modal-backdrop absolute inset-0 isolate bg-black/10 supports-backdrop-filter:backdrop-blur-xs",
         className
       )}
       onPointerDown={(event) => {
@@ -86,17 +93,17 @@ function DialogContent({
   ...props
 }) {
   const normalizedSize = dialogSizes[size] ? size : "md"
-  const { isTop } = React.useContext(ModalDialogScopeContext)
+  const { isTop, open } = React.useContext(ModalDialogScopeContext)
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         data-modal-top={isTop ? "true" : "false"}
-        inert={!isTop ? "" : undefined}
-        aria-hidden={!isTop || undefined}
+        inert={!isTop || !open ? "" : undefined}
+        aria-hidden={!isTop || !open || undefined}
         className={cn(
-          "app-dialog-content absolute top-1/2 left-1/2 z-10 flex min-h-0 -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-none bg-popover p-4 text-xs/relaxed text-popover-foreground ring-1 ring-foreground/10 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:zoom-out-95",
+          "app-dialog-content absolute top-1/2 left-1/2 z-10 flex min-h-0 -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-none bg-popover p-4 text-xs/relaxed text-popover-foreground ring-1 ring-foreground/10 outline-none",
           className
         )}
         style={{ ...style, "--app-dialog-max-width": dialogSizes[normalizedSize] }}

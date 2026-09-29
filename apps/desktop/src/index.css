@@ -234,6 +234,8 @@
     .titlebar-breadcrumb-surface,
     .t-resize,
     .t-modal,
+    .app-modal-backdrop,
+    .app-dialog-content,
     .app-floating-action-position,
     .app-floating-action-motion,
     .app-floating-action-motion > [data-slot="floating-action-control"] {
@@ -467,16 +469,26 @@
   pointer-events: none;
 }
 
-.app-modal-host [data-slot="dialog-overlay"],
-.app-modal-host [data-slot="alert-dialog-overlay"],
-.app-modal-host [data-slot="dialog-content"],
-.app-modal-host [data-slot="alert-dialog-content"] {
-  --tw-animation-duration: 100ms;
+.app-modal-backdrop {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--modal-open-dur) var(--modal-ease);
+  will-change: opacity;
 }
 
-.app-modal-host [data-slot="dialog-overlay"],
-.app-modal-host [data-slot="alert-dialog-overlay"] {
+.app-modal-backdrop[data-open]:not([data-starting-style]) {
+  opacity: 1;
   pointer-events: auto;
+}
+
+.app-modal-backdrop[data-starting-style],
+.app-modal-backdrop[data-ending-style] {
+  opacity: 0;
+}
+
+.app-modal-backdrop[data-ending-style] {
+  pointer-events: none;
+  transition-duration: var(--modal-close-dur);
 }
 
 .app-modal-host [data-modal-top="true"][data-slot$="overlay"] {
@@ -488,12 +500,37 @@
 }
 
 .app-dialog-content {
+  transform-origin: center;
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-open-dur) var(--modal-ease),
+    opacity var(--modal-open-dur) var(--modal-ease);
+  will-change: transform, opacity;
   width: calc(100% - 2rem);
   max-width: var(--app-dialog-max-width, 32rem);
   max-height: calc(100% - min(2rem, 8dvh));
   overflow: hidden;
   overscroll-behavior: contain;
+}
+
+.app-dialog-content[data-open]:not([data-starting-style]) {
+  transform: scale(1);
+  opacity: 1;
   pointer-events: auto;
+}
+
+.app-dialog-content[data-starting-style] {
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+}
+
+.app-dialog-content[data-ending-style] {
+  transform: scale(var(--modal-scale-close));
+  opacity: 0;
+  pointer-events: none;
+  transition-duration: var(--modal-close-dur);
 }
 
 .app-dialog-body {

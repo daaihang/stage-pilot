@@ -9,7 +9,7 @@ const ModalLayerContext = createContext({
   registerDialog: () => () => {},
 });
 
-export const ModalDialogScopeContext = createContext({ isTop: true, requestClose: () => {} });
+export const ModalDialogScopeContext = createContext({ isTop: true, open: true, requestClose: () => {} });
 
 export function AppModalLayerProvider({ children, titlebarVisible = true }) {
   const hostRef = useRef(null);
@@ -52,21 +52,40 @@ export function useAppModalLayer() {
   return useContext(ModalLayerContext);
 }
 
-export function useTrackedDialogState({ open: controlledOpen, defaultOpen = false, onOpenChange }) {
+export function useTrackedDialogState({ open: controlledOpen, defaultOpen = false, onOpenChange, onOpenChangeComplete }) {
   const { registerDialog, activeDialogId, managed } = useAppModalLayer();
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
   const open = controlledOpen === undefined ? uncontrolledOpen : Boolean(controlledOpen);
   const idRef = useRef(Symbol("app-modal"));
+  const releaseRegistrationRef = useRef(null);
 
   useLayoutEffect(() => {
-    if (!open) return undefined;
-    return registerDialog(idRef.current);
+    if (open && !releaseRegistrationRef.current) {
+      releaseRegistrationRef.current = registerDialog(idRef.current);
+    }
   }, [open, registerDialog]);
+
+  const releaseRegistration = useCallback(() => {
+    releaseRegistrationRef.current?.();
+    releaseRegistrationRef.current = null;
+  }, []);
+
+  useLayoutEffect(() => releaseRegistration, [releaseRegistration]);
 
   const handleOpenChange = useCallback((nextOpen, details) => {
     if (controlledOpen === undefined) setUncontrolledOpen(Boolean(nextOpen));
     onOpenChange?.(Boolean(nextOpen), details);
   }, [controlledOpen, onOpenChange]);
 
-  return { open, handleOpenChange, isTop: !managed || activeDialogId === null || activeDialogId === idRef.current };
+  const handleOpenChangeComplete = useCallback((nextOpen) => {
+    if (!nextOpen) releaseRegistration();
+    onOpenChangeComplete?.(nextOpen);
+  }, [onOpenChangeComplete, releaseRegistration]);
+
+  return {
+    open,
+    handleOpenChange,
+    handleOpenChangeComplete,
+    isTop: !managed || activeDialogId === null || activeDialogId === idRef.current,
+  };
 }

@@ -58,13 +58,32 @@ test("nested modal registration restores the parent dialog after the top dialog 
   assert.equal(removeModalDialog(stack, inner).at(-1), outer);
 });
 
-test("dialog backdrops and popups share one exit animation duration", () => {
+test("dialogs use the shared modal open and close transition for both surfaces", () => {
   const stylesheet = readFileSync(new URL("../index.css", import.meta.url), "utf8");
-  const sharedMotionRule = stylesheet.match(/\.app-modal-host \[data-slot="dialog-overlay"\],[\s\S]*?\{\s*--tw-animation-duration:\s*100ms;\s*\}/);
-  assert.ok(sharedMotionRule, "all modal surfaces should share the 100ms animation token");
-  for (const slot of ["dialog-overlay", "alert-dialog-overlay", "dialog-content", "alert-dialog-content"]) {
-    assert.ok(sharedMotionRule[0].includes(`[data-slot="${slot}"]`), `${slot} should use the shared duration`);
+  const tokens = stylesheet.match(/--modal-open-dur:\s*250ms;[\s\S]*?--modal-ease:\s*cubic-bezier\(0\.22, 1, 0\.36, 1\);/);
+  assert.ok(tokens, "the shared modal motion tokens should match the specified timing and scale");
+  assert.match(tokens[0], /--modal-close-dur:\s*150ms;/);
+  assert.match(tokens[0], /--modal-scale:\s*0\.96;/);
+  assert.match(tokens[0], /--modal-scale-close:\s*0\.96;/);
+  assert.match(stylesheet, /\.app-modal-backdrop\[data-ending-style\][\s\S]*?transition-duration:\s*var\(--modal-close-dur\)/);
+  assert.match(stylesheet, /\.app-dialog-content\[data-ending-style\][\s\S]*?transform:\s*scale\(var\(--modal-scale-close\)\)[\s\S]*?transition-duration:\s*var\(--modal-close-dur\)/);
+  assert.match(stylesheet, /\.app-dialog-content\s*\{[\s\S]*?transform:\s*scale\(var\(--modal-scale\)\)[\s\S]*?transition:[\s\S]*?transform var\(--modal-open-dur\)[\s\S]*?opacity var\(--modal-open-dur\)/);
+  assert.match(stylesheet, /\.app-modal-backdrop,\s*\.app-dialog-content,[\s\S]*?transition:\s*none !important/);
+
+  for (const file of ["../components/ui/dialog.jsx", "../components/ui/alert-dialog.jsx"]) {
+    const source = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.match(source, /app-modal-backdrop/);
+    assert.match(source, /app-dialog-content/);
+    assert.doesNotMatch(source, /data-open:animate-in|data-closed:animate-out/);
+    assert.match(source, /onOpenChangeComplete=\{handleOpenChangeComplete\}/);
   }
+});
+
+test("dialog stack registration remains active until close animation completion", () => {
+  const context = readFileSync(new URL("../components/modal-layer-context.jsx", import.meta.url), "utf8");
+  assert.match(context, /handleOpenChangeComplete[\s\S]*?if\s*\(!nextOpen\)\s*releaseRegistration\(\)/);
+  assert.match(context, /useLayoutEffect\(\(\)\s*=>\s*releaseRegistration/);
+  assert.doesNotMatch(context, /useLayoutEffect\(\(\)\s*=>\s*\{\s*if\s*\(!open\)\s*return undefined;\s*return registerDialog/);
 });
 
 test("dialog usage guard requires a shared size and rejects caller width overrides", () => {
