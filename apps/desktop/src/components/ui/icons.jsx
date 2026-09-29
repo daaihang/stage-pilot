@@ -97,6 +97,7 @@ const iconDefinitions = {
   moon: Remix.RiMoonLine,
   movie: Remix.RiMovieLine,
   pencil: Remix.RiPencilLine,
+  pause: Remix.RiPauseLine,
   play: Remix.RiPlayLine,
   playlist: Remix.RiPlayListLine,
   refresh: Remix.RiRefreshLine,
@@ -212,6 +213,7 @@ export const PanelRightClose = wrappedMap.sidebarFold;
 export const PanelRightOpen = wrappedMap.sidebarUnfold;
 export const Pencil = wrappedMap.pencil;
 export const Play = wrappedMap.play;
+export const Pause = wrappedMap.pause;
 export const Plus = wrappedMap.add;
 export const Power = withIconDefaults(Remix.RiShutDownLine);
 export const RefreshCw = wrappedMap.refresh;
@@ -229,6 +231,7 @@ export const Square = wrappedMap.square;
 export const Star = withIconDefaults(Remix.RiStarLine);
 export const Terminal = wrappedMap.terminal;
 export const Theater = wrappedMap.movie;
+export const Transfer = wrappedMap.arrowUpDown;
 export const Trash2 = wrappedMap.trash;
 export const UserRound = wrappedMap.user;
 export const UsersRound = wrappedMap.team;

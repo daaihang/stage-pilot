@@ -22,8 +22,8 @@ function clearUploadResume(key) {
     }
   } catch { /* keep the server session safe for a later retry */ }
 }
-async function requestIdempotently(path, options, scope, payload) {
-  const key = uploadKey(scope, payload);
+async function requestIdempotently(path, options, scope, payload, idempotencyKey) {
+  const key = idempotencyKey || uploadKey(scope, payload);
   const result = await request(path, { ...options, headers: { ...(options.headers || {}), "Idempotency-Key": key } });
   return { ...result, _resumeKey: key };
 }
@@ -31,7 +31,7 @@ export const listFiles = (workspaceId, productionId = "workspace") => request(`$
 export const listDeletedFiles = (workspaceId, productionId = "workspace") => request(`${base(workspaceId, "/trash")}?production_id=${encodeURIComponent(productionId)}`);
 export const restoreFile = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}/restore`), { method: "POST" });
 export const getMyWorkspaceStorage = () => request("/v1/me/workspace-storage");
-export const createFileUpload = (workspaceId, payload) => requestIdempotently(base(workspaceId), { method: "POST", body: JSON.stringify(payload) }, `workspace:${workspaceId}:${payload.production_id || "workspace"}`, payload);
+export const createFileUpload = (workspaceId, payload, idempotencyKey) => requestIdempotently(base(workspaceId), { method: "POST", body: JSON.stringify(payload) }, `workspace:${workspaceId}:${payload.production_id || "workspace"}`, payload, idempotencyKey);
 export const completeFileUpload = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}/complete`), { method: "POST" });
 export const downloadFile = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}/download`));
 export const deleteFile = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}`), { method: "DELETE" });
@@ -40,12 +40,12 @@ const programAttachments = (workspaceId, programId) => `/v1/workspaces/${workspa
 const productionProgramAttachments = (productionId, programId) => `/v1/productions/${productionId}/programs/${programId}/attachments`;
 const attachmentBase = (attachmentId) => `/v1/attachments/${attachmentId}`;
 export const listProgramAttachments = (workspaceId, programId, trash = false) => request(`${programAttachments(workspaceId, programId)}${trash ? "?trash=true" : ""}`);
-export const createProgramAttachment = (workspaceId, programId, payload) => requestIdempotently(programAttachments(workspaceId, programId), { method: "POST", body: JSON.stringify(payload) }, `program:${workspaceId}:${programId}`, payload);
+export const createProgramAttachment = (workspaceId, programId, payload, idempotencyKey) => requestIdempotently(programAttachments(workspaceId, programId), { method: "POST", body: JSON.stringify(payload) }, `program:${workspaceId}:${programId}`, payload, idempotencyKey);
 export const listProductionProgramAttachments = (productionId, programId, trash = false) => request(`${productionProgramAttachments(productionId, programId)}${trash ? "?trash=true" : ""}`);
-export const createProductionProgramAttachment = (productionId, programId, payload) => requestIdempotently(productionProgramAttachments(productionId, programId), { method: "POST", body: JSON.stringify(payload) }, `production-program:${productionId}:${programId}`, payload);
+export const createProductionProgramAttachment = (productionId, programId, payload, idempotencyKey) => requestIdempotently(productionProgramAttachments(productionId, programId), { method: "POST", body: JSON.stringify(payload) }, `production-program:${productionId}:${programId}`, payload, idempotencyKey);
 export const copyProductionProgramAttachment = (productionId, programId, payload) => requestIdempotently(`${productionProgramAttachments(productionId, programId)}/copy`, { method: "POST", body: JSON.stringify(payload) }, `production-copy:${productionId}:${programId}:${payload.attachment_id}:${payload.version_id || "current"}`, payload);
 export const listAttachmentVersions = (attachmentId) => request(`${attachmentBase(attachmentId)}/versions`);
-export const startAttachmentVersion = (attachmentId, payload) => requestIdempotently(`${attachmentBase(attachmentId)}/versions`, { method: "POST", body: JSON.stringify(payload) }, `attachment-version:${attachmentId}`, payload);
+export const startAttachmentVersion = (attachmentId, payload, idempotencyKey) => requestIdempotently(`${attachmentBase(attachmentId)}/versions`, { method: "POST", body: JSON.stringify(payload) }, `attachment-version:${attachmentId}`, payload, idempotencyKey);
 export const completeUploadSession = (uploadId) => request(`/v1/file-upload-sessions/${uploadId}/complete`, { method: "POST" });
 export const cancelUploadSession = (uploadId) => request(`/v1/file-upload-sessions/${uploadId}`, { method: "DELETE" });
 export const getUploadPartUrl = (uploadId, partNumber, payload) => request(`/v1/file-upload-sessions/${uploadId}/parts/${partNumber}/url`, { method: "POST", body: JSON.stringify(payload) });
@@ -66,7 +66,7 @@ export const downloadAttachment = (attachmentId, versionId) => request(`${attach
 export const detachAttachment = (attachmentId) => request(attachmentBase(attachmentId), { method: "DELETE" });
 export const restoreAttachment = (attachmentId) => request(`${attachmentBase(attachmentId)}/restore`, { method: "POST" });
 export const listFileVersions = (workspaceId, fileId) => request(base(workspaceId, `/${fileId}/versions`));
-export const startFileVersion = (workspaceId, fileId, payload) => requestIdempotently(base(workspaceId, `/${fileId}/versions`), { method: "POST", body: JSON.stringify(payload) }, `file-version:${workspaceId}:${fileId}`, payload);
+export const startFileVersion = (workspaceId, fileId, payload, idempotencyKey) => requestIdempotently(base(workspaceId, `/${fileId}/versions`), { method: "POST", body: JSON.stringify(payload) }, `file-version:${workspaceId}:${fileId}`, payload, idempotencyKey);
 export const downloadFileVersion = (workspaceId, fileId, versionId) => request(base(workspaceId, `/${fileId}/versions/${versionId}/download`));
 
 function putToSignedUrl(url, file, headers = {}, onProgress) {

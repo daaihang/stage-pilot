@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -107,7 +108,11 @@ func TestFileScanWorkerEndToEnd(t *testing.T) {
 					t.Fatalf("read upload status = %d: %s", statusResponse.Code, statusResponse.Body.String())
 				}
 				var status struct {
-					Status string `json:"status"`
+					Status       string `json:"status"`
+					Phase        string `json:"phase"`
+					FileID       string `json:"file_id"`
+					VersionID    string `json:"version_id"`
+					ExpectedSize int64  `json:"expected_size"`
 				}
 				if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
 					t.Fatal(err)
@@ -115,6 +120,35 @@ func TestFileScanWorkerEndToEnd(t *testing.T) {
 				if status.Status != "processing" {
 					if status.Status != sample.want {
 						t.Fatalf("scan status = %q, want %q", status.Status, sample.want)
+					}
+					if status.FileID != fileID || status.VersionID == "" || status.ExpectedSize != int64(len(sample.content)) {
+						t.Fatalf("incomplete resumable upload status: %+v", status)
+					}
+					if status.Status == "rejected" && status.Phase != "scan_rejected" {
+						t.Fatalf("rejected upload phase = %q", status.Phase)
+					}
+					if status.Status == "ready" {
+						if status.Phase != "ready" {
+							t.Fatalf("ready phase = %q", status.Phase)
+						}
+						download := authedRequest(t, app, token, http.MethodGet, base+"/"+fileID+"/download", nil)
+						if download.Code != http.StatusOK {
+							t.Fatalf("download descriptor = %d: %s", download.Code, download.Body.String())
+						}
+						var descriptor struct {
+							VersionID string `json:"version_id"`
+							Filename  string `json:"filename"`
+							SizeBytes int64  `json:"size_bytes"`
+							SHA256    string `json:"sha256"`
+							ETag      string `json:"etag"`
+						}
+						if err := json.Unmarshal(download.Body.Bytes(), &descriptor); err != nil {
+							t.Fatal(err)
+						}
+						sha := sha256.Sum256([]byte(sample.content))
+						if descriptor.VersionID != status.VersionID || descriptor.Filename != sample.name+".txt" || descriptor.SizeBytes != int64(len(sample.content)) || descriptor.SHA256 != hex.EncodeToString(sha[:]) || descriptor.ETag == "" {
+							t.Fatalf("incomplete download descriptor: %+v", descriptor)
+						}
 					}
 					return
 				}

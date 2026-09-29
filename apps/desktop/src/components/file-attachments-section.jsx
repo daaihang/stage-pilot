@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { Clock3, Copy, Download, FileUp, RefreshCw, Trash2 } from "@/components/ui/icons";
+import { useTransferCenter } from "@/components/transfer-center-context";
+import { isTauriRuntime } from "@/lib/app-store";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,14 +11,13 @@ import { notify } from "@/components/ui/sonner";
 import { listFileTypes } from "@/lib/resource-api";
 import { resolveSelectItems } from "@/lib/select-options";
 import {
-  clearUploadResume, completeUploadSession, copyProductionProgramAttachment, createProductionProgramAttachment,
-  createProgramAttachment, detachAttachment, downloadAttachment, listAttachmentVersions, restoreAttachment,
-  listProductionProgramAttachments, listProgramAttachments, startAttachmentVersion, uploadToPresignedUrl,
-  waitForUploadSession,
+  clearUploadResume, copyProductionProgramAttachment, detachAttachment, listAttachmentVersions, restoreAttachment,
+  listProductionProgramAttachments, listProgramAttachments,
 } from "@/lib/file-api";
 
 export function FileAttachmentsSection({ workspace, production, programId, sourceProgramId }) {
   const isProduction = Boolean(production);
+  const { enqueueUpload, enqueueDownload } = useTransferCenter();
   const [items, setItems] = useState([]);
   const [capabilities, setCapabilities] = useState({});
   const [sourceItems, setSourceItems] = useState([]);
@@ -42,6 +42,11 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
     reload().catch((error) => notify.error("无法加载附件", { description: error?.message || String(error) }));
   }, [reload]);
   useEffect(() => {
+    const refresh = () => { void reload(); };
+    window.addEventListener("stagepilot-transfer-finished", refresh);
+    return () => window.removeEventListener("stagepilot-transfer-finished", refresh);
+  }, [reload]);
+  useEffect(() => {
     if (isProduction || !workspace?.id) return;
     setTypesLoading(true);
     listFileTypes(workspace.id, { scope: "program" })
@@ -56,35 +61,25 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
       .catch((error) => notify.error("无法加载来源节目附件", { description: error?.message || String(error) }));
   }, [isProduction, sourceProgramId, workspace?.id, workspace?.role]);
 
-  const executeUpload = async (file, start) => {
-    if (!file) return;
-    setBusy(true);
-    const toast = notify.loading("正在上传附件…");
-    try {
-      const result = await start({ filename: file.name, content_type: file.type || "application/octet-stream", size_bytes: file.size });
-      if (result.upload.transport !== "completed") await uploadToPresignedUrl(result.upload, file);
-      await completeUploadSession(result.upload.upload_id);
-      clearUploadResume(result._resumeKey);
-      const scan = await waitForUploadSession(result.upload.upload_id);
-      await reload();
-      if (scan.status === "rejected") throw new Error("安全检查未通过；该版本不会提供下载。");
-      if (scan.status === "processing") notify.info("附件仍在安全检查中", { id: toast });
-      else notify.success("安全检查通过，附件已可用", { id: toast });
-    } catch (error) {
-      notify.error("附件上传失败", { id: toast, description: error?.message || String(error) });
-    } finally { setBusy(false); }
+  const uploadIntent = () => ({
+    kind: isProduction ? "production-program-attachment" : "program-attachment",
+    workspaceId: workspace.id, productionId: production?.id, programId,
+    contextName: production?.name || workspace.name,
+    fileTypeId: isProduction || selectedType === "none" ? null : selectedType,
+    restricted: restricted || types.find((type) => type.id === selectedType)?.template_key === "program.rights",
+  });
+  const uploadNew = async (event) => {
+    const file = event?.target?.files?.[0];
+    if (event?.target) event.target.value = "";
+    if (!isTauriRuntime && !file) return;
+    try { await enqueueUpload(uploadIntent(), { file }); } catch { /* queue owns feedback */ }
   };
-
-  const uploadNew = (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    const payload = { filename: file.name, content_type: file.type || "application/octet-stream", size_bytes: file.size, last_modified: file.lastModified,
-      file_type_id: isProduction || selectedType === "none" ? null : selectedType,
-      restricted: restricted || types.find((type) => type.id === selectedType)?.template_key === "program.rights" };
-    void executeUpload(file, (upload) => isProduction
-      ? createProductionProgramAttachment(production.id, programId, { ...payload, ...upload })
-      : createProgramAttachment(workspace.id, programId, { ...payload, ...upload }));
+  const uploadVersion = async (item, event) => {
+    const file = event?.target?.files?.[0];
+    if (event?.target) event.target.value = "";
+    if (!isTauriRuntime && !file) return;
+    try { await enqueueUpload({ kind: "attachment-version", attachmentId: item.id,
+      contextName: production?.name || workspace.name }, { file }); } catch { /* queue owns feedback */ }
   };
 
   const showVersions = async (item) => {
@@ -97,11 +92,8 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
   };
 
   const download = async (item, versionId) => {
-    try {
-      const result = await downloadAttachment(item.id, versionId);
-      await openUrl(result.url);
-      notify.success("已打开附件下载");
-    } catch (error) { notify.error("无法下载附件", { description: error?.message || String(error) }); }
+    try { await enqueueDownload({ kind: "attachment", attachmentId: item.id, versionId,
+      contextName: production?.name || workspace.name }); } catch { /* queue owns feedback */ }
   };
 
   const detach = async () => {
@@ -126,12 +118,14 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
 
   const copy = async (source, versionId = source.version_id) => {
     const toast = notify.loading("正在复制固定版本到活动…");
+    setBusy(true);
     try {
       const result = await copyProductionProgramAttachment(production.id, programId, { attachment_id: source.id, version_id: versionId });
       clearUploadResume(result._resumeKey);
       await reload();
       notify.info("已提交固定版本复制；安全检查通过后可用，来源后续版本不会自动同步", { id: toast });
     } catch (error) { notify.error("复制附件失败", { id: toast, description: error?.message || String(error) }); }
+    finally { setBusy(false); }
   };
 
   return <Card variant="flush">
@@ -141,7 +135,8 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
       {capabilities.can_attach && <div className="flex flex-wrap items-center gap-3">
         {!isProduction && (() => { const options = [{ value: "none", label: "未分类" }, ...types.map((type) => ({ value: type.id, label: type.name || "未命名文件类型" }))]; const select = resolveSelectItems(options, { value: selectedType, loading: typesLoading }); return <Select items={select.items} value={selectedType} onValueChange={setSelectedType} disabled={typesLoading}><SelectTrigger className="w-48"><SelectValue placeholder={typesLoading ? "正在加载文件类型…" : "文件类型"} /></SelectTrigger><SelectContent>{select.missingOption ? <SelectItem value={select.missingOption.value} disabled>{select.missingOption.label}</SelectItem> : null}{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent></Select>; })()}
         {capabilities.can_attach_restricted && <label className="flex items-center gap-2 text-sm"><Switch checked={restricted} onCheckedChange={setRestricted} />敏感资料</label>}
-        <label><Button asChild disabled={busy}><span><FileUp />上传附件</span></Button><input type="file" className="hidden" onChange={uploadNew} disabled={busy} /></label>
+        {isTauriRuntime ? <Button type="button" onClick={() => void uploadNew()}><FileUp />上传附件</Button>
+          : <label><Button asChild><span><FileUp />上传附件</span></Button><input type="file" className="hidden" onChange={uploadNew} /></label>}
       </div>}
       {items.length ? items.map((item) => <div key={item.id} className="border-b pb-3">
         <div className="flex flex-wrap items-center gap-2"><span className="min-w-0 flex-1 truncate text-sm font-medium">{item.filename}</span><Badge variant="outline">v{item.version_no}</Badge><Badge variant={item.scan_status === "rejected" ? "destructive" : item.scan_status === "processing" ? "outline" : "secondary"}>{item.scan_status === "processing" ? (item.capabilities?.can_download ? "新版检查中 · 当前版可用" : "安全检查中") : item.scan_status === "rejected" ? (item.capabilities?.can_download ? "新版未通过 · 当前版可用" : "安全检查未通过") : "可用"}</Badge>{item.security_class === "restricted" && <Badge variant="secondary">敏感</Badge>}
@@ -150,7 +145,8 @@ export function FileAttachmentsSection({ workspace, production, programId, sourc
           <Button size="icon-sm" variant="ghost" aria-label="查看版本历史" onClick={() => showVersions(item)}><Clock3 /></Button>
           {item.capabilities?.can_detach && <Button size="icon-sm" variant="ghost" aria-label="解除附件关联" onClick={() => setConfirmDetach(item)}><Trash2 /></Button>}
         </div>
-        {item.capabilities?.can_upload_version && <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-primary"><FileUp className="size-3.5" />上传新版<input type="file" className="hidden" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; void executeUpload(file, (payload) => startAttachmentVersion(item.id, { ...payload, last_modified: file?.lastModified })); }} /></label>}
+        {item.capabilities?.can_upload_version && (isTauriRuntime ? <Button type="button" variant="link" size="sm" onClick={() => void uploadVersion(item)}><FileUp className="size-3.5" />上传新版</Button>
+          : <label className="inline-flex cursor-pointer items-center gap-1 text-xs text-primary"><FileUp className="size-3.5" />上传新版<input type="file" className="hidden" onChange={(event) => uploadVersion(item, event)} /></label>)}
         {versionItems[item.id]?.map((version) => <div key={version.id} className="mt-2 flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "processing" ? "检查中" : version.scan_status === "rejected" ? "未通过" : "可用"}</span><Button size="sm" variant="ghost" disabled={version.scan_status !== "ready"} onClick={() => download(item, version.id)}>下载</Button></div>)}
       </div>) : <p className="text-sm text-muted-foreground">{showTrash ? "回收站为空" : "暂无附件"}</p>}
       {isProduction && sourceItems.length > 0 && capabilities.can_attach && <div className="space-y-2 border-t pt-3"><p className="text-sm font-medium">从来源节目复制固定版本</p>{sourceItems.map((source) => <div key={source.id} className="space-y-1"><div className="flex items-center gap-2 text-sm"><span className="min-w-0 flex-1 truncate">{source.filename} · v{source.version_no}</span><Button size="sm" variant="ghost" onClick={() => showVersions(source)}><Clock3 />历史版本</Button><Button size="sm" variant="outline" onClick={() => copy(source)} disabled={busy || !source.capabilities?.can_download}><Copy />复制当前版</Button></div>{versionItems[source.id]?.map((version) => <div key={version.id} className="flex items-center gap-2 pl-3 text-xs text-muted-foreground"><span className="min-w-0 flex-1 truncate">v{version.version_no} · {version.filename} · {version.scan_status === "ready" ? "可用" : version.scan_status === "processing" ? "检查中" : "未通过"}</span><Button size="sm" variant="outline" onClick={() => copy(source, version.id)} disabled={busy || version.scan_status !== "ready"}>复制此版本</Button></div>)}</div>)}</div>}

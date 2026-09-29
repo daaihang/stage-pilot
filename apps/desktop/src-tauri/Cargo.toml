@@ -32,6 +32,14 @@ tauri-plugin-notification = "2"
 tauri-plugin-store = "2"
 tauri-plugin-decoration = "3.0.5"
 keyring = { version = "3", features = ["windows-native", "apple-native"] }
+reqwest = { version = "0.13", default-features = false, features = ["stream", "multipart", "rustls"] }
+tokio = { version = "1", features = ["fs", "io-util", "sync"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+futures-util = "0.3"
+sha2 = "0.10"
+base64 = "0.22"
+bytes = "1"
+uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"

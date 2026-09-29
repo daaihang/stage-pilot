@@ -447,8 +447,9 @@ func (app *application) downloadFileVersion(w http.ResponseWriter, r *http.Reque
 }
 
 func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, fileID, versionID string) {
-	var bucket, key, filename string
-	err := app.db.QueryRow(r.Context(), `SELECT bucket,object_key,filename FROM file_versions WHERE id=$1 AND file_id=$2 AND security_status='clean' AND object_purged_at IS NULL`, versionID, fileID).Scan(&bucket, &key, &filename)
+	var bucket, key, filename, sha256, etag string
+	var sizeBytes int64
+	err := app.db.QueryRow(r.Context(), `SELECT bucket,object_key,filename,size_bytes,sha256,etag FROM file_versions WHERE id=$1 AND file_id=$2 AND security_status='clean' AND object_purged_at IS NULL`, versionID, fileID).Scan(&bucket, &key, &filename, &sizeBytes, &sha256, &etag)
 	if err != nil {
 		errorJSON(w, 404, "version_not_found", "文件版本不存在")
 		return
@@ -462,7 +463,8 @@ func (app *application) presignVersion(w http.ResponseWriter, r *http.Request, f
 		serverError(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"url": u.String(), "expires_in": 300})
+	writeJSON(w, 200, map[string]any{"url": u.String(), "expires_in": 300, "version_id": versionID,
+		"filename": filename, "size_bytes": sizeBytes, "sha256": sha256, "etag": etag})
 }
 
 func publicScanStatus(status string) string {
@@ -477,16 +479,27 @@ func publicScanStatus(status string) string {
 }
 
 func (app *application) getFileUploadSessionStatus(w http.ResponseWriter, r *http.Request) {
-	var owner, sessionStatus string
+	var owner, sessionStatus, fileID, transport string
 	var versionID *string
-	err := app.db.QueryRow(r.Context(), `SELECT created_by,status,resulting_version_id FROM file_upload_sessions WHERE id=$1`, r.PathValue("uploadId")).Scan(&owner, &sessionStatus, &versionID)
+	var expiresAt time.Time
+	var expectedSize int64
+	err := app.db.QueryRow(r.Context(), `SELECT created_by,status,resulting_version_id,file_id,transport,expires_at,expected_size FROM file_upload_sessions WHERE id=$1`, r.PathValue("uploadId")).Scan(&owner, &sessionStatus, &versionID, &fileID, &transport, &expiresAt, &expectedSize)
 	if err != nil || owner != claims(r).Subject {
 		errorJSON(w, 404, "upload_not_found", "上传任务不存在")
 		return
 	}
 	status := "processing"
+	phase := "awaiting_upload"
 	if sessionStatus == "abandoned" || sessionStatus == "cancelled" {
 		status = "rejected"
+		if sessionStatus == "abandoned" {
+			phase = "expired"
+		} else {
+			phase = "cancelled"
+		}
+	} else if sessionStatus == "pending" && !expiresAt.After(time.Now()) {
+		status = "rejected"
+		phase = "expired"
 	} else if sessionStatus == "completed" && versionID != nil {
 		var securityStatus string
 		if err := app.db.QueryRow(r.Context(), `SELECT security_status FROM file_versions WHERE id=$1`, *versionID).Scan(&securityStatus); err != nil {
@@ -494,8 +507,14 @@ func (app *application) getFileUploadSessionStatus(w http.ResponseWriter, r *htt
 			return
 		}
 		status = publicScanStatus(securityStatus)
+		phase = map[string]string{"ready": "ready", "rejected": "scan_rejected"}[status]
+		if status == "processing" {
+			phase = "scanning"
+		}
 	}
-	writeJSON(w, 200, map[string]any{"upload_id": r.PathValue("uploadId"), "status": status})
+	writeJSON(w, 200, map[string]any{"upload_id": r.PathValue("uploadId"), "status": status, "phase": phase,
+		"file_id": fileID, "version_id": versionID, "transport": transport, "expected_size": expectedSize,
+		"expires_at": expiresAt})
 }
 
 func (app *application) signFileUploadPart(w http.ResponseWriter, r *http.Request) {

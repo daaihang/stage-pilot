@@ -7,6 +7,7 @@ use tauri::{
 use tauri::TitleBarStyle;
 use tauri_plugin_store::StoreExt;
 use keyring::Entry;
+mod transfers;
 
 const NATIVE_ACTION_EVENT: &str = "native-action";
 const KEYRING_SERVICE: &str = "com.daaihang.stagepilot";
@@ -103,7 +104,8 @@ fn emit_native_action<R: Runtime>(app: &AppHandle<R>, action: &str) {
 }
 
 #[tauri::command]
-fn quit_app(app: AppHandle) {
+fn quit_app(app: AppHandle, transfers: tauri::State<'_, transfers::TransferState>) {
+    transfers.abort_all();
     app.exit(0);
 }
 
@@ -200,11 +202,31 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            app.manage(transfers::TransferState::restore(app.handle()));
             create_main_window(app.handle())?;
             build_tray(app.handle())?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![quit_app, set_devtools, secure_get, secure_set, secure_delete])
+        .invoke_handler(tauri::generate_handler![
+            quit_app,
+            set_devtools,
+            secure_get,
+            secure_set,
+            secure_delete,
+            transfers::transfer_pick_files,
+            transfers::transfer_pick_destination,
+            transfers::transfer_forget,
+            transfers::transfer_abort,
+            transfers::transfer_reset_abort,
+            transfers::transfer_finish_task,
+            transfers::transfer_hash_source,
+            transfers::transfer_hash_part,
+            transfers::transfer_send_part,
+            transfers::transfer_send_post,
+            transfers::transfer_download_range,
+            transfers::transfer_finalize_download,
+            transfers::transfer_delete_partial
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

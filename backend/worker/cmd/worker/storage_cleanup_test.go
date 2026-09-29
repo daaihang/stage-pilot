@@ -17,11 +17,33 @@ import (
 )
 
 type testObjectRemover struct {
-	mu       sync.Mutex
-	calls    map[string]int
-	failOnce map[string]bool
-	started  chan string
-	release  chan struct{}
+	mu               sync.Mutex
+	calls            map[string]int
+	failOnce         map[string]bool
+	started          chan string
+	release          chan struct{}
+	multipartVisible map[string]int
+	abortCalls       map[string]int
+}
+
+func (r *testObjectRemover) AbortMultipartUpload(_ context.Context, _, _, uploadID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.abortCalls == nil {
+		r.abortCalls = map[string]int{}
+	}
+	r.abortCalls[uploadID]++
+	return nil
+}
+
+func (r *testObjectRemover) ListObjectParts(_ context.Context, _, _, uploadID string, _, _ int) (minio.ListObjectPartsResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.multipartVisible[uploadID] > 0 {
+		r.multipartVisible[uploadID]--
+		return minio.ListObjectPartsResult{}, nil
+	}
+	return minio.ListObjectPartsResult{}, minio.ErrorResponse{Code: "NoSuchUpload"}
 }
 
 func TestValidateWorkerBucketVersioningDisabled(t *testing.T) {
@@ -285,6 +307,27 @@ func TestCleanupFilesOnlyAbandonsUnfinishedUploads(t *testing.T) {
 	}
 	if !sessionPurged || !attemptPurged {
 		t.Fatalf("cleanup markers missing: session=%v copy=%v", sessionPurged, attemptPurged)
+	}
+	mpuID := unique + "-mpu"
+	if _, err := pool.Exec(t.Context(), `INSERT INTO file_upload_sessions(id,workspace_id,file_id,created_by,staging_bucket,staging_key,expected_size,filename,content_type,status,multipart_upload_id,created_at,expires_at)
+		VALUES($1,$2,$3,$4,'test-file-cleanup-bucket',$5,5,'part.txt','text/plain','cancelled',$6,NOW()-INTERVAL '48 hours',NOW()-INTERVAL '47 hours')`, unique+"-multipart", workspaceID, oldID, userID, unique+"-multipart", mpuID); err != nil {
+		t.Fatal(err)
+	}
+	mpuCleaner := &testObjectRemover{calls: map[string]int{}, multipartVisible: map[string]int{mpuID: 1}}
+	cleanupUploadSessionsWithClient(t.Context(), logger, pool, mpuCleaner, 24*time.Hour)
+	var mpuPurged bool
+	if err := pool.QueryRow(t.Context(), `SELECT object_purged_at IS NOT NULL FROM file_upload_sessions WHERE id=$1`, unique+"-multipart").Scan(&mpuPurged); err != nil {
+		t.Fatal(err)
+	}
+	if mpuPurged || mpuCleaner.callCount(unique+"-multipart") != 0 || mpuCleaner.abortCalls[mpuID] != 1 {
+		t.Fatalf("multipart cleanup released storage before abort was verified: purged=%v calls=%d", mpuPurged, mpuCleaner.callCount(unique+"-multipart"))
+	}
+	cleanupUploadSessionsWithClient(t.Context(), logger, pool, mpuCleaner, 24*time.Hour)
+	if err := pool.QueryRow(t.Context(), `SELECT object_purged_at IS NOT NULL FROM file_upload_sessions WHERE id=$1`, unique+"-multipart").Scan(&mpuPurged); err != nil {
+		t.Fatal(err)
+	}
+	if !mpuPurged || mpuCleaner.callCount(unique+"-multipart") != 1 || mpuCleaner.abortCalls[mpuID] != 2 {
+		t.Fatalf("multipart cleanup did not retry to verified completion: purged=%v calls=%d", mpuPurged, mpuCleaner.callCount(unique+"-multipart"))
 	}
 	copyRaceID := unique + "-copy-race"
 	if _, err := pool.Exec(t.Context(), `INSERT INTO file_copy_attempts(id,workspace_id,bucket,object_key,created_at)

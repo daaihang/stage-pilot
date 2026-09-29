@@ -434,24 +434,15 @@ func (app *application) downloadFile(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, 404, "file_not_found", "文件不存在")
 		return
 	}
-	s := app.storageRequired(w)
-	if s == nil {
-		return
-	}
-	var bucket, key, filename string
-	err = app.db.QueryRow(r.Context(), `SELECT v.bucket,v.object_key,v.filename FROM files f
+	var versionID string
+	err = app.db.QueryRow(r.Context(), `SELECT v.id FROM files f
 		JOIN file_versions v ON v.id=f.current_version_id AND v.file_id=f.id
-		WHERE f.id=$1 AND f.workspace_id=$2 AND f.deleted_at IS NULL AND v.security_status='clean' AND v.object_purged_at IS NULL`, r.PathValue("fileId"), r.PathValue("id")).Scan(&bucket, &key, &filename)
+		WHERE f.id=$1 AND f.workspace_id=$2 AND f.deleted_at IS NULL AND v.security_status='clean' AND v.object_purged_at IS NULL`, r.PathValue("fileId"), r.PathValue("id")).Scan(&versionID)
 	if err != nil {
 		errorJSON(w, 404, "file_not_ready", "文件尚未通过安全检查")
 		return
 	}
-	u, err := s.presignClient.PresignedGetObject(r.Context(), bucket, key, 5*time.Minute, url.Values{"response-content-disposition": []string{"attachment; filename=\"" + strings.ReplaceAll(filename, `"`, "") + "\""}})
-	if err != nil {
-		serverError(w, err)
-		return
-	}
-	writeJSON(w, 200, map[string]any{"url": u.String(), "expires_in": 300})
+	app.presignVersion(w, r, r.PathValue("fileId"), versionID)
 }
 func (app *application) deleteFile(w http.ResponseWriter, r *http.Request) {
 	f, err := app.fileLocation(r)

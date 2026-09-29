@@ -21,10 +21,18 @@ type fileMultipartUploadAborter interface {
 	AbortMultipartUpload(context.Context, string, string, string) error
 }
 
+type fileMultipartPartLister interface {
+	ListObjectParts(context.Context, string, string, string, int, int) (minio.ListObjectPartsResult, error)
+}
+
 type minioFileCleanupClient struct{ *minio.Client }
 
 func (c minioFileCleanupClient) AbortMultipartUpload(ctx context.Context, bucket, key, uploadID string) error {
 	return (minio.Core{Client: c.Client}).AbortMultipartUpload(ctx, bucket, key, uploadID)
+}
+
+func (c minioFileCleanupClient) ListObjectParts(ctx context.Context, bucket, key, uploadID string, marker, maxParts int) (minio.ListObjectPartsResult, error) {
+	return (minio.Core{Client: c.Client}).ListObjectParts(ctx, bucket, key, uploadID, marker, maxParts)
 }
 
 // cleanupFiles reclaims unfinished uploads, expired quarantined versions, and
@@ -163,12 +171,25 @@ func cleanupUploadSessionsWithClient(ctx context.Context, logger *slog.Logger, d
 			continue
 		}
 		if item.multipartID != nil {
-			if aborter, ok := client.(fileMultipartUploadAborter); ok {
-				if err := aborter.AbortMultipartUpload(ctx, item.bucket, item.key, *item.multipartID); err != nil && minio.ToErrorResponse(err).Code != "NoSuchUpload" {
-					_ = tx.Commit(ctx)
-					logger.Warn("abort incomplete multipart upload", "upload_id", item.id, "error", err)
-					continue
-				}
+			aborter, canAbort := client.(fileMultipartUploadAborter)
+			lister, canVerify := client.(fileMultipartPartLister)
+			if !canAbort || !canVerify {
+				_ = tx.Commit(ctx)
+				logger.Warn("multipart cleanup adapter cannot verify abort", "upload_id", item.id)
+				continue
+			}
+			if err := aborter.AbortMultipartUpload(ctx, item.bucket, item.key, *item.multipartID); err != nil && minio.ToErrorResponse(err).Code != "NoSuchUpload" {
+				_ = tx.Commit(ctx)
+				logger.Warn("abort incomplete multipart upload", "upload_id", item.id, "error", err)
+				continue
+			}
+			// S3 can still finish an in-flight part after an abort. Do not release
+			// physical headroom while storage still reports the multipart upload.
+			parts, listErr := lister.ListObjectParts(ctx, item.bucket, item.key, *item.multipartID, 0, 1)
+			if listErr == nil || minio.ToErrorResponse(listErr).Code != "NoSuchUpload" {
+				_ = tx.Commit(ctx)
+				logger.Warn("multipart upload still needs cleanup", "upload_id", item.id, "parts", len(parts.ObjectParts), "error", listErr)
+				continue
 			}
 		}
 		if err := client.RemoveObject(ctx, item.bucket, item.key, minio.RemoveObjectOptions{}); err != nil {

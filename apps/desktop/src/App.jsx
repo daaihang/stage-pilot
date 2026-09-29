@@ -10,6 +10,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { AppContentLayout } from "@/components/app-content-layout";
 import { OverlayAvoidanceProvider } from "@/components/overlay-avoidance-context";
 import { GlobalUtilityBar } from "@/components/global-utility-bar";
+import { TransferProvider } from "@/components/transfer-center-context";
 import { AccountCenter } from "@/components/account-center";
 import { DeveloperTools } from "@/components/developer-tools";
 import { PageChromeProvider, PageDetailTitlebarAction, usePageChrome } from "@/components/page-chrome";
@@ -731,11 +732,11 @@ function SafeRoutedMainShell({ authDialogOpen, onAuthDialogChange, onLogin, onRe
   const location = useLocation();
   const route = matchStagePilotRoute(location.pathname, location.search);
   const titlebarVisible = route?.mode !== "public-program-sheet" && route?.mode !== "public-campaign";
-  return <AppModalLayerProvider titlebarVisible={titlebarVisible}>
+  return <AppModalLayerProvider titlebarVisible={titlebarVisible}><TransferProvider user={props.user} authStatus={props.authStatus}>
     <PageChromeProvider><AppErrorBoundary resetKey={`${location.pathname}${location.search}`}><RoutedMainShell {...props} /></AppErrorBoundary></PageChromeProvider>
     <AuthDialog open={authDialogOpen} onOpenChange={onAuthDialogChange} onLogin={onLogin} onRegister={onRegister} />
     <Dialog open={aboutOpen} onOpenChange={onAboutOpenChange}><DialogContent size="sm"><DialogHeader><DialogTitle>StagePilot</DialogTitle><DialogDescription>多租户演艺活动运营平台。</DialogDescription></DialogHeader><DialogBody><p className="text-sm text-muted-foreground">Workspace 沉淀长期资产，Production 组织筹备与现场执行。</p></DialogBody></DialogContent></Dialog>
-  </AppModalLayerProvider>;
+  </TransferProvider></AppModalLayerProvider>;
 }
 
 function MainApp() {

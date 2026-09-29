@@ -7,6 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ContentWidthContainer } from "@/components/app-content-layout";
 import { getUserIdentity, NavUser, UserAccountMenu } from "@/components/nav-user";
 import { GLOBAL_UTILITY_BAR_HEIGHT } from "@/lib/app-shell-layout";
+import { TransferCenterTrigger } from "@/components/transfer-center";
 import { cn } from "@/lib/utils";
 
 const COMPACT_UTILITY_QUERY = "(max-width: 36rem)";
@@ -121,6 +122,7 @@ export function GlobalUtilityBar({
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
+      {user && <TransferCenterTrigger variant="sidebar" />}
       {user ? <NavUser user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} /> : <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton tooltip="登录" onClick={onRequireAuth}>
@@ -143,6 +145,7 @@ export function GlobalUtilityBar({
       <div className="flex min-w-0 items-center gap-1">
         <BottomUtilityAction icon={Search} label="搜索" shortcut="Ctrl K" onClick={onOpenSearch} compact={compact} />
         <BottomUtilityAction icon={FileText} label="帮助与文档" onClick={onOpenDocuments} compact={compact} />
+        {user && <TransferCenterTrigger variant="bottom" compact={compact} />}
       </div>
       <div className="flex min-w-0 items-center">
         {user ? <BottomAccount user={user} subscription={subscription} onOpenAccountCenter={onOpenAccountCenter} onLogout={onLogout} /> : <BottomLogin onRequireAuth={onRequireAuth} />}
