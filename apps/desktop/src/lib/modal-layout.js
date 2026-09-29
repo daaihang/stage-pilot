@@ -51,19 +51,16 @@ export function resolveDialogFormGridColumns(
 }
 
 export function resolveDialogFooterMode({
-  dialogWidth,
-  maxDialogWidth,
   availableWidth,
   naturalActionsWidth,
   layout = "standard",
 } = {}) {
   if (layout === "auth") return "wide";
-  const measured = [dialogWidth, maxDialogWidth, availableWidth, naturalActionsWidth]
+  const measured = [availableWidth, naturalActionsWidth]
     .every((value) => Number.isFinite(Number(value)));
   if (!measured) return "compact";
-  const hostConstrained = maxDialogWidth > 0 && dialogWidth < maxDialogWidth - 1;
   const actionsDoNotFit = naturalActionsWidth > availableWidth + 1;
-  return hostConstrained || actionsDoNotFit ? "compact" : "wide";
+  return actionsDoNotFit ? "compact" : "wide";
 }
 
 export function resolveDialogFooterArrangement({ layout = "standard", mode = "wide", hasCancel = true } = {}) {

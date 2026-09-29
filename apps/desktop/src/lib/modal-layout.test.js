@@ -52,11 +52,14 @@ test("two-column form layout waits until both 14rem fields and their gap fit", (
   assert.equal(resolveDialogFormGridColumns(300), 1);
 });
 
-test("dialog footer compacts when the host is constrained or natural actions do not fit", () => {
-  assert.equal(resolveDialogFooterMode({ dialogWidth: 520, maxDialogWidth: 520, availableWidth: 480, naturalActionsWidth: 320 }), "wide");
-  assert.equal(resolveDialogFooterMode({ dialogWidth: 470, maxDialogWidth: 520, availableWidth: 430, naturalActionsWidth: 320 }), "compact");
-  assert.equal(resolveDialogFooterMode({ dialogWidth: 520, maxDialogWidth: 520, availableWidth: 280, naturalActionsWidth: 320 }), "compact");
-  assert.equal(resolveDialogFooterMode({ dialogWidth: 100, maxDialogWidth: 520, availableWidth: 80, naturalActionsWidth: 600, layout: "auth" }), "wide");
+test("dialog footer uses available action space rather than the dialog size tier", () => {
+  assert.equal(resolveDialogFooterMode({ availableWidth: 480, naturalActionsWidth: 320 }), "wide");
+  assert.equal(resolveDialogFooterMode({ availableWidth: 430, naturalActionsWidth: 320 }), "wide");
+  assert.equal(resolveDialogFooterMode({ availableWidth: 280, naturalActionsWidth: 320 }), "compact");
+  assert.equal(resolveDialogFooterMode({ availableWidth: 320, naturalActionsWidth: 321 }), "wide");
+  assert.equal(resolveDialogFooterMode({ availableWidth: 320, naturalActionsWidth: 322 }), "compact");
+  assert.equal(resolveDialogFooterMode({ availableWidth: 80, naturalActionsWidth: 600, layout: "auth" }), "wide");
+  assert.equal(resolveDialogFooterMode({ layout: "standard" }), "compact");
 });
 
 test("footer roles preserve standard, wizard, auth, and compact action ordering", () => {

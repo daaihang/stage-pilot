@@ -16,18 +16,6 @@ function asItems(value) {
   return React.Children.toArray(value).filter(Boolean)
 }
 
-function readLengthInPixels(value, element) {
-  const length = Number.parseFloat(value)
-  if (!Number.isFinite(length)) return 0
-  if (value.trim().endsWith("rem")) {
-    return length * (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16)
-  }
-  if (value.trim().endsWith("em")) {
-    return length * (Number.parseFloat(getComputedStyle(element).fontSize) || 16)
-  }
-  return length
-}
-
 export function DialogFooterLayout({
   slot = "dialog-footer",
   layout = "standard",
@@ -60,13 +48,7 @@ export function DialogFooterLayout({
       const content = footer.closest('[data-slot="dialog-content"], [data-slot="alert-dialog-content"]')
       const availableWidth = footer.getBoundingClientRect().width
       const requiredWidth = naturalGroup.getBoundingClientRect().width
-      const maxWidthValue = content
-        ? getComputedStyle(content).getPropertyValue("--app-dialog-max-width")
-        : ""
-      const maxWidth = content ? readLengthInPixels(maxWidthValue, content) : 0
       const mode = resolveDialogFooterMode({
-        dialogWidth: content?.getBoundingClientRect().width,
-        maxDialogWidth: maxWidth,
         availableWidth,
         naturalActionsWidth: requiredWidth,
         layout,
