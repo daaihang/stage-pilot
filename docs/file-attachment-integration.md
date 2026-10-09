@@ -122,7 +122,7 @@ DELETE   /v1/attachments/{attachmentId}
 - 平台保留处置仅通过 `storage-retention` 命令执行：`show --workspace <id> [--file <id>]` 查询；`hold` / `release-hold` 管理应用级保留锁；`purge --confirm <file-id>` 可对软删除文件申请提前永久清理。每次变更都必须提供 `--actor`、`--reason` 和 `--case`，写入 append-only 账本。`storage-quota show` 和 `storage-retention show` 会单独显示保留锁占用的对象字节。
 - 应用级保留锁不是 S3 Object Lock/WORM，能阻止应用 Worker 清理，但不防止拥有对象存储权限的运维人员绕过；审计元数据保留用于历史追溯，不代表符合任何特定法规或法定保留期限。正式桶和暂存桶都不能设置会删除普通正式对象的通用生命周期规则；暂存桶可配置两天 incomplete-multipart 兜底。
 
-要验证 API → MinIO → 持久扫描队列 → Worker → ClamAV 的完整链路，启动本地 Compose 栈并让 API 集成测试能连接本地 PostgreSQL/MinIO，然后设置 `FILE_SCAN_E2E=1` 运行 `go test -count=1 -run '^TestFileScanWorkerEndToEnd$' ./cmd/server`。此用例分别上传普通文本和 EICAR 测试签名，检查最终状态为 `ready` 与 `rejected`；EICAR 是无害的防病毒测试样本，不是可执行恶意软件。
+要验证 API → MinIO → 持久扫描队列 → Worker → ClamAV 的完整链路，先按[集成测试隔离](integration-test-isolation.md)启动独立测试数据库和对象桶，让测试 Worker 也连接这套资源，然后设置 `FILE_SCAN_E2E=1` 运行 `go test -count=1 -run '^TestFileScanWorkerEndToEnd$' ./cmd/server`。此用例分别上传普通文本和 EICAR 测试签名，检查最终状态为 `ready` 与 `rejected`；EICAR 是无害的防病毒测试样本，不是可执行恶意软件。
 
 匿名公开上传仍关闭，身份证明/健康材料的专用高敏工作流、格式专用解析、CDR 和可内嵌执行主动内容的预览也尚未接入。普通内部文件会在后台 ClamAV 与通用内容签名校验通过后才可下载。头像继续使用静态图像解码重编码，不依赖 ClamAV。上传文件还应校验实际内容类型和签名，不能只信客户端 `Content-Type`；[OWASP 文件上传指南](https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html)对此有明确建议。
 

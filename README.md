@@ -181,6 +181,8 @@ pnpm --filter @stagepilot/backend-worker test
 
 也可以在相应 Go 模块目录中使用 `go test ./...`、`go vet ./...`。桌面端脚本以 `apps/desktop/package.json` 为准。
 
+后端集成测试使用单独的 PostgreSQL/MinIO 测试项目和 `TEST_DATABASE_URL`，启动、连接与成套清理步骤见[集成测试隔离](docs/integration-test-isolation.md)。
+
 ## 配置与安全提示
 
 配置模板位于 [`.env.example`](.env.example)，主要包含：

@@ -2,9 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -15,6 +15,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	objectstore "github.com/daaihang/stagepilot/backend/storage"
 )
@@ -127,9 +128,18 @@ func TestProfileAvatarAuthorizationAndCompatibility(t *testing.T) {
 	if patchAvatar.Code != http.StatusBadRequest {
 		t.Fatalf("PATCH /me avatar_url = %d, want 400: %s", patchAvatar.Code, patchAvatar.Body.String())
 	}
-	if _, err := app.db.Exec(t.Context(), `UPDATE users SET avatar_object_key=$1,avatar_revision='revision-1' WHERE id=$2`, "user-avatars/"+owner+"/revision-1.png", owner); err != nil {
+	fakeAvatarKey := "user-avatars/" + owner + "/revision-1.png"
+	if _, err := app.db.Exec(t.Context(), `UPDATE users SET avatar_object_key=$1,avatar_revision='revision-1' WHERE id=$2`, fakeAvatarKey, owner); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := app.db.Exec(ctx, `UPDATE users SET avatar_object_key='',avatar_revision='',avatar_size_bytes=0,avatar_sha256=''
+			WHERE id=$1 AND avatar_object_key=$2`, owner, fakeAvatarKey); err != nil {
+			t.Errorf("clear deliberate missing-avatar test reference: %v", err)
+		}
+	})
 	managedMe := authedRequest(t, app, ownerToken, http.MethodGet, "/me", nil)
 	var meBody map[string]any
 	if err := json.Unmarshal(managedMe.Body.Bytes(), &meBody); err != nil {
@@ -162,6 +172,15 @@ func TestProfileAvatarAuthorizationAndCompatibility(t *testing.T) {
 	productionMembers := authedRequest(t, app, editorToken, http.MethodGet, "/v1/productions/"+productionID+"/members", nil)
 	if productionMembers.Code != http.StatusOK || !strings.Contains(productionMembers.Body.String(), avatarPath) {
 		t.Fatalf("production member avatar path = %d %s", productionMembers.Code, productionMembers.Body.String())
+	}
+}
+
+func retainedAvatarReplicaStatus(status string) bool {
+	switch status {
+	case "pending", "leased", "replicated", "purge_pending":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -227,8 +246,12 @@ func TestProfileAvatarUploadReplaceAndRemove(t *testing.T) {
 	if firstKey == secondKey || !strings.Contains(secondUser.AvatarURL, "v=") {
 		t.Fatalf("avatar replacement keys/url = %q / %q", secondKey, secondUser.AvatarURL)
 	}
-	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: firstKey}); !errors.Is(err, objectstore.ErrObjectNotFound) {
-		t.Fatalf("old avatar object should be removed, stat error = %v", err)
+	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: firstKey}); err != nil {
+		t.Fatalf("old avatar must remain until replica retention completes: %v", err)
+	}
+	var firstReplicaStatus string
+	if err := app.db.QueryRow(t.Context(), `SELECT status FROM file_replication_tasks WHERE asset_type='avatar' AND asset_id=$1`, firstKey).Scan(&firstReplicaStatus); err != nil || !retainedAvatarReplicaStatus(firstReplicaStatus) {
+		t.Fatalf("old avatar replica task = %q, error=%v", firstReplicaStatus, err)
 	}
 
 	invalid := avatarUploadRequest(t, app, token, []byte(`<svg/>`), "bad.svg")
@@ -244,8 +267,12 @@ func TestProfileAvatarUploadReplaceAndRemove(t *testing.T) {
 	if removed.Code != http.StatusOK || !strings.Contains(removed.Body.String(), `"avatar_url":""`) {
 		t.Fatalf("remove avatar = %d: %s", removed.Code, removed.Body.String())
 	}
-	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: secondKey}); !errors.Is(err, objectstore.ErrObjectNotFound) {
-		t.Fatalf("removed avatar object should be deleted, stat error = %v", err)
+	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: secondKey}); err != nil {
+		t.Fatalf("removed avatar must remain until replica retention completes: %v", err)
+	}
+	var secondReplicaStatus string
+	if err := app.db.QueryRow(t.Context(), `SELECT status FROM file_replication_tasks WHERE asset_type='avatar' AND asset_id=$1`, secondKey).Scan(&secondReplicaStatus); err != nil || !retainedAvatarReplicaStatus(secondReplicaStatus) {
+		t.Fatalf("removed avatar replica task = %q, error=%v", secondReplicaStatus, err)
 	}
 	if response := authedRequest(t, app, token, http.MethodGet, secondUser.AvatarURL, nil); response.Code != http.StatusNotFound {
 		t.Fatalf("read removed avatar = %d, want 404", response.Code)

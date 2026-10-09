@@ -225,7 +225,7 @@ Production 权限包含当前 Workspace 角色继承及有效的活动直接成�
 
 ## Mock 移除检查
 
-- API Repository 已通过鉴权、404/403、空列表场景的租户隔离集成测试（`backend/api/cmd/server/workspace_test.go` 与 `production_test.go`，设置 `DATABASE_URL` 运行；后者覆盖列表隔离、读隔离、父子伪造、角色权限、归档与时间/时区校验）。
+- API Repository 已通过鉴权、404/403、空列表场景的租户隔离集成测试（`backend/api/cmd/server/workspace_test.go` 与 `production_test.go`，使用独立的 `TEST_DATABASE_URL` 运行，见 [集成测试隔离](integration-test-isolation.md)；后者覆盖列表隔离、读隔离、父子伪造、角色权限、归档与时间/时区校验）。
 - Workspace 切换失败不会改变当前路由（`switchWorkspace` 失败时保持原上下文）。
 - Production 必须同时匹配 URL 中的 `workspaceId`，防止跨租户读取（后端 `requireProductionAccess` 已落实：先 `requireWorkspaceRole` 再校验父子关系）。
 - 生产运行路径已切换到 `apiNavigationRepository`；`mockNavigationRepository` 仅保留给无后端预览。

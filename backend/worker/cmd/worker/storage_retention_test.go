@@ -12,10 +12,10 @@ import (
 )
 
 func TestFileRetentionPurgeQueueE2E(t *testing.T) {
-	if os.Getenv("FILE_RETENTION_E2E") != "1" || os.Getenv("DATABASE_URL") == "" {
-		t.Skip("set FILE_RETENTION_E2E=1 with DATABASE_URL and migration 52 applied")
+	if os.Getenv("FILE_RETENTION_E2E") != "1" {
+		t.Skip("set FILE_RETENTION_E2E=1 with the isolated test database")
 	}
-	pool, err := pgxpool.New(t.Context(), os.Getenv("DATABASE_URL"))
+	pool, err := pgxpool.New(t.Context(), workerTestDatabaseURL(t))
 	if err != nil {
 		t.Fatal(err)
 	}

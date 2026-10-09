@@ -1,7 +1,7 @@
 package main
 
 // Production Foundation 集成测试：生命周期、租户隔离与父子关系防伪造。
-// 运行条件与 workspace_test.go 相同：设置 DATABASE_URL，否则跳过。
+// 运行条件与 workspace_test.go 相同：设置 TEST_DATABASE_URL，否则跳过。
 
 import (
 	"encoding/json"

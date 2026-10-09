@@ -51,6 +51,9 @@ func TestMinIOAdapterE2E(t *testing.T) {
 	if bucket == "" {
 		t.Fatal("STORAGE_TEST_BUCKET is required when STORAGE_E2E=1")
 	}
+	if !strings.HasSuffix(bucket, "-test") {
+		t.Fatal("STORAGE_TEST_BUCKET must name a dedicated *-test bucket")
+	}
 	client, err := NewMinIO(MinIOConfig{
 		Endpoint: os.Getenv("S3_ENDPOINT"), AccessKey: os.Getenv("S3_ACCESS_KEY"), SecretKey: os.Getenv("S3_SECRET_KEY"),
 		Secure: os.Getenv("S3_USE_SSL") == "true", Region: envOr("S3_REGION", "us-east-1"), PathStyle: true,

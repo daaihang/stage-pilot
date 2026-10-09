@@ -2,9 +2,8 @@ package main
 
 // Workspace 租户隔离与生命周期集成测试。
 //
-// 运行条件：DATABASE_URL 指向可用的 PostgreSQL（本地为 docker compose 的
-// postgres + migrate 服务）。没有 DATABASE_URL 时跳过，保证 `go test ./...`
-// 在无数据库环境仍然通过。
+// 运行条件：TEST_DATABASE_URL 指向独立且已迁移的测试数据库。未配置时跳过，
+// 保证 `go test ./...` 在无数据库环境仍然通过。
 
 import (
 	"bytes"
@@ -24,9 +23,31 @@ func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(os.Stder
 
 func testDatabaseURL(t *testing.T) string {
 	t.Helper()
-	url := os.Getenv("DATABASE_URL")
+	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("DATABASE_URL not set; skipping workspace integration tests")
+		t.Skip("TEST_DATABASE_URL not set; skipping workspace integration tests")
+	}
+	config, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("invalid TEST_DATABASE_URL: %v", err)
+	}
+	if !strings.HasSuffix(config.ConnConfig.Database, "_test") {
+		t.Fatalf("TEST_DATABASE_URL must use a dedicated *_test database, got %q", config.ConnConfig.Database)
+	}
+	if runtimeURL := os.Getenv("DATABASE_URL"); runtimeURL != "" {
+		runtime, err := pgxpool.ParseConfig(runtimeURL)
+		if err != nil {
+			t.Fatalf("invalid DATABASE_URL: %v", err)
+		}
+		if config.ConnConfig.Database == runtime.ConnConfig.Database {
+			t.Fatal("TEST_DATABASE_URL points at the application database")
+		}
+	}
+	if os.Getenv("S3_ENDPOINT") != "" {
+		bucket := os.Getenv("S3_BUCKET")
+		if !strings.HasSuffix(bucket, "-test") || os.Getenv("S3_STAGING_BUCKET") != bucket+"-staging" {
+			t.Fatal("S3 integration tests require a dedicated *-test bucket and its *-test-staging bucket")
+		}
 	}
 	return url
 }

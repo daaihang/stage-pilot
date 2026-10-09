@@ -2,7 +2,7 @@ package main
 
 // Campaign/结果契约迁移集成测试。
 //
-// 测试复用现有 PostgreSQL 集成测试约定：没有 DATABASE_URL，或数据库尚未
+// 测试复用现有 PostgreSQL 集成测试约定：没有 TEST_DATABASE_URL，或数据库尚未
 // 执行到 migration 54 或更新版本时运行；这样普通的 go test ./... 不需要本地数据库。
 
 import (

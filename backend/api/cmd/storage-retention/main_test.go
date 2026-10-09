@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,10 +43,30 @@ func TestRetentionStorageVersioningMustBeDisabled(t *testing.T) {
 }
 
 func TestRetentionOperationsE2E(t *testing.T) {
-	if os.Getenv("FILE_RETENTION_E2E") != "1" || os.Getenv("DATABASE_URL") == "" {
-		t.Skip("set FILE_RETENTION_E2E=1 with DATABASE_URL and migration 52 applied")
+	if os.Getenv("FILE_RETENTION_E2E") != "1" {
+		t.Skip("set FILE_RETENTION_E2E=1 with the isolated test database")
 	}
-	pool, err := pgxpool.New(t.Context(), os.Getenv("DATABASE_URL"))
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	config, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("invalid TEST_DATABASE_URL: %v", err)
+	}
+	if !strings.HasSuffix(config.ConnConfig.Database, "_test") {
+		t.Fatalf("TEST_DATABASE_URL must use a dedicated *_test database, got %q", config.ConnConfig.Database)
+	}
+	if runtimeURL := os.Getenv("DATABASE_URL"); runtimeURL != "" {
+		runtime, err := pgxpool.ParseConfig(runtimeURL)
+		if err != nil {
+			t.Fatalf("invalid DATABASE_URL: %v", err)
+		}
+		if config.ConnConfig.Database == runtime.ConnConfig.Database {
+			t.Fatal("TEST_DATABASE_URL points at the application database")
+		}
+	}
+	pool, err := pgxpool.New(t.Context(), url)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,6 +25,40 @@ type testObjectRemover struct {
 	abortCalls       map[string]int
 }
 
+func workerTestDatabaseURL(t *testing.T) string {
+	t.Helper()
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	config, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("invalid TEST_DATABASE_URL: %v", err)
+	}
+	if !strings.HasSuffix(config.ConnConfig.Database, "_test") {
+		t.Fatalf("TEST_DATABASE_URL must use a dedicated *_test database, got %q", config.ConnConfig.Database)
+	}
+	if runtimeURL := os.Getenv("DATABASE_URL"); runtimeURL != "" {
+		runtime, err := pgxpool.ParseConfig(runtimeURL)
+		if err != nil {
+			t.Fatalf("invalid DATABASE_URL: %v", err)
+		}
+		if config.ConnConfig.Database == runtime.ConnConfig.Database {
+			t.Fatal("TEST_DATABASE_URL points at the application database")
+		}
+	}
+	return url
+}
+
+func workerTestBucket(t *testing.T) string {
+	t.Helper()
+	bucket := os.Getenv("S3_BUCKET")
+	if !strings.HasSuffix(bucket, "-test") || os.Getenv("S3_STAGING_BUCKET") != bucket+"-staging" {
+		t.Fatal("S3 integration tests require a dedicated *-test bucket and its *-test-staging bucket")
+	}
+	return bucket
+}
+
 func (r *testObjectRemover) AbortMultipart(_ context.Context, _ objectstore.ObjectRef, uploadID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -60,10 +94,10 @@ func TestValidateWorkerBucketVersioningDisabled(t *testing.T) {
 }
 
 func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
-	if os.Getenv("DATABASE_URL") == "" || os.Getenv("S3_ENDPOINT") == "" {
-		t.Skip("database and S3 are required")
+	if os.Getenv("S3_ENDPOINT") == "" {
+		t.Skip("S3_ENDPOINT not set")
 	}
-	pool, err := pgxpool.New(t.Context(), os.Getenv("DATABASE_URL"))
+	pool, err := pgxpool.New(t.Context(), workerTestDatabaseURL(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,10 +106,7 @@ func TestFreezeLegacyFileVersionPreservesSourceObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bucket := os.Getenv("S3_BUCKET")
-	if bucket == "" {
-		bucket = "stagepilot"
-	}
+	bucket := workerTestBucket(t)
 	unique := fmt.Sprintf("freeze-%d", time.Now().UnixNano())
 	userID, workspaceID, fileID, versionID := unique+"-user", unique+"-workspace", unique+"-file", unique+"-version"
 	oldKey := "ws/" + workspaceID + "/files/original"
@@ -163,10 +194,7 @@ func (r *testObjectRemover) callCount(key string) int {
 }
 
 func TestCleanupFilesOnlyAbandonsUnfinishedUploads(t *testing.T) {
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		t.Skip("DATABASE_URL not set")
-	}
+	databaseURL := workerTestDatabaseURL(t)
 	pool, err := pgxpool.New(t.Context(), databaseURL)
 	if err != nil {
 		t.Fatalf("connect database: %v", err)

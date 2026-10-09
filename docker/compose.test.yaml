@@ -1,0 +1,68 @@
+name: stagepilot-tests
+
+# Integration tests use their own database and object store. Resetting this
+# project removes both sides of every test fixture together.
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: stagepilot_test
+      POSTGRES_USER: stagepilot_test
+      POSTGRES_PASSWORD: stagepilot-test-password
+    ports:
+      - "${STAGEPILOT_TEST_POSTGRES_PORT:-15433}:5432"
+    volumes:
+      - postgres-test-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stagepilot_test -d stagepilot_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: migrate/migrate:v4.18.3
+    command:
+      - -source=file:///migrations
+      - -database=postgres://stagepilot_test:stagepilot-test-password@postgres:5432/stagepilot_test?sslmode=disable
+      - up
+    volumes:
+      - ../backend/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: stagepilot-test
+      MINIO_ROOT_PASSWORD: stagepilot-test-secret
+    ports:
+      - "${STAGEPILOT_TEST_MINIO_PORT:-19020}:9000"
+      - "${STAGEPILOT_TEST_MINIO_CONSOLE_PORT:-19021}:9001"
+    volumes:
+      - minio-test-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-setup:
+    image: minio/mc:latest
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set tests http://minio:9000 stagepilot-test stagepilot-test-secret &&
+        mc mb --ignore-existing tests/stagepilot-test &&
+        mc mb --ignore-existing tests/stagepilot-test-staging &&
+        mc ilm rule import tests/stagepilot-test-staging < /config/staging-lifecycle.json
+    volumes:
+      - ./minio-staging-lifecycle.json:/config/staging-lifecycle.json:ro
+    depends_on:
+      minio:
+        condition: service_healthy
+
+volumes:
+  postgres-test-data:
+  minio-test-data:

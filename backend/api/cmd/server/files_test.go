@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -460,9 +459,8 @@ func TestFileWorkspaceAndProductionAuthorization(t *testing.T) {
 	if _, err := storage.client.StatObject(t.Context(), objectstore.ObjectRef{Bucket: storage.bucket, Key: objectKey}); err != nil {
 		t.Fatalf("soft-deleted object removed: %v", err)
 	}
-	t.Cleanup(func() {
-		_ = storage.client.RemoveObject(context.Background(), objectstore.ObjectRef{Bucket: storage.bucket, Key: objectKey})
-	})
+	// Keep this soft-deleted version in the isolated test store until its
+	// retention deadline or until the test database and bucket are reset together.
 	productionTrash := authedRequest(t, app, editorToken, http.MethodGet, base+"/trash?production_id="+productionID, nil)
 	if productionTrash.Code != http.StatusOK || !bytes.Contains(productionTrash.Body.Bytes(), []byte(productionFileID)) {
 		t.Fatalf("editor production trash = %d: %s", productionTrash.Code, productionTrash.Body.String())
@@ -518,27 +516,12 @@ func TestMultipartUploadMinIOEnforcesPartChecksumsAndSettlesLedger(t *testing.T)
 	if err := json.Unmarshal(created.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	fileID := fileTestID(t, body)
+	fileTestID(t, body)
 	upload := body["upload"].(map[string]any)
 	if upload["transport"] != "multipart" {
 		t.Fatalf("upload transport = %v, want multipart", upload["transport"])
 	}
 	uploadID := upload["upload_id"].(string)
-	var versionID string
-	t.Cleanup(func() {
-		cleanupCtx := context.Background()
-		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_scan_tasks SET status='completed',lease_owner='',lease_until=NULL,
-			outcome='test_cleanup',completed_at=NOW(),updated_at=NOW() WHERE version_id IN (SELECT id FROM file_versions WHERE file_id=$1)`, fileID)
-		for _, bucket := range []string{storage.bucket, storage.stagingBucket} {
-			_ = storage.client.WalkObjects(cleanupCtx, bucket, "ws/"+workspaceID+"/", func(object objectstore.ObjectInfo) error {
-				return storage.client.RemoveObject(cleanupCtx, objectstore.ObjectRef{Bucket: bucket, Key: object.Key})
-			})
-		}
-		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_versions SET object_purged_at=COALESCE(object_purged_at,NOW()),quota_charged=FALSE WHERE file_id=$1`, fileID)
-		_, _ = app.db.Exec(cleanupCtx, `UPDATE file_upload_sessions SET object_purged_at=COALESCE(object_purged_at,NOW()) WHERE id=$1`, uploadID)
-		_, _ = app.db.Exec(cleanupCtx, `UPDATE workspace_storage_reservations SET status='released',quota_reserved_bytes=0,quota_committed_bytes=0,physical_reserved_bytes=0 WHERE workspace_id=$1`, workspaceID)
-		_, _ = app.db.Exec(cleanupCtx, `UPDATE workspace_storage_accounts SET quota_used_bytes=0,quota_reserved_bytes=0,physical_used_bytes=0,physical_reserved_bytes=0,physical_observed_bytes=NULL,physical_observed_at=NULL WHERE workspace_id=$1`, workspaceID)
-	})
 	partSize := int(upload["part_size"].(float64))
 	payload := bytes.Repeat([]byte("A"), fileSize)
 	shortPayload := []byte("too short")
@@ -606,7 +589,7 @@ func TestMultipartUploadMinIOEnforcesPartChecksumsAndSettlesLedger(t *testing.T)
 	if completed.Code != http.StatusAccepted {
 		t.Fatalf("complete multipart upload = %d: %s", completed.Code, completed.Body.String())
 	}
-	versionID = attachmentResponse(t, completed.Body.Bytes())["version_id"].(string)
+	versionID := attachmentResponse(t, completed.Body.Bytes())["version_id"].(string)
 	var committedSize int64
 	if err := app.db.QueryRow(t.Context(), `SELECT size_bytes FROM file_versions WHERE id=$1`, versionID).Scan(&committedSize); err != nil {
 		t.Fatal(err)
